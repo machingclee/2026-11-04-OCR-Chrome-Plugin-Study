@@ -1,16 +1,46 @@
 body {
-  width: 240px;
+  width: 320px;
   margin: 0;
   padding: 16px;
   font: 14px/1.5 system-ui, sans-serif;
 }
 
 h1 {
-  margin: 0 0 8px;
+  margin: 0 0 4px;
   font-size: 16px;
 }
 
 p {
-  margin: 0;
+  margin: 0 0 12px;
   color: #444;
+}
+
+button {
+  padding: 6px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+
+figure {
+  margin: 12px 0 0;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid #ddd;
+}
+
+figcaption {
+  margin: 6px 0;
+  color: #444;
+}
+
+code {
+  display: block;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #666;
+  word-break: break-all;
 }
