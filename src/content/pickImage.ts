@@ -1,12 +1,16 @@
 const STORAGE_KEY = 'pickedImageUrl';
+const SHIELD_ID = 'comic-translator-shield';
 const HIGHLIGHT_ID = 'comic-translator-highlight';
 const TOAST_ID = 'comic-translator-toast';
+const IMAGE_URL = /\.(avif|bmp|gif|jpe?g|png|svg|webp)(?:[?#]|$)/i;
 
 declare global {
   interface Window {
     __comicTranslatorPickerActive?: boolean;
   }
 }
+
+type Hit = { url: string; rect: DOMRect };
 
 function showToast(message: string): void {
   document.getElementById(TOAST_ID)?.remove();
@@ -31,13 +35,141 @@ function showToast(message: string): void {
   window.setTimeout(() => toast.remove(), 6000);
 }
 
-function findImageAt(x: number, y: number): HTMLImageElement | null {
-  const element = document.elementFromPoint(x, y);
-  const image = element?.closest('img');
-  return image instanceof HTMLImageElement ? image : null;
+function isPickerUi(element: Element): boolean {
+  return element.id === SHIELD_ID || element.id === HIGHLIGHT_ID || element.id === TOAST_ID;
+}
+
+function imageUrl(image: HTMLImageElement): string {
+  if (image.currentSrc) return image.currentSrc;
+  const src = image.getAttribute('src');
+  if (src) return src;
+  const first = image.getAttribute('srcset')?.split(',')[0]?.trim().split(/\s+/)[0];
+  return first || '';
+}
+
+function isSpacer(image: HTMLImageElement, url: string): boolean {
+  return url.startsWith('data:') && image.complete && image.naturalWidth > 0 && image.naturalWidth <= 2 && image.naturalHeight <= 2;
+}
+
+function backgroundUrl(element: Element): string {
+  const value = getComputedStyle(element).backgroundImage;
+  const match = /url\(["']?(.*?)["']?\)/.exec(value);
+  return match?.[1] ?? '';
+}
+
+function containsPoint(rect: DOMRect, x: number, y: number): boolean {
+  return rect.width >= 8 && rect.height >= 8 && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
+function shift(rect: DOMRect, offsetX: number, offsetY: number): DOMRect {
+  return new DOMRect(rect.left + offsetX, rect.top + offsetY, rect.width, rect.height);
+}
+
+function containedImage(element: Element, x: number, y: number): HTMLImageElement | null {
+  let best: HTMLImageElement | null = null;
+  let bestArea = Number.POSITIVE_INFINITY;
+
+  const consider = (image: HTMLImageElement): void => {
+    const url = imageUrl(image);
+    if (!url || isSpacer(image, url)) return;
+    const rect = image.getBoundingClientRect();
+    if (!containsPoint(rect, x, y)) return;
+    const area = rect.width * rect.height;
+    if (area < bestArea) {
+      best = image;
+      bestArea = area;
+    }
+  };
+
+  if (element instanceof HTMLImageElement) consider(element);
+  const roots: ParentNode[] = [element];
+  if (element.shadowRoot) roots.push(element.shadowRoot);
+  for (const root of roots) {
+    for (const image of root.querySelectorAll('img')) {
+      if (image instanceof HTMLImageElement) consider(image);
+    }
+  }
+
+  return best;
+}
+
+function containedBackground(element: Element, x: number, y: number): { url: string; box: HTMLElement } | null {
+  let best: { url: string; box: HTMLElement } | null = null;
+  let bestArea = Number.POSITIVE_INFINITY;
+
+  const consider = (node: Element): void => {
+    if (!(node instanceof HTMLElement) || isPickerUi(node)) return;
+    const rect = node.getBoundingClientRect();
+    if (!containsPoint(rect, x, y)) return;
+    const url = backgroundUrl(node);
+    if (!url) return;
+    const area = rect.width * rect.height;
+    if (area < bestArea) {
+      best = { url, box: node };
+      bestArea = area;
+    }
+  };
+
+  consider(element);
+  for (const node of element.querySelectorAll('div, span, a, i')) consider(node);
+  return best;
+}
+
+function findAt(doc: Document, x: number, y: number, offsetX: number, offsetY: number): Hit | 'blocked-frame' | null {
+  const shield = doc.getElementById(SHIELD_ID);
+  if (shield instanceof HTMLElement) shield.style.pointerEvents = 'none';
+
+  let stack: Element[] = [];
+  try {
+    stack = doc.elementsFromPoint(x, y);
+  } finally {
+    if (shield instanceof HTMLElement && doc === document) shield.style.pointerEvents = 'auto';
+  }
+
+  for (const element of stack) {
+    if (isPickerUi(element)) continue;
+    if (element instanceof HTMLIFrameElement || element instanceof HTMLFrameElement) {
+      const frameRect = element.getBoundingClientRect();
+      let inner: Document | null = null;
+      try {
+        inner = element.contentDocument;
+      } catch {
+        inner = null;
+      }
+      if (!inner) return 'blocked-frame';
+      return findAt(inner, x - frameRect.left, y - frameRect.top, offsetX + frameRect.left, offsetY + frameRect.top);
+    }
+    if (element.tagName === 'BODY' || element.tagName === 'HTML') continue;
+
+    const image = containedImage(element, x, y);
+    if (image) {
+      const rect = image.getBoundingClientRect();
+      return { url: imageUrl(image), rect: shift(rect, offsetX, offsetY) };
+    }
+
+    const background = containedBackground(element, x, y);
+    if (background) return { url: background.url, rect: shift(background.box.getBoundingClientRect(), offsetX, offsetY) };
+
+    const link = element.closest('a');
+    if (link instanceof HTMLAnchorElement && IMAGE_URL.test(link.href)) {
+      const rect = link.getBoundingClientRect();
+      return { url: link.href, rect: shift(rect, offsetX, offsetY) };
+    }
+  }
+
+  return null;
 }
 
 function start(): void {
+  const shield = document.createElement('div');
+  shield.id = SHIELD_ID;
+  shield.style.position = 'fixed';
+  shield.style.inset = '0';
+  shield.style.zIndex = '2147483645';
+  shield.style.background = 'transparent';
+  shield.style.cursor = 'crosshair';
+  document.documentElement.append(shield);
+
   const box = document.createElement('div');
   box.id = HIGHLIGHT_ID;
   box.style.position = 'fixed';
@@ -49,12 +181,11 @@ function start(): void {
   box.style.zIndex = '2147483646';
   document.documentElement.append(box);
 
-  const place = (image: HTMLImageElement | null): void => {
-    if (!image) {
+  const place = (rect: DOMRect | null): void => {
+    if (!rect || rect.width === 0 || rect.height === 0) {
       box.style.display = 'none';
       return;
     }
-    const rect = image.getBoundingClientRect();
     box.style.display = 'block';
     box.style.top = `${rect.top}px`;
     box.style.left = `${rect.left}px`;
@@ -63,29 +194,36 @@ function start(): void {
   };
 
   const stop = (): void => {
-    window.removeEventListener('mousemove', onMove, true);
+    shield.removeEventListener('click', onClick);
     window.removeEventListener('click', onClick, true);
+    window.removeEventListener('mousemove', onMove, true);
     window.removeEventListener('keydown', onKey, true);
+    shield.remove();
     box.remove();
     window.__comicTranslatorPickerActive = false;
   };
 
   function onMove(event: MouseEvent): void {
-    place(findImageAt(event.clientX, event.clientY));
+    const hit = findAt(document, event.clientX, event.clientY, 0, 0);
+    place(hit && hit !== 'blocked-frame' ? hit.rect : null);
   }
 
   function onClick(event: MouseEvent): void {
-    const image = findImageAt(event.clientX, event.clientY);
-    if (!image) return;
-
     event.preventDefault();
     event.stopPropagation();
 
-    const url = image.currentSrc || image.getAttribute('src') || '';
-    if (!url) return;
+    const hit = findAt(document, event.clientX, event.clientY, 0, 0);
+    if (hit === 'blocked-frame') {
+      showToast('This image is inside a frame the picker cannot read.');
+      return;
+    }
+    if (!hit) {
+      showToast('No image under the pointer.');
+      return;
+    }
 
-    void chrome.storage.session.set({ [STORAGE_KEY]: url });
-    showToast(`Picked ${url}`);
+    void chrome.storage.session.set({ [STORAGE_KEY]: hit.url });
+    showToast(`Picked ${hit.url}`);
     stop();
   }
 
@@ -93,8 +231,9 @@ function start(): void {
     if (event.key === 'Escape') stop();
   }
 
-  window.addEventListener('mousemove', onMove, true);
+  shield.addEventListener('click', onClick);
   window.addEventListener('click', onClick, true);
+  window.addEventListener('mousemove', onMove, true);
   window.addEventListener('keydown', onKey, true);
   showToast('Pick mode is on. Click an image, or press Escape.');
 }
@@ -104,4 +243,4 @@ if (!window.__comicTranslatorPickerActive) {
   start();
 }
 
-export {};
+export { };

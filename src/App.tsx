@@ -25,7 +25,8 @@ export default function App() {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab?.id) throw new Error('There is no active tab.');
-      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
+      console.log('Executing pickImage.js in tab', tab.id);
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['pickImage.js'] });
       window.close();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));

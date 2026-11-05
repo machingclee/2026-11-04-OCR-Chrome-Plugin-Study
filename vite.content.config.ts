@@ -5,10 +5,12 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: false,
     lib: {
-      entry: 'src/content/pickImage.ts',
+      entry: {
+        pickImage: 'src/content/pickImage.ts',
+      },
       name: 'comicTranslatorPicker',
       formats: ['iife'],
-      fileName: () => 'content.js',
+      fileName: (_format, entryName) => `${entryName}.js`,
     },
   },
 });
