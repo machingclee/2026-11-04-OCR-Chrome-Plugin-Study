@@ -12,7 +12,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    chrome.storage.session
+    chrome.storage.local
       .get(STORAGE_KEY)
       .then((stored) => {
         const value = stored[STORAGE_KEY];

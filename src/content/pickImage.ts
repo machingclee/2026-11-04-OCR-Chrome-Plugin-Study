@@ -222,8 +222,13 @@ function start(): void {
       return;
     }
 
-    void chrome.storage.session.set({ [STORAGE_KEY]: hit.url });
-    showToast(`Picked ${hit.url}`);
+    chrome.storage.local
+      .set({ [STORAGE_KEY]: hit.url })
+      .then(() => showToast(`Picked ${hit.url}`))
+      .catch((cause: unknown) => {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        showToast(`Could not save the URL: ${message}`);
+      });
     stop();
   }
 
