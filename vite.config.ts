@@ -7,7 +7,7 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     rollupOptions: {
-      input: { popup: 'popup.html' },
+      input: { popup: 'popup.html', offscreen: 'offscreen.html' },
     },
   },
 });

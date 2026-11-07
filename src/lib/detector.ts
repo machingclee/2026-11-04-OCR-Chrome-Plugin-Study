@@ -22,6 +22,10 @@ type Prepared = {
 
 let sessionPromise: Promise<ort.InferenceSession> | null = null;
 
+export function isSessionReady(): boolean {
+  return sessionPromise !== null;
+}
+
 export function loadDetector(): Promise<ort.InferenceSession> {
   if (!sessionPromise) {
     sessionPromise = ort.InferenceSession.create(chrome.runtime.getURL(DETECTOR_MODEL_PATH), {

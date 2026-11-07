@@ -1,64 +1,43 @@
 import { useCallback, useEffect, useState } from 'react';
-import { detectBoxes, type Box } from './lib/detector';
-import { PICKED_IMAGE_URL_KEY, REFERER_RULE_ID } from './shared/constants';
+import { PICKED_IMAGE_URL_KEY } from './shared/constants';
+import {
+  LAST_RESULT_KEY,
+  SERVICE_WORKER_TARGET,
+  type BoxData,
+  type DetectResponse,
+} from './shared/messages';
 
-async function fetchWithReferer(imageUrl: string, pageUrl: string): Promise<Response> {
-  const host = new URL(imageUrl).hostname;
-  const existing = await chrome.declarativeNetRequest.getSessionRules();
-  await chrome.declarativeNetRequest.updateSessionRules({
-    removeRuleIds: existing.filter((rule) => rule.id === REFERER_RULE_ID).map((rule) => rule.id),
-    addRules: [
-      {
-        id: REFERER_RULE_ID,
-        priority: 1,
-        action: {
-          type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
-          requestHeaders: [{ header: 'Referer', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: pageUrl }],
-        },
-        condition: {
-          requestDomains: [host],
-          requestMethods: [chrome.declarativeNetRequest.RequestMethod.GET],
-          resourceTypes: [chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST],
-        },
-      },
-    ],
-  });
-
-  try {
-    return await fetch(imageUrl, { credentials: 'include' });
-  } catch (cause) {
-    const rules = await chrome.declarativeNetRequest.getSessionRules();
-    const name = cause instanceof Error ? cause.name : 'Error';
-    const detail = cause instanceof Error ? cause.message : String(cause);
-    throw new Error(
-      `${detail} (${name}, ${rules.length} referer rule(s) installed, referer ${pageUrl})`,
-    );
-  } finally {
-    await chrome.declarativeNetRequest
-      .updateSessionRules({ removeRuleIds: [REFERER_RULE_ID] })
-      .catch(() => undefined);
-  }
-}
+type LastResult = { url: string; boxes: BoxData[]; ms: number };
 
 export default function App() {
   const [url, setUrl] = useState<string | null>(null);
-  const [boxes, setBoxes] = useState<Box[]>([]);
+  const [boxes, setBoxes] = useState<BoxData[]>([]);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [status, setStatus] = useState('No image picked yet.');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    chrome.storage.local
-      .get(PICKED_IMAGE_URL_KEY)
-      .then((stored) => {
-        const value = stored[PICKED_IMAGE_URL_KEY];
-        if (typeof value === 'string' && value.length > 0) {
-          setUrl(value);
-          setStatus('Picked from the page. Run the detector to find boxes.');
+    Promise.all([
+      chrome.storage.local.get(PICKED_IMAGE_URL_KEY),
+      chrome.storage.session.get(LAST_RESULT_KEY),
+    ])
+      .then(([local, session]) => {
+        const picked = local[PICKED_IMAGE_URL_KEY];
+        const last = session[LAST_RESULT_KEY] as LastResult | undefined;
+
+        if (typeof picked !== 'string' || picked.length === 0) return;
+        setUrl(picked);
+
+        if (last && last.url === picked && Array.isArray(last.boxes)) {
+          setBoxes(last.boxes);
+          setStatus(`Restored ${last.boxes.length} boxes from ${last.ms} ms.`);
+          return;
         }
+
+        setStatus('Picked from the page. Run the detector to find boxes.');
       })
-      .catch(() => setError('Cannot read the stored URL.'));
+      .catch(() => setError('Cannot read the stored state.'));
   }, []);
 
   const handlePick = useCallback(async () => {
@@ -78,28 +57,26 @@ export default function App() {
     setBusy(true);
     setError(null);
     setBoxes([]);
-    setStatus('Fetching the image and loading the model.');
-    const started = performance.now();
+    setStatus('Asking the background worker.');
 
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       const pageUrl = tab?.url?.startsWith('http') ? tab.url : undefined;
 
-      let response: Response;
-      try {
-        response = pageUrl ? await fetchWithReferer(url, pageUrl) : await fetch(url);
-      } catch (cause) {
-        const detail = cause instanceof Error ? cause.message : String(cause);
-        throw new Error(`Image request failed for ${url}: ${detail}`);
-      }
-      if (!response.ok) throw new Error(`Image fetch failed with ${response.status} for ${url}`);
-      const bitmap = await createImageBitmap(await response.blob());
-      setSize({ width: bitmap.width, height: bitmap.height });
+      const response = (await chrome.runtime.sendMessage({
+        target: SERVICE_WORKER_TARGET,
+        type: 'detect',
+        url,
+        pageUrl,
+      })) as DetectResponse | undefined;
 
-      setStatus('Running the detector.');
-      const found = await detectBoxes(bitmap);
-      setBoxes(found);
-      setStatus(`${found.length} boxes in ${Math.round(performance.now() - started)} ms.`);
+      if (!response) throw new Error('The background worker sent no answer.');
+      if (!response.ok) throw new Error(response.error);
+
+      setBoxes(response.boxes);
+      setStatus(
+        `${response.boxes.length} boxes in ${response.ms} ms (${response.warm ? 'reused session' : 'cold session'}).`,
+      );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       setStatus('Detection failed.');
