@@ -1,5 +1,5 @@
 body {
-  width: 320px;
+  width: 360px;
   margin: 0;
   padding: 16px;
   font: 14px/1.5 system-ui, sans-serif;
@@ -21,22 +21,31 @@ button {
   cursor: pointer;
 }
 
-figure {
-  margin: 12px 0 0;
+button:disabled {
+  cursor: progress;
+  opacity: 0.6;
 }
 
-img {
-  display: block;
-  max-width: 100%;
-  height: auto;
+.stage {
+  position: relative;
+  margin-top: 12px;
   border: 1px solid #ddd;
 }
 
-code {
+.stage img {
   display: block;
-  margin-top: 6px;
-  font-size: 11px;
-  line-height: 1.4;
-  color: #666;
-  word-break: break-all;
+  width: 100%;
+  height: auto;
+}
+
+.box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid #ff4d6d;
+  background: rgba(255, 77, 109, 0.12);
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
 }
