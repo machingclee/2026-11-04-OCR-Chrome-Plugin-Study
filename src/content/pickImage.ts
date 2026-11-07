@@ -1,4 +1,5 @@
-const STORAGE_KEY = 'pickedImageUrl';
+import { PICKED_IMAGE_URL_KEY } from '../shared/storageKeys';
+
 const SHIELD_ID = 'comic-translator-shield';
 const HIGHLIGHT_ID = 'comic-translator-highlight';
 const TOAST_ID = 'comic-translator-toast';
@@ -238,7 +239,7 @@ function start(): void {
     }
 
     chrome.storage.local
-      .set({ [STORAGE_KEY]: hit.url })
+      .set({ [PICKED_IMAGE_URL_KEY]: hit.url })
       .then(() => showToast(`Picked ${hit.url}`))
       .catch((cause: unknown) => {
         const message = cause instanceof Error ? cause.message : String(cause);

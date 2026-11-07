@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { detectBoxes, type Box } from './lib/detector';
+import { PICKED_IMAGE_URL_KEY } from './shared/storageKeys';
 
-const STORAGE_KEY = 'pickedImageUrl';
 const REFERER_RULE_ID = 1;
 
 async function fetchWithReferer(imageUrl: string, pageUrl: string): Promise<Response> {
@@ -52,9 +52,9 @@ export default function App() {
 
   useEffect(() => {
     chrome.storage.local
-      .get(STORAGE_KEY)
+      .get(PICKED_IMAGE_URL_KEY)
       .then((stored) => {
-        const value = stored[STORAGE_KEY];
+        const value = stored[PICKED_IMAGE_URL_KEY];
         if (typeof value === 'string' && value.length > 0) {
           setUrl(value);
           setStatus('Picked from the page. Run the detector to find boxes.');
