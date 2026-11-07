@@ -18,7 +18,6 @@ async function fetchWithReferer(imageUrl: string, pageUrl: string): Promise<Resp
           requestHeaders: [{ header: 'Referer', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: pageUrl }],
         },
         condition: {
-          initiatorDomains: [chrome.runtime.id],
           requestDomains: [host],
           requestMethods: [chrome.declarativeNetRequest.RequestMethod.GET],
           resourceTypes: [chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST],
@@ -29,6 +28,13 @@ async function fetchWithReferer(imageUrl: string, pageUrl: string): Promise<Resp
 
   try {
     return await fetch(imageUrl, { credentials: 'include' });
+  } catch (cause) {
+    const rules = await chrome.declarativeNetRequest.getSessionRules();
+    const name = cause instanceof Error ? cause.name : 'Error';
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(
+      `${detail} (${name}, ${rules.length} referer rule(s) installed, referer ${pageUrl})`,
+    );
   } finally {
     await chrome.declarativeNetRequest
       .updateSessionRules({ removeRuleIds: [REFERER_RULE_ID] })
