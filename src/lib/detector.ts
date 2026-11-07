@@ -1,14 +1,15 @@
 import * as ort from 'onnxruntime-web/wasm';
+import {
+  DETECTOR_INPUT_SIZE,
+  DETECTOR_MIN_AREA,
+  DETECTOR_MIN_MEAN_SCORE,
+  DETECTOR_MODEL_PATH,
+  DETECTOR_SCORE_THRESHOLD,
+} from '../shared/constants';
 
 ort.env.wasm.numThreads = 1;
 
 export type Box = { x: number; y: number; width: number; height: number; score: number };
-
-const INPUT_SIZE = 1024;
-const SCORE_THRESHOLD = 0.3;
-const MIN_AREA = 20;
-const MIN_MEAN_SCORE = 0.6;
-const MODEL_PATH = 'models/comictextdetector.pt.onnx';
 
 type Prepared = {
   tensor: ort.Tensor;
@@ -23,7 +24,7 @@ let sessionPromise: Promise<ort.InferenceSession> | null = null;
 
 export function loadDetector(): Promise<ort.InferenceSession> {
   if (!sessionPromise) {
-    sessionPromise = ort.InferenceSession.create(chrome.runtime.getURL(MODEL_PATH), {
+    sessionPromise = ort.InferenceSession.create(chrome.runtime.getURL(DETECTOR_MODEL_PATH), {
       executionProviders: ['wasm'],
       graphOptimizationLevel: 'all',
     }).catch((cause: unknown) => {
@@ -35,22 +36,22 @@ export function loadDetector(): Promise<ort.InferenceSession> {
 }
 
 async function prepareInput(bitmap: ImageBitmap): Promise<Prepared> {
-  const scale = Math.min(INPUT_SIZE / bitmap.width, INPUT_SIZE / bitmap.height);
+  const scale = Math.min(DETECTOR_INPUT_SIZE / bitmap.width, DETECTOR_INPUT_SIZE / bitmap.height);
   const drawWidth = Math.max(1, Math.round(bitmap.width * scale));
   const drawHeight = Math.max(1, Math.round(bitmap.height * scale));
-  const padX = Math.floor((INPUT_SIZE - drawWidth) / 2);
-  const padY = Math.floor((INPUT_SIZE - drawHeight) / 2);
+  const padX = Math.floor((DETECTOR_INPUT_SIZE - drawWidth) / 2);
+  const padY = Math.floor((DETECTOR_INPUT_SIZE - drawHeight) / 2);
 
-  const canvas = new OffscreenCanvas(INPUT_SIZE, INPUT_SIZE);
+  const canvas = new OffscreenCanvas(DETECTOR_INPUT_SIZE, DETECTOR_INPUT_SIZE);
   const context = canvas.getContext('2d');
   if (!context) throw new Error('No 2d context is available.');
 
   context.fillStyle = '#000';
-  context.fillRect(0, 0, INPUT_SIZE, INPUT_SIZE);
+  context.fillRect(0, 0, DETECTOR_INPUT_SIZE, DETECTOR_INPUT_SIZE);
   context.drawImage(bitmap, padX, padY, drawWidth, drawHeight);
 
-  const { data } = context.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE);
-  const plane = INPUT_SIZE * INPUT_SIZE;
+  const { data } = context.getImageData(0, 0, DETECTOR_INPUT_SIZE, DETECTOR_INPUT_SIZE);
+  const plane = DETECTOR_INPUT_SIZE * DETECTOR_INPUT_SIZE;
   const values = new Float32Array(plane * 3);
   for (let i = 0; i < plane; i += 1) {
     values[i] = data[i * 4] / 255;
@@ -59,7 +60,7 @@ async function prepareInput(bitmap: ImageBitmap): Promise<Prepared> {
   }
 
   return {
-    tensor: new ort.Tensor('float32', values, [1, 3, INPUT_SIZE, INPUT_SIZE]),
+    tensor: new ort.Tensor('float32', values, [1, 3, DETECTOR_INPUT_SIZE, DETECTOR_INPUT_SIZE]),
     scale,
     padX,
     padY,
@@ -80,7 +81,7 @@ function pickScoreMap(outputs: Record<string, ort.Tensor>): Float32Array | null 
       dims.length === 4
       && dims[0] === 1
       && dims[1] === 1
-      && value.data.length === INPUT_SIZE * INPUT_SIZE
+      && value.data.length === DETECTOR_INPUT_SIZE * DETECTOR_INPUT_SIZE
     ) {
       return value.data;
     }
@@ -89,13 +90,13 @@ function pickScoreMap(outputs: Record<string, ort.Tensor>): Float32Array | null 
 }
 
 function toBoxes(map: Float32Array, prepared: Prepared): Box[] {
-  const size = INPUT_SIZE;
+  const size = DETECTOR_INPUT_SIZE;
   const visited = new Uint8Array(size * size);
   const boxes: Box[] = [];
   const stack: number[] = [];
 
   for (let start = 0; start < size * size; start += 1) {
-    if (map[start] < SCORE_THRESHOLD || visited[start]) continue;
+    if (map[start] < DETECTOR_SCORE_THRESHOLD || visited[start]) continue;
 
     stack.push(start);
     visited[start] = 1;
@@ -124,16 +125,16 @@ function toBoxes(map: Float32Array, prepared: Prepared): Box[] {
           const ny = y + dy;
           if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
           const next = ny * size + nx;
-          if (visited[next] || map[next] < SCORE_THRESHOLD) continue;
+          if (visited[next] || map[next] < DETECTOR_SCORE_THRESHOLD) continue;
           visited[next] = 1;
           stack.push(next);
         }
       }
     }
 
-    if (count < MIN_AREA) continue;
+    if (count < DETECTOR_MIN_AREA) continue;
     const score = sum / count;
-    if (score < MIN_MEAN_SCORE) continue;
+    if (score < DETECTOR_MIN_MEAN_SCORE) continue;
 
     const x = (minX - prepared.padX) / prepared.scale;
     const y = (minY - prepared.padY) / prepared.scale;

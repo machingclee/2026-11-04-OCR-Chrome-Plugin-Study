@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { detectBoxes, type Box } from './lib/detector';
-import { PICKED_IMAGE_URL_KEY } from './shared/storageKeys';
-
-const REFERER_RULE_ID = 1;
+import { PICKED_IMAGE_URL_KEY, REFERER_RULE_ID } from './shared/constants';
 
 async function fetchWithReferer(imageUrl: string, pageUrl: string): Promise<Response> {
   const host = new URL(imageUrl).hostname;

@@ -1,9 +1,11 @@
-import { PICKED_IMAGE_URL_KEY } from '../shared/storageKeys';
+import {
+  HIGHLIGHT_ID,
+  IMAGE_URL_PATTERN,
+  PICKED_IMAGE_URL_KEY,
+  SHIELD_ID,
+  TOAST_ID,
+} from '../shared/constants';
 
-const SHIELD_ID = 'comic-translator-shield';
-const HIGHLIGHT_ID = 'comic-translator-highlight';
-const TOAST_ID = 'comic-translator-toast';
-const IMAGE_URL = /\.(avif|bmp|gif|jpe?g|png|svg|webp)(?:[?#]|$)/i;
 
 declare global {
   interface Window {
@@ -162,7 +164,7 @@ function findAt(doc: Document, x: number, y: number, offsetX: number, offsetY: n
     if (background) return { url: background.url, rect: shift(background.box.getBoundingClientRect(), offsetX, offsetY) };
 
     const link = element.closest('a');
-    if (link instanceof HTMLAnchorElement && IMAGE_URL.test(link.href)) {
+    if (link instanceof HTMLAnchorElement && IMAGE_URL_PATTERN.test(link.href)) {
       const rect = link.getBoundingClientRect();
       return { url: link.href, rect: shift(rect, offsetX, offsetY) };
     }
