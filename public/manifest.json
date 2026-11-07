@@ -3,8 +3,15 @@
   "name": "Comic Translator",
   "version": "0.4.0",
   "description": "A React and TypeScript extension that detects text boxes with an on-device ONNX model.",
-  "permissions": ["storage", "scripting", "activeTab"],
-  "host_permissions": ["<all_urls>"],
+  "permissions": [
+    "storage",
+    "scripting",
+    "activeTab",
+    "declarativeNetRequest"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },

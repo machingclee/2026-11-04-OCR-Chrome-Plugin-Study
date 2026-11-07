@@ -2,6 +2,39 @@ import { useCallback, useEffect, useState } from 'react';
 import { detectBoxes, type Box } from './lib/detector';
 
 const STORAGE_KEY = 'pickedImageUrl';
+const REFERER_RULE_ID = 1;
+
+async function fetchWithReferer(imageUrl: string, pageUrl: string): Promise<Response> {
+  const host = new URL(imageUrl).hostname;
+  const existing = await chrome.declarativeNetRequest.getSessionRules();
+  await chrome.declarativeNetRequest.updateSessionRules({
+    removeRuleIds: existing.filter((rule) => rule.id === REFERER_RULE_ID).map((rule) => rule.id),
+    addRules: [
+      {
+        id: REFERER_RULE_ID,
+        priority: 1,
+        action: {
+          type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
+          requestHeaders: [{ header: 'Referer', operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: pageUrl }],
+        },
+        condition: {
+          initiatorDomains: [chrome.runtime.id],
+          requestDomains: [host],
+          requestMethods: [chrome.declarativeNetRequest.RequestMethod.GET],
+          resourceTypes: [chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST],
+        },
+      },
+    ],
+  });
+
+  try {
+    return await fetch(imageUrl, { credentials: 'include' });
+  } finally {
+    await chrome.declarativeNetRequest
+      .updateSessionRules({ removeRuleIds: [REFERER_RULE_ID] })
+      .catch(() => undefined);
+  }
+}
 
 export default function App() {
   const [url, setUrl] = useState<string | null>(null);
@@ -45,9 +78,12 @@ export default function App() {
     const started = performance.now();
 
     try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const pageUrl = tab?.url?.startsWith('http') ? tab.url : undefined;
+
       let response: Response;
       try {
-        response = await fetch(url);
+        response = pageUrl ? await fetchWithReferer(url, pageUrl) : await fetch(url);
       } catch {
         throw new Error(`The browser blocked the request for ${url}`);
       }
