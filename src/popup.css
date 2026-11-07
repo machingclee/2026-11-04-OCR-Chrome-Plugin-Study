@@ -22,8 +22,12 @@ button {
 }
 
 button:disabled {
-  cursor: progress;
+  cursor: not-allowed;
   opacity: 0.6;
+}
+
+button[data-busy='true'] {
+  cursor: progress;
 }
 
 .stage {

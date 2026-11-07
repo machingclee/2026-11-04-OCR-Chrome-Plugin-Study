@@ -71,7 +71,13 @@ export default function App() {
         <button type="button" onClick={handlePick}>
           Pick an image on this page
         </button>
-        <button type="button" onClick={handleDetect} disabled={!url || busy}>
+        <button
+          type="button"
+          onClick={handleDetect}
+          disabled={!url || busy}
+          data-busy={busy}
+          title={url ? undefined : 'Pick an image on the page first.'}
+        >
           {busy ? 'Working' : 'Detect boxes'}
         </button>
       </div>
