@@ -39,12 +39,22 @@ function isPickerUi(element: Element): boolean {
   return element.id === SHIELD_ID || element.id === HIGHLIGHT_ID || element.id === TOAST_ID;
 }
 
+function absoluteUrl(value: string): string {
+  if (!value) return '';
+  try {
+    return new URL(value, document.baseURI).href;
+  } catch {
+    return '';
+  }
+}
+
 function imageUrl(image: HTMLImageElement): string {
-  if (image.currentSrc) return image.currentSrc;
-  const src = image.getAttribute('src');
-  if (src) return src;
-  const first = image.getAttribute('srcset')?.split(',')[0]?.trim().split(/\s+/)[0];
-  return first || '';
+  const raw =
+    image.currentSrc ||
+    image.getAttribute('src') ||
+    image.getAttribute('srcset')?.split(',')[0]?.trim().split(/\s+/)[0] ||
+    '';
+  return absoluteUrl(raw);
 }
 
 function isSpacer(image: HTMLImageElement, url: string): boolean {
@@ -219,6 +229,11 @@ function start(): void {
     }
     if (!hit) {
       showToast('No image under the pointer.');
+      return;
+    }
+
+    if (hit.url.startsWith('blob:')) {
+      showToast('This image has no stable URL, so it cannot be fetched later.');
       return;
     }
 

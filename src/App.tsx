@@ -45,8 +45,13 @@ export default function App() {
     const started = performance.now();
 
     try {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`Image fetch failed with ${response.status}.`);
+      let response: Response;
+      try {
+        response = await fetch(url);
+      } catch {
+        throw new Error(`The browser blocked the request for ${url}`);
+      }
+      if (!response.ok) throw new Error(`Image fetch failed with ${response.status} for ${url}`);
       const bitmap = await createImageBitmap(await response.blob());
       setSize({ width: bitmap.width, height: bitmap.height });
 
