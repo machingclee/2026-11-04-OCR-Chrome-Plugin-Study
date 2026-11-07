@@ -90,8 +90,9 @@ export default function App() {
       let response: Response;
       try {
         response = pageUrl ? await fetchWithReferer(url, pageUrl) : await fetch(url);
-      } catch {
-        throw new Error(`The browser blocked the request for ${url}`);
+      } catch (cause) {
+        const detail = cause instanceof Error ? cause.message : String(cause);
+        throw new Error(`Image request failed for ${url}: ${detail}`);
       }
       if (!response.ok) throw new Error(`Image fetch failed with ${response.status} for ${url}`);
       const bitmap = await createImageBitmap(await response.blob());
