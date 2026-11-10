@@ -9,8 +9,12 @@ const HORIZONTAL_GAP_TOLERANCE = 0.35;
 /** Largest offset across the line that still counts as the same line. */
 const ALIGN_TOLERANCE = 0.25;
 
-/** Two glyphs of very different sizes belong to different lines. */
-const SIZE_RATIO_TOLERANCE = 1.8;
+/**
+ * Two glyphs of very different sizes belong to different lines. The window is
+ * wide because Japanese sets small kana such as っ and ゃ at about 70 percent of
+ * the full size, and those glyphs still belong to their line.
+ */
+const SIZE_RATIO_TOLERANCE = 2.2;
 
 export type TextDirection = 'vertical' | 'horizontal';
 
@@ -34,7 +38,7 @@ function gapBetween(a: Box, b: Box): { x: number; y: number } {
  * two columns sit further apart than two glyphs of one row, so the tight
  * horizontal tolerance keeps a column from swallowing its neighbour.
  */
-function isNeighbour(a: Box, b: Box): boolean {
+function isNeighbour(a: Box, b: Box, scale: number): boolean {
     const smaller = Math.min(charSize(a), charSize(b));
     const larger = Math.max(charSize(a), charSize(b));
     if (larger > smaller * SIZE_RATIO_TOLERANCE) return false;
@@ -43,9 +47,18 @@ function isNeighbour(a: Box, b: Box): boolean {
     const dx = Math.abs(a.x + a.width / 2 - (b.x + b.width / 2));
     const dy = Math.abs(a.y + a.height / 2 - (b.y + b.height / 2));
 
-    const sameColumn = dx <= ALIGN_TOLERANCE * smaller && gap.y <= VERTICAL_GAP_TOLERANCE * smaller;
-    const sameRow = dy <= ALIGN_TOLERANCE * smaller && gap.x <= HORIZONTAL_GAP_TOLERANCE * smaller;
+    const sameColumn = dx <= ALIGN_TOLERANCE * scale && gap.y <= VERTICAL_GAP_TOLERANCE * scale;
+    const sameRow = dy <= ALIGN_TOLERANCE * scale && gap.x <= HORIZONTAL_GAP_TOLERANCE * scale;
     return sameColumn || sameRow;
+}
+
+/**
+ * The typical glyph of the page, not of the pair. A small kana must not shrink
+ * the tolerance that joins it to the glyph beside it.
+ */
+function pageScale(boxes: Box[]): number {
+    const sizes = boxes.map(charSize).sort((a, b) => a - b);
+    return sizes[Math.floor(sizes.length / 2)] ?? 1;
 }
 
 function extentOf(boxes: Box[]): Extent {
@@ -88,7 +101,7 @@ export function dropNoise(boxes: Box[]): Box[] {
 }
 
 /** Join glyphs that sit close enough to belong to one line of text. */
-function groupNeighbours(boxes: Box[]): Box[][] {
+function groupNeighbours(boxes: Box[], scale: number): Box[][] {
     const parent = boxes.map((_, index) => index);
     const find = (index: number): number => {
         if (parent[index] === index) return index;
@@ -98,7 +111,7 @@ function groupNeighbours(boxes: Box[]): Box[][] {
 
     for (let i = 0; i < boxes.length; i += 1) {
         for (let j = i + 1; j < boxes.length; j += 1) {
-            if (!isNeighbour(boxes[i], boxes[j])) continue;
+            if (!isNeighbour(boxes[i], boxes[j], scale)) continue;
             parent[find(i)] = find(j);
         }
     }
@@ -118,7 +131,8 @@ function groupNeighbours(boxes: Box[]): Box[][] {
  * a line, not a glyph. A line taller than it is wide holds a vertical column.
  */
 export function toTextLines(boxes: Box[]): TextLine[] {
-    return groupNeighbours(boxes).map((group) => {
+    const scale = pageScale(boxes);
+    return groupNeighbours(boxes, scale).map((group) => {
         const extent = extentOf(group);
         const width = extent.right - extent.left;
         const height = extent.bottom - extent.top;
