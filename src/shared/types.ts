@@ -12,6 +12,7 @@ export type BoxData = {
     width: number;
     height: number;
     score: number;
+    direction: 'vertical' | 'horizontal';
 };
 
 /** Popup to service worker. */

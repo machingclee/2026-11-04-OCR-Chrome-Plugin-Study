@@ -73,8 +73,9 @@ export default function App() {
 
             setBoxes(response.boxes);
             setPreviews(response.previews);
+            const vertical = response.boxes.filter((box) => box.direction === 'vertical').length;
             setStatus(
-                `${response.boxes.length} boxes, ${response.previews.length} crops, ${response.ms} ms (${response.warm ? 'reused session' : 'cold session'}).`,
+                `${response.boxes.length} lines (${vertical} vertical), ${response.previews.length} crops, ${response.ms} ms (${response.warm ? 'reused session' : 'cold session'}).`,
             );
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));
@@ -146,6 +147,7 @@ export default function App() {
                             <span
                                 key={`${box.x}-${box.y}-${box.width}-${box.height}`}
                                 className="box"
+                                data-direction={box.direction}
                                 style={{
                                     left: `${(box.x / size.width) * 100}%`,
                                     top: `${(box.y / size.height) * 100}%`,

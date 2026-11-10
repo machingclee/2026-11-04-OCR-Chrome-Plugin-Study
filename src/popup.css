@@ -78,3 +78,8 @@ button[data-busy='true'] {
   border: 1px solid #ddd;
   background: #fff;
 }
+
+.box[data-direction='horizontal'] {
+  border-color: #2f7bd8;
+  background: rgba(47, 123, 216, 0.12);
+}
