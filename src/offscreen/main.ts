@@ -1,4 +1,5 @@
 import { detectBoxes, isSessionReady } from '../lib/detector';
+import { cropPreviews } from '../lib/regions';
 import { OFFSCREEN_TARGET } from '../shared/constants';
 import type {
     DetectResponse,
@@ -6,6 +7,8 @@ import type {
     OffscreenDetectRequest,
 } from '../shared/types';
 import serviceWorkerResponseFactory from '../shared/factories/serviceWorkerResponseFactory';
+
+const MAX_PREVIEWS = 60;
 
 async function runDetection(request: OffscreenDetectRequest): Promise<DetectResponse> {
     const started = performance.now();
@@ -19,7 +22,8 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
 
         const bitmap = await createImageBitmap(await response.blob());
         const boxes = await detectBoxes(bitmap);
-        return { ok: true, boxes, ms: Math.round(performance.now() - started), warm };
+        const previews = cropPreviews(bitmap, boxes.slice(0, MAX_PREVIEWS));
+        return { ok: true, boxes, previews, ms: Math.round(performance.now() - started), warm };
     } catch (cause) {
         return { ok: false, error: cause instanceof Error ? cause.message : String(cause) };
     }

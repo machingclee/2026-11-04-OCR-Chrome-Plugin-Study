@@ -53,3 +53,28 @@ button[data-busy='true'] {
   display: flex;
   gap: 8px;
 }
+
+.regions h2 {
+  font-size: 13px;
+  margin: 16px 0 8px;
+}
+
+.regions ol {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 0 0;
+  list-style: none;
+  overflow-x: auto;
+}
+
+.regions li {
+  flex: 0 0 auto;
+}
+
+.regions img {
+  display: block;
+  max-height: 120px;
+  border: 1px solid #ddd;
+  background: #fff;
+}

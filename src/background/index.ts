@@ -54,7 +54,12 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
 
         if (response.ok) {
             await chrome.storage.session.set({
-                [LAST_RESULT_KEY]: { imageUrl: request.imageUrl, boxes: response.boxes, ms: response.ms },
+                [LAST_RESULT_KEY]: {
+                    imageUrl: request.imageUrl,
+                    boxes: response.boxes,
+                    previews: response.previews,
+                    ms: response.ms,
+                },
             });
         }
         return response;

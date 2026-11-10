@@ -3,11 +3,12 @@ import { CONTENT_SCRIPT_FILE, LAST_RESULT_KEY, PICKED_IMAGE_URL_KEY } from './sh
 import type { BoxData, DetectResponse } from './shared/types';
 import serviceWorkerRequestFactory from './shared/factories/serviceWorkerRequestFactory';
 
-type LastResult = { imageUrl: string; boxes: BoxData[]; ms: number };
+type LastResult = { imageUrl: string; boxes: BoxData[]; previews?: string[]; ms: number };
 
 export default function App() {
     const [imageUrl, setImageUrl] = useState<string | null>(null);
     const [boxes, setBoxes] = useState<BoxData[]>([]);
+    const [previews, setPreviews] = useState<string[]>([]);
     const [size, setSize] = useState({ width: 0, height: 0 });
     const [status, setStatus] = useState('No image picked yet.');
     const [busy, setBusy] = useState(false);
@@ -33,6 +34,7 @@ export default function App() {
                 // don't do it again if we pick the same image
                 if (lastResult && lastResult.imageUrl === pickedImageUrl && Array.isArray(lastResult.boxes)) {
                     setBoxes(lastResult.boxes);
+                    setPreviews(Array.isArray(lastResult.previews) ? lastResult.previews : []);
                     setStatus(`Restored ${lastResult.boxes.length} boxes from ${lastResult.ms} ms.`);
                     return;
                 }
@@ -59,6 +61,7 @@ export default function App() {
         setBusy(true);
         setError(null);
         setBoxes([]);
+        setPreviews([]);
         setStatus('Asking the background worker.');
 
         try {
@@ -69,8 +72,9 @@ export default function App() {
             if (!response.ok) throw new Error(response.error);
 
             setBoxes(response.boxes);
+            setPreviews(response.previews);
             setStatus(
-                `${response.boxes.length} boxes in ${response.ms} ms (${response.warm ? 'reused session' : 'cold session'}).`,
+                `${response.boxes.length} boxes, ${response.previews.length} crops, ${response.ms} ms (${response.warm ? 'reused session' : 'cold session'}).`,
             );
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));
@@ -152,6 +156,19 @@ export default function App() {
                         ))
                         : null}
                 </div>
+            ) : null}
+
+            {previews.length > 0 ? (
+                <section className="regions">
+                    <h2>Text regions</h2>
+                    <ol>
+                        {previews.map((preview, index) => (
+                            <li key={index}>
+                                <img src={preview} alt={`Text region ${index + 1}`} />
+                            </li>
+                        ))}
+                    </ol>
+                </section>
             ) : null}
         </main>
     );

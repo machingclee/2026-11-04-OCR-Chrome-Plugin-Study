@@ -49,6 +49,6 @@ export type IncomingMessage =
     | OffscreenPing;
 
 export type DetectResponse =
-    | { ok: true; boxes: BoxData[]; ms: number; warm: boolean }
+    | { ok: true; boxes: BoxData[]; previews: string[]; ms: number; warm: boolean }
     | { ok: false; error: string };
 
