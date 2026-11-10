@@ -32,6 +32,18 @@ export const DETECTOR_MIN_AREA = 20;
 export const DETECTOR_MIN_MEAN_SCORE = 0.6;
 
 /** Japanese recogniser, PP-OCRv6 medium in ONNX, plus its charset. */
+/** Bubble segmentation, a YOLOv8 seg export from the target project's assets. */
+export const BUBBLE_MODEL_PATH = 'models/bubble.onnx';
+export const BUBBLE_INPUT_SIZE = 640;
+export const BUBBLE_SCORE_THRESHOLD = 0.3;
+export const BUBBLE_NMS = 0.45;
+export const BUBBLE_MASK_THRESHOLD = 0.5;
+
+/** AOT-GAN inpainting at 512 square, trained to remove text. */
+export const INPAINT_MODEL_PATH = 'models/aot_inpaint_512.onnx';
+export const INPAINT_INPUT_SIZE = 512;
+export const INPAINT_MASK_NAME = 'mask';
+
 export const OCR_MODEL_PATH = 'models/ppocr_v6_medium_rec.onnx';
 export const OCR_DICT_PATH = 'models/ppocr_v6_dict.txt';
 export const OCR_INPUT_HEIGHT = 48;

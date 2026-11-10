@@ -26,5 +26,8 @@ export type TextDirection = 'vertical' | 'horizontal';
 /** One line of text, with its own ruby and its reading direction. */
 export type TextLine = Box & { direction: TextDirection; ruby: Box[] };
 
+/** A union of every bubble mask, in the 640 grid the bubble model uses. */
+export type BubbleMask = { data: Float32Array; scale: number; padX: number; padY: number; size: number };
+
 /** What the recogniser returns for one line. */
 export type OcrResult = { text: string; confidence: number };

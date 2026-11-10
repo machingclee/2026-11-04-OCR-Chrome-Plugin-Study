@@ -1,17 +1,28 @@
 import { eraseGlyphs } from './erase';
-import type { Box, TextMask } from './types';
+import { inpaintBox } from './inpaint';
+import type { Box, BubbleMask, TextMask } from './types';
 
 const PREVIEW_MAX_WIDTH = 160;
 const PREVIEW_QUALITY = 0.8;
 
 /**
  * Crop every box out of the decoded bitmap and return one preview per box.
- * All crops share one scale so the strip keeps the relative size of a region.
- * With a mask, the glyphs are painted over first, so the strip shows the page
- * the way it will look once the text is gone.
+ * With a mask the glyphs are removed first: the inpaint model redraws the paper
+ * behind them, and the plain fill stays as the fallback when it is not loaded.
  */
-export function cropPreviews(bitmap: ImageBitmap, boxes: Box[], mask?: TextMask): string[] {
+export async function cropPreviews(
+    bitmap: ImageBitmap,
+    boxes: Box[],
+    mask?: TextMask,
+    bubbles?: BubbleMask,
+): Promise<string[]> {
     if (boxes.length === 0) return [];
+
+    if (mask) {
+        const previews: string[] = [];
+        for (const box of boxes) previews.push(await inpaintBox(bitmap, box, mask, bubbles));
+        return previews;
+    }
 
     const widest = Math.max(...boxes.map((box) => box.width));
     const scale = Math.min(1, PREVIEW_MAX_WIDTH / widest);
@@ -25,22 +36,9 @@ export function cropPreviews(bitmap: ImageBitmap, boxes: Box[], mask?: TextMask)
 
         const context = canvas.getContext('2d');
         if (!context) throw new Error('The browser refused a 2D context for the crop.');
-        context.drawImage(
-            bitmap,
-            box.x,
-            box.y,
-            box.width,
-            box.height,
-            0,
-            0,
-            width,
-            height
-        );
-        if (mask) {
-            const image = context.getImageData(0, 0, width, height);
-            eraseGlyphs(image, box, mask);
-            context.putImageData(image, 0, 0);
-        }
+        context.drawImage(bitmap, box.x, box.y, box.width, box.height, 0, 0, width, height);
         return canvas.toDataURL('image/webp', PREVIEW_QUALITY);
     });
 }
+
+export { eraseGlyphs };
