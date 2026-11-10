@@ -104,15 +104,15 @@ function gapBetween(a: Box, b: Box): { x: number; y: number } {
 }
 
 /**
- * Ruby is the small kana printed beside a kanji to give its reading. The
- * detector returns it as its own line, so it would sit in the strip as a
- * floating crop. Attach it to the line it annotates and keep the crop clean.
+ * Separate the ruby lines from the body lines. The returned list holds body lines
+ * only, and each of them carries the ruby that sat beside it, so nothing is lost
+ * when the crop is cut.
  *
  * The test is relative: a box is ruby when the host beside it is at least twice
  * as thick. A page median would break on a page that mixes sizes, and vertical
  * ruby is thin while horizontal ruby is short.
  */
-export function attachRuby(lines: TextLine[]): TextLine[] {
+export function separateRuby(lines: TextLine[]): TextLine[] {
     if (lines.length <= 1) return lines;
 
     // Thickest first, so a candidate can only be measured against lines that are
@@ -175,5 +175,5 @@ export function toOrderedTextLines(detBoxes: Box[], blkBoxes: TextBlock[] = []):
         ? detBoxes
         : detBoxes.filter((box) => blkBoxes.some((block) => centreInside(box, block)));
     const merged = mergeAligned(dropNoise(kept));
-    return orderForReading(attachRuby(toTextLines(merged)));
+    return orderForReading(separateRuby(toTextLines(merged)));
 }

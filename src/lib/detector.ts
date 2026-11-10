@@ -204,7 +204,7 @@ function intersectionOverUnion(a: TextBlock, b: TextBlock): number {
  * The blk output lists candidate text blocks as rows of (cx, cy, w, h, object, classes).
  * The result is a gate, not a source of geometry, and it also keeps the thin ruby
  * lines apart: a block covers a whole bubble, so a ruby column stays a separate
- * line for readingOrder.attachRuby to attach to its host.
+ * line for readingOrder.separateRuby to place on its host.
  */
 function toBlkBoxes(tensor: ort.Tensor, prepared: Prepared): TextBlock[] {
     const data = tensor.data as Float32Array;
