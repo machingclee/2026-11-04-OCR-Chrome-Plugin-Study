@@ -13,18 +13,6 @@ export type MessageTarget =
 
 export type MessageType = 'detect' | 'ping';
 
-/**
- * Shape of any message that arrives through chrome.runtime.onMessage.
- * Fields stay optional because the value crosses a boundary that carries no
- * type information, and each field keeps its concrete type rather than unknown.
- */
-export type IncomingMessage = {
-  target?: MessageTarget;
-  type?: MessageType;
-  imageUrl?: string;
-  tabPageUrl?: string;
-};
-
 export type BoxData = {
   x: number;
   y: number;
@@ -53,6 +41,17 @@ export type OffscreenPing = {
   target: typeof OFFSCREEN_TARGET;
   type: 'ping';
 };
+
+/**
+ * Every message that can arrive through chrome.runtime.onMessage.
+ * This is a union rather than one loose shape, so a listener that narrows on
+ * target also narrows the fields: a renamed field then fails the build instead
+ * of arriving as undefined.
+ */
+export type IncomingMessage =
+  | DetectRequest
+  | OffscreenDetectRequest
+  | OffscreenPing;
 
 export type DetectResponse =
   | { ok: true; boxes: BoxData[]; ms: number; warm: boolean }

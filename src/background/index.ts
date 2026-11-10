@@ -4,6 +4,7 @@ import {
   OFFSCREEN_DOCUMENT_PATH,
   OFFSCREEN_TARGET,
   SERVICE_WORKER_TARGET,
+  type DetectRequest,
   type DetectResponse,
   type IncomingMessage,
 } from '../shared/messages';
@@ -84,7 +85,7 @@ async function removeRefererRule(): Promise<void> {
     .catch(() => undefined);
 }
 
-async function runDetection(request: IncomingMessage): Promise<DetectResponse> {
+async function runDetection(request: DetectRequest): Promise<DetectResponse> {
   if (typeof request.imageUrl !== 'string') return { ok: false, error: 'Missing image url.' };
 
   await ensureOffscreen();
@@ -114,7 +115,7 @@ async function runDetection(request: IncomingMessage): Promise<DetectResponse> {
   }
 }
 
-type RequestHandler = (request: IncomingMessage) => Promise<DetectResponse>;
+type RequestHandler = (request: DetectRequest) => Promise<DetectResponse>;
 
 const handlers: Record<string, RequestHandler> = { detect: runDetection };
 
@@ -123,7 +124,7 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
   const request = message as IncomingMessage | undefined;
   if (!request || request.target !== SERVICE_WORKER_TARGET) return false;
 
-  const handler = request.type ? handlers[request.type] : undefined;
+  const handler = handlers[request.type];
   if (!handler) return false;
 
   void handler(request).then(sendResponse);

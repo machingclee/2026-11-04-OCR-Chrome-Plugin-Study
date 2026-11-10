@@ -34,8 +34,6 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
     return false;
   }
 
-  if (request.type !== 'detect' || typeof request.imageUrl !== 'string') return false;
-
-  void runDetection({ target: OFFSCREEN_TARGET, type: 'detect', imageUrl: request.imageUrl }).then(sendResponse);
+  void runDetection(request).then(sendResponse);
   return true;
 });
