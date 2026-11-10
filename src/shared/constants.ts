@@ -12,6 +12,9 @@ export const OFFSCREEN_HTML = 'offscreen.html';
 export const SERVICE_WORKER_TARGET = 'service-worker';
 export const OFFSCREEN_TARGET = 'offscreen';
 
+/** File injected into the page when the user picks an image. */
+export const CONTENT_SCRIPT_FILE = 'pickImage.js';
+
 /** Storage key that carries a picked image URL from the content script. */
 export const PICKED_IMAGE_URL_KEY = 'pickedImageUrl';
 

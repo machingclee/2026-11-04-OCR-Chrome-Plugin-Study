@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { LAST_RESULT_KEY, PICKED_IMAGE_URL_KEY } from './shared/constants';
+import { CONTENT_SCRIPT_FILE, LAST_RESULT_KEY, PICKED_IMAGE_URL_KEY } from './shared/constants';
 import type { BoxData, DetectResponse } from './shared/types';
 import serviceWorkerRequestFactory from './shared/factories/serviceWorkerRequestFactory';
 
@@ -47,7 +47,7 @@ export default function App() {
         try {
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
             if (!tab?.id) throw new Error('There is no active tab.');
-            await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['pickImage.js'] });
+            await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: [CONTENT_SCRIPT_FILE] });
             window.close();
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));

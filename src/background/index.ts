@@ -67,10 +67,10 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
 
 
 /**
-  * Create the offscreen document when it is absent. Chrome loads offscreen.html,
-  * and the script that the page references starts in a new context.
-  * The caller pings after this call, because the document can exist before its listener answers.
-  */
+ * Create the offscreen document when it is absent. Chrome loads offscreen.html,
+ * and the script that the page references starts in a new context.
+ * The caller pings after this call, because the document can exist before its listener answers.
+ */
 async function createOffscreenDocumentContext(): Promise<void> {
     const contexts = await chrome.runtime.getContexts({
         contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],

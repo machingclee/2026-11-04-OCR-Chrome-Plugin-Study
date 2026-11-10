@@ -1,3 +1,4 @@
+import { CONTENT_SCRIPT_FILE } from './src/shared/constants';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
@@ -10,7 +11,7 @@ export default defineConfig({
             },
             name: 'comicTranslatorPicker',
             formats: ['iife'],
-            fileName: (_format, entryName) => `${entryName}.js`,
+            fileName: () => CONTENT_SCRIPT_FILE,
         },
     },
 });
