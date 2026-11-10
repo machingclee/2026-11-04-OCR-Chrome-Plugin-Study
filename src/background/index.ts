@@ -20,12 +20,14 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
   const request = message as IncomingMessage | undefined;
   if (!request || request.target !== SERVICE_WORKER_TARGET) return false;
 
-  if (request.type !== 'detect') return false;
+  if (request.type === 'detect') {
+    void runDetection(request).then((detectionResponse) => {
+      sendResponse(detectionResponse);
+    });
+    return true;
+  }
 
-  void runDetection(request).then((detectionResponse) => {
-    sendResponse(detectionResponse);
-  });
-  return true;
+  return false;
 });
 
 chrome.runtime.onInstalled.addListener(() => {
