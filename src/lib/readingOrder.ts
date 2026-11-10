@@ -53,12 +53,14 @@ function isNeighbour(a: Box, b: Box, scale: number): boolean {
 }
 
 /**
- * The typical glyph of the page, not of the pair. A small kana must not shrink
- * the tolerance that joins it to the glyph beside it.
+ * The size of a full glyph on this page. Ruby is small and often outnumbers the
+ * text it annotates, so the upper quartile wins over the median: a page full of
+ * furigana must not shrink the tolerance that joins the main glyphs.
  */
 function pageScale(boxes: Box[]): number {
     const sizes = boxes.map(charSize).sort((a, b) => a - b);
-    return sizes[Math.floor(sizes.length / 2)] ?? 1;
+    const upper = sizes.slice(Math.floor(sizes.length / 2));
+    return upper[Math.floor(upper.length / 2)] ?? sizes[sizes.length - 1] ?? 1;
 }
 
 function extentOf(boxes: Box[]): Extent {
