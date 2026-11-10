@@ -1,8 +1,8 @@
 /**
- * Constants shared across bundles. Popup, content script, and detector are
- * separate outputs, so a value that two of them depend on must live here and
- * not in a literal on each side.
- */
+  * Constants shared across bundles. Popup, content script, and detector are
+  * separate outputs, so a value that two of them depend on must live here and
+  * not in a literal on each side.
+  */
 
 /** HTML entry points. The Vite build and the runtime must agree on these names. */
 export const POPUP_HTML = 'popup.html';
