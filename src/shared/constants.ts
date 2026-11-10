@@ -8,8 +8,15 @@
 export const POPUP_HTML = 'popup.html';
 export const OFFSCREEN_HTML = 'offscreen.html';
 
+/** Runtime channel names that every message carries. */
+export const SERVICE_WORKER_TARGET = 'service-worker';
+export const OFFSCREEN_TARGET = 'offscreen';
+
 /** Storage key that carries a picked image URL from the content script. */
 export const PICKED_IMAGE_URL_KEY = 'pickedImageUrl';
+
+/** Last successful result, readable by the popup after it reopens. */
+export const LAST_RESULT_KEY = 'lastDetection';
 
 /** Id of the temporary declarativeNetRequest rule that sets Referer. */
 export const REFERER_RULE_ID = 1;

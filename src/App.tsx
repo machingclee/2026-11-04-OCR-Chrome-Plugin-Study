@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { PICKED_IMAGE_URL_KEY } from './shared/constants';
-import {
-  LAST_RESULT_KEY,
-  type BoxData,
-  type DetectResponse,
-} from './shared/messages';
+import { LAST_RESULT_KEY, PICKED_IMAGE_URL_KEY } from './shared/constants';
+import type { BoxData, DetectResponse } from './shared/types';
 import serviceWorkerRequestFactory from './shared/serviceWorkerRequestFactory';
 
 type LastResult = { imageUrl: string; boxes: BoxData[]; ms: number };

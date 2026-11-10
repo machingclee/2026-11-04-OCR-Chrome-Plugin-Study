@@ -1,12 +1,11 @@
-import { OFFSCREEN_HTML, REFERER_RULE_ID } from '../shared/constants';
 import offscreenRequestFactory from '../shared/offscreenRequestFactory';
 import {
   LAST_RESULT_KEY,
+  OFFSCREEN_HTML,
+  REFERER_RULE_ID,
   SERVICE_WORKER_TARGET,
-  type DetectRequest,
-  type DetectResponse,
-  type IncomingMessage,
-} from '../shared/messages';
+} from '../shared/constants';
+import type { DetectRequest, DetectResponse, IncomingMessage } from '../shared/types';
 
 let offscreenReady: Promise<void> | null = null;
 

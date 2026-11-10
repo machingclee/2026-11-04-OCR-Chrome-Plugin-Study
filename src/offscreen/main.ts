@@ -1,10 +1,10 @@
 import { detectBoxes, isSessionReady } from '../lib/detector';
-import {
-  OFFSCREEN_TARGET,
-  type DetectResponse,
-  type IncomingMessage,
-  type OffscreenDetectRequest,
-} from '../shared/messages';
+import { OFFSCREEN_TARGET } from '../shared/constants';
+import type {
+  DetectResponse,
+  IncomingMessage,
+  OffscreenDetectRequest,
+} from '../shared/types';
 import serviceWorkerResponseFactory from '../shared/serviceWorkerResponseFactory';
 
 async function runDetection(request: OffscreenDetectRequest): Promise<DetectResponse> {

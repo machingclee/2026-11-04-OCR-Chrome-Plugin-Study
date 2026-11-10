@@ -1,4 +1,5 @@
-import { SERVICE_WORKER_TARGET, type DetectRequest } from './messages';
+import { SERVICE_WORKER_TARGET } from './constants';
+import type { DetectRequest } from './types';
 
 /** Messages addressed to the service worker. */
 function detect(imageUrl: string, tabPageUrl?: string): DetectRequest {

@@ -1,9 +1,4 @@
-/** Every extension context receives every runtime message, so each one carries a target. */
-export const SERVICE_WORKER_TARGET = 'service-worker';
-export const OFFSCREEN_TARGET = 'offscreen';
-
-/** Last successful result, readable by the popup after a restart of the popup. */
-export const LAST_RESULT_KEY = 'lastDetection';
+import { OFFSCREEN_TARGET, SERVICE_WORKER_TARGET } from './constants';
 
 export type MessageTarget =
   | typeof SERVICE_WORKER_TARGET
