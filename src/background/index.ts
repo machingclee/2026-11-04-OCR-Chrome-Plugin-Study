@@ -1,4 +1,4 @@
-import offscreenRequestFactory from '../shared/offscreenRequestFactory';
+import offscreenRequestFactory from '../shared/factories/offscreenRequestFactory';
 import {
   LAST_RESULT_KEY,
   OFFSCREEN_HTML,

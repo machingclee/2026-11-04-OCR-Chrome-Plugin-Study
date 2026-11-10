@@ -5,7 +5,7 @@ import type {
   IncomingMessage,
   OffscreenDetectRequest,
 } from '../shared/types';
-import serviceWorkerResponseFactory from '../shared/serviceWorkerResponseFactory';
+import serviceWorkerResponseFactory from '../shared/factories/serviceWorkerResponseFactory';
 
 async function runDetection(request: OffscreenDetectRequest): Promise<DetectResponse> {
   const started = performance.now();

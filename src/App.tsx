@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { LAST_RESULT_KEY, PICKED_IMAGE_URL_KEY } from './shared/constants';
 import type { BoxData, DetectResponse } from './shared/types';
-import serviceWorkerRequestFactory from './shared/serviceWorkerRequestFactory';
+import serviceWorkerRequestFactory from './shared/factories/serviceWorkerRequestFactory';
 
 type LastResult = { imageUrl: string; boxes: BoxData[]; ms: number };
 

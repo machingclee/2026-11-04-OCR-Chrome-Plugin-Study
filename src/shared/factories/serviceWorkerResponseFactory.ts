@@ -1,4 +1,4 @@
-import type { PingResponse } from './types';
+import type { PingResponse } from '../types';
 
 /** Responses addressed to the service worker. */
 function ping(): PingResponse {

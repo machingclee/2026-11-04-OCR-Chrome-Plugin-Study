@@ -1,5 +1,5 @@
-import { OFFSCREEN_TARGET } from './constants';
-import type { OffscreenDetectRequest, OffscreenPing } from './types';
+import { OFFSCREEN_TARGET } from '../constants';
+import type { OffscreenDetectRequest, OffscreenPing } from '../types';
 
 /** Messages addressed to the offscreen document. */
 function detect(imageUrl: string): OffscreenDetectRequest {
