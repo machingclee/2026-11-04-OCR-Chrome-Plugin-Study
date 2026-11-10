@@ -8,10 +8,10 @@ import {
   type DetectResponse,
 } from './shared/messages';
 
-type LastResult = { url: string; boxes: BoxData[]; ms: number };
+type LastResult = { imageUrl: string; boxes: BoxData[]; ms: number };
 
 export default function App() {
-  const [url, setUrl] = useState<string | null>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [boxes, setBoxes] = useState<BoxData[]>([]);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [status, setStatus] = useState('No image picked yet.');
@@ -19,20 +19,26 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // start working when we open this popup again,
+    // at this point our newly picked image url is nonempty.
     Promise.all([
       chrome.storage.local.get(PICKED_IMAGE_URL_KEY),
       chrome.storage.session.get(LAST_RESULT_KEY),
     ])
       .then(([local, session]) => {
-        const picked = local[PICKED_IMAGE_URL_KEY];
-        const last = session[LAST_RESULT_KEY] as LastResult | undefined;
+        const pickedImageUrl = local[PICKED_IMAGE_URL_KEY];
+        const lastResult = session[LAST_RESULT_KEY] as LastResult | undefined;
 
-        if (typeof picked !== 'string' || picked.length === 0) return;
-        setUrl(picked);
+        if (typeof pickedImageUrl !== 'string' || pickedImageUrl.length === 0) {
+          return;
+        }
 
-        if (last && last.url === picked && Array.isArray(last.boxes)) {
-          setBoxes(last.boxes);
-          setStatus(`Restored ${last.boxes.length} boxes from ${last.ms} ms.`);
+        setImageUrl(pickedImageUrl);
+
+        // don't do it again if we pick the same image
+        if (lastResult && lastResult.imageUrl === pickedImageUrl && Array.isArray(lastResult.boxes)) {
+          setBoxes(lastResult.boxes);
+          setStatus(`Restored ${lastResult.boxes.length} boxes from ${lastResult.ms} ms.`);
           return;
         }
 
@@ -54,23 +60,15 @@ export default function App() {
   }, []);
 
   const handleDetect = useCallback(async () => {
-    if (!url) return;
+    if (!imageUrl) return;
     setBusy(true);
     setError(null);
     setBoxes([]);
     setStatus('Asking the background worker.');
 
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      const pageUrl = tab?.url?.startsWith('http') ? tab.url : undefined;
-
-      const request: DetectRequest = {
-        target: SERVICE_WORKER_TARGET,
-        type: 'detect',
-        url,
-        pageUrl,
-      };
-      const response = (await chrome.runtime.sendMessage(request)) as DetectResponse | undefined;
+      const tabPageUrl = await getCurrentPageUrl();
+      const response = await dispatchDetectionRequest(tabPageUrl, imageUrl);
 
       if (!response) throw new Error('The background worker sent no answer.');
       if (!response.ok) throw new Error(response.error);
@@ -85,7 +83,35 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }, [url]);
+
+    /**
+     * Dispatch to service worker
+     */
+    async function dispatchDetectionRequest(
+      tabPageUrl: string | undefined,
+      targetImageUrl: string
+    ) {
+      if (!targetImageUrl) {
+        return
+      }
+
+      const request: DetectRequest = {
+        target: SERVICE_WORKER_TARGET,
+        type: 'detect',
+        imageUrl: targetImageUrl,
+        tabPageUrl,
+      };
+
+      const response = (await chrome.runtime.sendMessage(request)) as DetectResponse | undefined;
+      return response;
+    }
+
+    async function getCurrentPageUrl() {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const pageUrl = tab?.url?.startsWith('http') ? tab.url : undefined;
+      return pageUrl;
+    }
+  }, [imageUrl]);
 
   return (
     <main>
@@ -99,9 +125,9 @@ export default function App() {
         <button
           type="button"
           onClick={handleDetect}
-          disabled={!url || busy}
+          disabled={!imageUrl || busy}
           data-busy={busy}
-          title={url ? undefined : 'Pick an image on the page first.'}
+          title={imageUrl ? undefined : 'Pick an image on the page first.'}
         >
           {busy ? 'Working' : 'Detect boxes'}
         </button>
@@ -109,10 +135,10 @@ export default function App() {
 
       {error ? <p role="alert">{error}</p> : null}
 
-      {url ? (
+      {imageUrl ? (
         <div className="stage" key={boxes?.length || 0}>
           <img
-            src={url}
+            src={imageUrl}
             alt="Picked from the page"
             onLoad={(event) =>
               setSize({

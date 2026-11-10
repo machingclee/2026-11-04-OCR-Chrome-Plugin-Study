@@ -85,25 +85,25 @@ async function removeRefererRule(): Promise<void> {
 }
 
 async function runDetection(request: IncomingMessage): Promise<DetectResponse> {
-  if (typeof request.url !== 'string') return { ok: false, error: 'Missing image url.' };
+  if (typeof request.imageUrl !== 'string') return { ok: false, error: 'Missing image url.' };
 
   await ensureOffscreen();
 
-  const withReferer = typeof request.pageUrl === 'string' && request.pageUrl.startsWith('http');
-  if (withReferer) await installRefererRule(request.url, request.pageUrl as string);
+  const withReferer = typeof request.tabPageUrl === 'string' && request.tabPageUrl.startsWith('http');
+  if (withReferer) await installRefererRule(request.imageUrl, request.tabPageUrl as string);
 
   try {
     const response = (await chrome.runtime.sendMessage({
       target: OFFSCREEN_TARGET,
       type: 'detect',
-      url: request.url,
+      imageUrl: request.imageUrl,
     })) as DetectResponse | undefined;
 
     if (!response) return { ok: false, error: 'The offscreen document sent no answer.' };
 
     if (response.ok) {
       await chrome.storage.session.set({
-        [LAST_RESULT_KEY]: { url: request.url, boxes: response.boxes, ms: response.ms },
+        [LAST_RESULT_KEY]: { imageUrl: request.imageUrl, boxes: response.boxes, ms: response.ms },
       });
     }
     return response;
@@ -118,6 +118,7 @@ type RequestHandler = (request: IncomingMessage) => Promise<DetectResponse>;
 
 const handlers: Record<string, RequestHandler> = { detect: runDetection };
 
+// this is only for service worker
 chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
   const request = message as IncomingMessage | undefined;
   if (!request || request.target !== SERVICE_WORKER_TARGET) return false;

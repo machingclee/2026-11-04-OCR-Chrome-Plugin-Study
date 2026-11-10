@@ -11,7 +11,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
   const warm = isSessionReady();
 
   try {
-    const response = await fetch(request.url, { credentials: 'include' });
+    const response = await fetch(request.imageUrl, { credentials: 'include' });
     if (!response.ok) {
       return { ok: false, error: `Image fetch failed with ${response.status}.` };
     }
@@ -24,6 +24,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
   }
 }
 
+// this is off the offscreen document
 chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
   const request = message as IncomingMessage | undefined;
   if (!request || request.target !== OFFSCREEN_TARGET) return false;
@@ -33,8 +34,8 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
     return false;
   }
 
-  if (request.type !== 'detect' || typeof request.url !== 'string') return false;
+  if (request.type !== 'detect' || typeof request.imageUrl !== 'string') return false;
 
-  void runDetection({ target: OFFSCREEN_TARGET, type: 'detect', url: request.url }).then(sendResponse);
+  void runDetection({ target: OFFSCREEN_TARGET, type: 'detect', imageUrl: request.imageUrl }).then(sendResponse);
   return true;
 });

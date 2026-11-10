@@ -21,8 +21,8 @@ export type MessageType = 'detect' | 'ping';
 export type IncomingMessage = {
   target?: MessageTarget;
   type?: MessageType;
-  url?: string;
-  pageUrl?: string;
+  imageUrl?: string;
+  tabPageUrl?: string;
 };
 
 export type BoxData = {
@@ -37,15 +37,15 @@ export type BoxData = {
 export type DetectRequest = {
   target: typeof SERVICE_WORKER_TARGET;
   type: 'detect';
-  url: string;
-  pageUrl?: string;
+  imageUrl: string;
+  tabPageUrl?: string;
 };
 
 /** Service worker to offscreen document. */
 export type OffscreenDetectRequest = {
   target: typeof OFFSCREEN_TARGET;
   type: 'detect';
-  url: string;
+  imageUrl: string;
 };
 
 /** Offscreen document to service worker. */
