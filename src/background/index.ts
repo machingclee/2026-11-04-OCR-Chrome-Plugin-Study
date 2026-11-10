@@ -1,15 +1,14 @@
 import { OFFSCREEN_HTML, REFERER_RULE_ID } from '../shared/constants';
+import messageFactories from '../shared/messageFactories';
 import {
   LAST_RESULT_KEY,
-  OFFSCREEN_TARGET,
   SERVICE_WORKER_TARGET,
   type DetectRequest,
   type DetectResponse,
   type IncomingMessage,
-
 } from '../shared/messages';
-let offscreenReady: Promise<void> | null = null;
 
+let offscreenReady: Promise<void> | null = null;
 
 // this is only for service worker
 chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
@@ -40,6 +39,7 @@ async function createOffscreenDocument(): Promise<void> {
     return;
   }
 
+  // create context, bind it into the offscreen html to execute custom js
   await chrome.offscreen.createDocument({
     url: OFFSCREEN_HTML,
     reasons: [chrome.offscreen.Reason.WORKERS],
@@ -49,14 +49,14 @@ async function createOffscreenDocument(): Promise<void> {
 
 async function pingOffscreen(): Promise<boolean> {
   try {
-    await chrome.runtime.sendMessage({ target: OFFSCREEN_TARGET, type: 'ping' });
+    await chrome.runtime.sendMessage(messageFactories.pingForOffscreen());
     return true;
   } catch {
     return false;
   }
 }
 
-async function ensureOffscreen(): Promise<void> {
+async function ensureOffscreenReady(): Promise<void> {
   if (!offscreenReady) {
     offscreenReady = (async () => {
       await createOffscreenDocument();
@@ -111,17 +111,17 @@ async function removeRefererRule(): Promise<void> {
 async function runDetection(request: DetectRequest): Promise<DetectResponse> {
   if (typeof request.imageUrl !== 'string') return { ok: false, error: 'Missing image url.' };
 
-  await ensureOffscreen();
+  await ensureOffscreenReady();
 
   const withReferer = typeof request.tabPageUrl === 'string' && request.tabPageUrl.startsWith('http');
-  if (withReferer) await installRefererRule(request.imageUrl, request.tabPageUrl as string);
+  if (withReferer) {
+    await installRefererRule(request.imageUrl, request.tabPageUrl as string);
+  }
 
   try {
-    const response = (await chrome.runtime.sendMessage({
-      target: OFFSCREEN_TARGET,
-      type: 'detect',
-      imageUrl: request.imageUrl,
-    })) as DetectResponse | undefined;
+    const response = (await chrome.runtime.sendMessage(
+      messageFactories.detectForOffscreen(request.imageUrl),
+    )) as DetectResponse | undefined;
 
     if (!response) return { ok: false, error: 'The offscreen document sent no answer.' };
 

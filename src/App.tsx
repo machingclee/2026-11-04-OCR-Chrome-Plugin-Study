@@ -2,11 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { PICKED_IMAGE_URL_KEY } from './shared/constants';
 import {
   LAST_RESULT_KEY,
-  SERVICE_WORKER_TARGET,
   type BoxData,
-  type DetectRequest,
   type DetectResponse,
 } from './shared/messages';
+import messageFactories from './shared/messageFactories';
 
 type LastResult = { imageUrl: string; boxes: BoxData[]; ms: number };
 
@@ -95,13 +94,7 @@ export default function App() {
         return
       }
 
-      const request: DetectRequest = {
-        target: SERVICE_WORKER_TARGET,
-        type: 'detect',
-        imageUrl: targetImageUrl,
-        tabPageUrl,
-      };
-
+      const request = messageFactories.detectForWorker(targetImageUrl, tabPageUrl);
       const response = (await chrome.runtime.sendMessage(request)) as DetectResponse | undefined;
       return response;
     }
