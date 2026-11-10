@@ -25,7 +25,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
 
         const bitmap = await createImageBitmap(await response.blob());
         const detected = await detectBoxes(bitmap);
-        const lines = toOrderedTextLines(detected.boxes, detected.blocks);
+        const lines = toOrderedTextLines(detected.detBoxes, detected.blkBoxes);
         const boxes: BoxData[] = [];
         for (const line of lines) {
             const recognised = await recognizeLine(bitmap, line, line.direction === 'vertical').catch(

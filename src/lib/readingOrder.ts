@@ -162,8 +162,10 @@ export function orderForReading(lines: TextLine[]): TextLine[] {
 }
 
 /** One call for the offscreen document: detector boxes in, ordered lines out. */
-export function toOrderedTextLines(boxes: Box[], blocks: TextBlock[] = []): TextLine[] {
-    const kept = blocks.length === 0 ? boxes : boxes.filter((box) => blocks.some((block) => centreInside(box, block)));
+export function toOrderedTextLines(detBoxes: Box[], blkBoxes: TextBlock[] = []): TextLine[] {
+    const kept = blkBoxes.length === 0
+        ? detBoxes
+        : detBoxes.filter((box) => blkBoxes.some((block) => centreInside(box, block)));
     const merged = mergeAligned(dropNoise(kept));
     return orderForReading(attachRuby(toTextLines(merged)));
 }

@@ -108,7 +108,7 @@ function unclip(box: Box): Box {
     };
 }
 
-function toBoxes(map: Float32Array, prepared: Prepared): Box[] {
+function toDetBoxes(map: Float32Array, prepared: Prepared): Box[] {
     const size = DETECTOR_INPUT_SIZE;
     const visited = new Uint8Array(size * size);
     const boxes: Box[] = [];
@@ -201,7 +201,7 @@ function intersectionOverUnion(a: TextBlock, b: TextBlock): number {
 }
 
 /** The blk output lists candidate text blocks as rows of (cx, cy, w, h, object, classes). */
-function toBlocks(tensor: ort.Tensor, prepared: Prepared): TextBlock[] {
+function toBlkBoxes(tensor: ort.Tensor, prepared: Prepared): TextBlock[] {
     const data = tensor.data as Float32Array;
     const rows = tensor.dims[1] ?? 0;
     const columns = tensor.dims[2] ?? 0;
@@ -274,8 +274,8 @@ export async function detectBoxes(bitmap: ImageBitmap): Promise<DetectionResult>
     const blockTensor = pickBlockTensor(typed);
     const seg = pickSegMask(typed);
     return {
-        boxes: toBoxes(map, prepared),
-        blocks: blockTensor ? toBlocks(blockTensor, prepared) : [],
+        detBoxes: toDetBoxes(map, prepared),
+        blkBoxes: blockTensor ? toBlkBoxes(blockTensor, prepared) : [],
         mask: seg ? { data: seg, scale: prepared.scale, padX: prepared.padX, padY: prepared.padY } : null,
     };
 }

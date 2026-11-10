@@ -9,7 +9,7 @@ export type TextBlock = { x: number; y: number; width: number; height: number; s
 /** The seg plane with the letterbox numbers needed to reach it. */
 export type TextMask = { data: Float32Array; scale: number; padX: number; padY: number };
 
-export type DetectionResult = { boxes: Box[]; blocks: TextBlock[]; mask: TextMask | null };
+export type DetectionResult = { detBoxes: Box[]; blkBoxes: TextBlock[]; mask: TextMask | null };
 
 /** The letterboxed tensor plus the mapping back to page pixels. */
 export type Prepared = {
