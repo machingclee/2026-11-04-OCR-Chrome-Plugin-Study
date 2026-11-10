@@ -115,6 +115,8 @@ function gapBetween(a: Box, b: Box): { x: number; y: number } {
 export function attachRuby(lines: TextLine[]): TextLine[] {
     if (lines.length <= 1) return lines;
 
+    // Thickest first, so a candidate can only be measured against lines that are
+    // already accepted as text. A ruby line never becomes a host for real text.
     const byThickness = [...lines].sort((a, b) => smallerSide(b) - smallerSide(a));
     const hosts: TextLine[] = [];
 
@@ -124,8 +126,12 @@ export function attachRuby(lines: TextLine[]): TextLine[] {
         let nearest = Infinity;
 
         for (const candidate of hosts) {
+            // The host has to be at least this much thicker than the candidate.
+            // Vertical ruby is thin, horizontal ruby is short, so one ratio fits both.
             if (smallerSide(candidate) < thickness * RUBY_THICKNESS_RATIO) continue;
 
+            // Ruby sits beside its host and never far away. The reach comes from
+            // the host thickness, so it works above a row and right of a column.
             const gap = gapBetween(line, candidate);
             const distance = Math.max(gap.x, gap.y);
             if (distance > smallerSide(candidate) * 1.5) continue;
@@ -135,6 +141,8 @@ export function attachRuby(lines: TextLine[]): TextLine[] {
             }
         }
 
+        // A line with no host is ordinary text. A line with one leaves the list
+        // and rides on its host, which keeps the crop free of the small kana.
         if (host) host.ruby.push({ ...line });
         else hosts.push(line);
     }
