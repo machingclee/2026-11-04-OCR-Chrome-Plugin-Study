@@ -4,6 +4,7 @@ import {
   LAST_RESULT_KEY,
   SERVICE_WORKER_TARGET,
   type BoxData,
+  type DetectRequest,
   type DetectResponse,
 } from './shared/messages';
 
@@ -63,12 +64,13 @@ export default function App() {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       const pageUrl = tab?.url?.startsWith('http') ? tab.url : undefined;
 
-      const response = (await chrome.runtime.sendMessage({
+      const request: DetectRequest = {
         target: SERVICE_WORKER_TARGET,
         type: 'detect',
         url,
         pageUrl,
-      })) as DetectResponse | undefined;
+      };
+      const response = (await chrome.runtime.sendMessage(request)) as DetectResponse | undefined;
 
       if (!response) throw new Error('The background worker sent no answer.');
       if (!response.ok) throw new Error(response.error);

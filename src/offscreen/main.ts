@@ -2,6 +2,7 @@ import { detectBoxes, isSessionReady } from '../lib/detector';
 import {
   OFFSCREEN_TARGET,
   type DetectResponse,
+  type IncomingMessage,
   type OffscreenDetectRequest,
 } from '../shared/messages';
 
@@ -23,10 +24,8 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
   }
 }
 
-type IncomingMessage = { target?: unknown; type?: unknown; url?: unknown };
-
 chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
-  const request = message as IncomingMessage;
+  const request = message as IncomingMessage | undefined;
   if (!request || request.target !== OFFSCREEN_TARGET) return false;
 
   if (request.type === 'ping') {

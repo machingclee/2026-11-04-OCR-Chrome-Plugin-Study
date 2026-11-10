@@ -7,6 +7,24 @@ export const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
 /** Last successful result, readable by the popup after a restart of the popup. */
 export const LAST_RESULT_KEY = 'lastDetection';
 
+export type MessageTarget =
+  | typeof SERVICE_WORKER_TARGET
+  | typeof OFFSCREEN_TARGET;
+
+export type MessageType = 'detect' | 'ping';
+
+/**
+ * Shape of any message that arrives through chrome.runtime.onMessage.
+ * Fields stay optional because the value crosses a boundary that carries no
+ * type information, and each field keeps its concrete type rather than unknown.
+ */
+export type IncomingMessage = {
+  target?: MessageTarget;
+  type?: MessageType;
+  url?: string;
+  pageUrl?: string;
+};
+
 export type BoxData = {
   x: number;
   y: number;
