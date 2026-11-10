@@ -40,6 +40,8 @@ export type OffscreenPing = {
   type: 'ping';
 };
 
+export type PingResponse = { ok: true };
+
 /**
  * Every message that can arrive through chrome.runtime.onMessage.
  * This is a union rather than one loose shape, so a listener that narrows on

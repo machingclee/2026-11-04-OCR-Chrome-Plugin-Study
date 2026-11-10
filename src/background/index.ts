@@ -140,8 +140,9 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
 
 type RequestHandler = (request: DetectRequest) => Promise<DetectResponse>;
 
-const handlers: Record<IncomingMessage["type"], RequestHandler> = {
+// The worker answers detection only. A ping belongs to the offscreen exchange,
+// so a ping addressed here falls through and nobody answers it.
+const handlers: Record<DetectRequest['type'], RequestHandler> = {
   detect: runDetection,
-  ping: async () => ({ ok: true, boxes: [], ms: 0, warm: false }),
 };
 
