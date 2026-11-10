@@ -22,7 +22,17 @@ export function cropPreviews(bitmap: ImageBitmap, boxes: Box[]): string[] {
 
         const context = canvas.getContext('2d');
         if (!context) throw new Error('The browser refused a 2D context for the crop.');
-        context.drawImage(bitmap, box.x, box.y, box.width, box.height, 0, 0, width, height);
+        context.drawImage(
+            bitmap,
+            box.x,
+            box.y,
+            box.width,
+            box.height,
+            0,
+            0,
+            width,
+            height
+        );
         return canvas.toDataURL('image/webp', PREVIEW_QUALITY);
     });
 }
