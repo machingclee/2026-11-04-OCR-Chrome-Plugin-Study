@@ -1,4 +1,4 @@
-import type { Box } from './detector';
+import type { Box, TextBlock } from './detector';
 
 /** A host must be at least this much thicker than the box beside it. */
 const RUBY_THICKNESS_RATIO = 1.6;
@@ -25,6 +25,66 @@ export function dropNoise(boxes: Box[]): Box[] {
     return sized.filter((box, index) =>
         !sized.some((other, otherIndex) => otherIndex !== index && contains(other, box)),
     );
+}
+
+
+function centreInside(box: Box, block: TextBlock): boolean {
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    return cx >= block.x && cx <= block.x + block.width && cy >= block.y && cy <= block.y + block.height;
+}
+
+function isTall(box: Box): boolean {
+    return box.height >= box.width * 1.4;
+}
+
+function isWide(box: Box): boolean {
+    return box.width >= box.height * 1.4;
+}
+
+/** Join two boxes only when they share one column and the gap stays short. */
+export function mergeAligned(boxes: Box[]): Box[] {
+    const merged = boxes.map((box) => ({ ...box }));
+    let changed = true;
+
+    while (changed) {
+        changed = false;
+        for (let i = 0; i < merged.length && !changed; i += 1) {
+            for (let j = i + 1; j < merged.length; j += 1) {
+                const a = merged[i];
+                const b = merged[j];
+                const vertical = isTall(a) && isTall(b);
+                const horizontal = isWide(a) && isWide(b);
+                if (!vertical && !horizontal) continue;
+
+                const overlap = vertical
+                    ? Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)
+                    : Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+                const thickness = vertical ? Math.min(a.width, b.width) : Math.min(a.height, b.height);
+                const gap = vertical
+                    ? Math.max(0, Math.max(a.y, b.y) - Math.min(a.y + a.height, b.y + b.height))
+                    : Math.max(0, Math.max(a.x, b.x) - Math.min(a.x + a.width, b.x + b.width));
+                if (overlap < thickness * 0.6 || gap > thickness * 0.7) continue;
+
+                const left = Math.min(a.x, b.x);
+                const top = Math.min(a.y, b.y);
+                const right = Math.max(a.x + a.width, b.x + b.width);
+                const bottom = Math.max(a.y + a.height, b.y + b.height);
+                merged[i] = {
+                    x: left,
+                    y: top,
+                    width: right - left,
+                    height: bottom - top,
+                    score: Math.max(a.score, b.score),
+                };
+                merged.splice(j, 1);
+                changed = true;
+                break;
+            }
+        }
+    }
+
+    return merged;
 }
 
 /** A line taller than it is wide holds a vertical column. */
@@ -106,6 +166,8 @@ export function orderForReading(lines: TextLine[]): TextLine[] {
 }
 
 /** One call for the offscreen document: detector boxes in, ordered lines out. */
-export function toOrderedTextLines(boxes: Box[]): TextLine[] {
-    return orderForReading(attachRuby(toTextLines(dropNoise(boxes))));
+export function toOrderedTextLines(boxes: Box[], blocks: TextBlock[] = []): TextLine[] {
+    const kept = blocks.length === 0 ? boxes : boxes.filter((box) => blocks.some((block) => centreInside(box, block)));
+    const merged = mergeAligned(dropNoise(kept));
+    return orderForReading(attachRuby(toTextLines(merged)));
 }

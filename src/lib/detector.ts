@@ -183,14 +183,94 @@ function toBoxes(map: Float32Array, prepared: Prepared): Box[] {
     return lines;
 }
 
-export async function detectBoxes(bitmap: ImageBitmap): Promise<Box[]> {
+export type TextBlock = { x: number; y: number; width: number; height: number; score: number };
+
+const BLOCK_SCORE = 0.35;
+const BLOCK_NMS = 0.4;
+
+function pickBlockTensor(outputs: Record<string, ort.Tensor>): ort.Tensor | null {
+    const entries = Object.entries(outputs);
+    const named = entries.find(([key]) => key.toLowerCase().includes('blk'));
+    const ordered = named ? [named, ...entries.filter(([key]) => key !== named[0])] : entries;
+
+    for (const [, value] of ordered) {
+        if (!(value instanceof ort.Tensor)) continue;
+        const dims = value.dims;
+        if (dims.length === 3 && dims[2] >= 6) return value;
+    }
+    return null;
+}
+
+function intersectionOverUnion(a: TextBlock, b: TextBlock): number {
+    const left = Math.max(a.x, b.x);
+    const top = Math.max(a.y, b.y);
+    const right = Math.min(a.x + a.width, b.x + b.width);
+    const bottom = Math.min(a.y + a.height, b.y + b.height);
+    if (right <= left || bottom <= top) return 0;
+    const shared = (right - left) * (bottom - top);
+    return shared / (a.width * a.height + b.width * b.height - shared);
+}
+
+/** The blk output lists candidate text blocks as rows of (cx, cy, w, h, object, classes). */
+function toBlocks(tensor: ort.Tensor, prepared: Prepared): TextBlock[] {
+    const data = tensor.data as Float32Array;
+    const rows = tensor.dims[1] ?? 0;
+    const columns = tensor.dims[2] ?? 0;
+    const candidates: TextBlock[] = [];
+
+    for (let row = 0; row < rows; row += 1) {
+        const base = row * columns;
+        const cx = data[base];
+        const cy = data[base + 1];
+        const width = data[base + 2];
+        const height = data[base + 3];
+        const objectness = data[base + 4];
+        if (!Number.isFinite(cx + cy + width + height + objectness)) continue;
+
+        let bestClass = 0;
+        for (let index = 5; index < columns; index += 1) bestClass = Math.max(bestClass, data[base + index]);
+        if (objectness * bestClass < BLOCK_SCORE) continue;
+
+        const x = (cx - width / 2 - prepared.padX) / prepared.scale;
+        const y = (cy - height / 2 - prepared.padY) / prepared.scale;
+        const boxWidth = width / prepared.scale;
+        const boxHeight = height / prepared.scale;
+        if (boxWidth < 6 || boxHeight < 6) continue;
+        if (boxWidth > prepared.width * 0.35 || boxHeight > prepared.height * 0.45) continue;
+
+        candidates.push({
+            x: Math.max(0, x),
+            y: Math.max(0, y),
+            width: Math.min(boxWidth, prepared.width - Math.max(0, x)),
+            height: Math.min(boxHeight, prepared.height - Math.max(0, y)),
+            score: objectness * bestClass,
+        });
+    }
+
+    candidates.sort((a, b) => b.score - a.score);
+    const kept: TextBlock[] = [];
+    for (const candidate of candidates) {
+        if (kept.every((block) => intersectionOverUnion(candidate, block) < BLOCK_NMS)) kept.push(candidate);
+    }
+    return kept;
+}
+
+export type DetectionResult = { boxes: Box[]; blocks: TextBlock[] };
+
+export async function detectBoxes(bitmap: ImageBitmap): Promise<DetectionResult> {
     const session = await loadDetector();
     const inputName = session.inputNames[0];
     if (!inputName) throw new Error('The detector exposes no input.');
 
     const prepared = await prepareInput(bitmap);
     const outputs = await session.run({ [inputName]: prepared.tensor });
-    const map = pickTextMap(outputs as Record<string, ort.Tensor>);
+    const typed = outputs as Record<string, ort.Tensor>;
+    const map = pickTextMap(typed);
     if (!map) throw new Error('The detector returned no score map.');
-    return toBoxes(map, prepared);
+
+    const blockTensor = pickBlockTensor(typed);
+    return {
+        boxes: toBoxes(map, prepared),
+        blocks: blockTensor ? toBlocks(blockTensor, prepared) : [],
+    };
 }

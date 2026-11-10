@@ -22,7 +22,8 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         }
 
         const bitmap = await createImageBitmap(await response.blob());
-        const boxes = toOrderedTextLines(await detectBoxes(bitmap));
+        const detected = await detectBoxes(bitmap);
+        const boxes = toOrderedTextLines(detected.boxes, detected.blocks);
         const previews = cropPreviews(bitmap, boxes.slice(0, MAX_PREVIEWS));
         return {
             ok: true,
