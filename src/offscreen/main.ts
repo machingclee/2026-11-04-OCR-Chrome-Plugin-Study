@@ -1,8 +1,10 @@
 import { detectBoxes, isSessionReady } from '../lib/detector';
 import { cropPreviews } from '../lib/regions';
 import { toOrderedTextLines } from '../lib/readingOrder';
+import { recognizeLine } from '../lib/ocr/recognize';
 import { OFFSCREEN_TARGET } from '../shared/constants';
 import type {
+    BoxData,
     DetectResponse,
     IncomingMessage,
     OffscreenDetectRequest,
@@ -23,7 +25,14 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
 
         const bitmap = await createImageBitmap(await response.blob());
         const detected = await detectBoxes(bitmap);
-        const boxes = toOrderedTextLines(detected.boxes, detected.blocks);
+        const lines = toOrderedTextLines(detected.boxes, detected.blocks);
+        const boxes: BoxData[] = [];
+        for (const line of lines) {
+            const recognised = await recognizeLine(bitmap, line, line.direction === 'vertical').catch(
+                () => ({ text: '', confidence: 0 }),
+            );
+            boxes.push({ ...line, text: recognised.text, confidence: recognised.confidence });
+        }
         const previews = cropPreviews(bitmap, boxes.slice(0, MAX_PREVIEWS));
         return {
             ok: true,

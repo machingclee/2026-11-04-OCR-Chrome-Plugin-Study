@@ -22,6 +22,8 @@ export type BoxData = {
     score: number;
     direction: 'vertical' | 'horizontal';
     ruby: RubyBox[];
+    text: string;
+    confidence: number;
 };
 
 /** Popup to service worker. */

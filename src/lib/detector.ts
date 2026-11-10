@@ -255,7 +255,25 @@ function toBlocks(tensor: ort.Tensor, prepared: Prepared): TextBlock[] {
     return kept;
 }
 
-export type DetectionResult = { boxes: Box[]; blocks: TextBlock[] };
+function pickSegMask(outputs: Record<string, ort.Tensor>): Float32Array | null {
+    const entries = Object.entries(outputs);
+    const named = entries.find(([key]) => key.toLowerCase().includes('seg'));
+    const ordered = named ? [named, ...entries.filter(([key]) => key !== named[0])] : entries;
+    const plane = DETECTOR_INPUT_SIZE * DETECTOR_INPUT_SIZE;
+
+    for (const [, value] of ordered) {
+        if (!(value instanceof ort.Tensor) || !(value.data instanceof Float32Array)) continue;
+        const dims = value.dims;
+        if (dims.length !== 4 || dims[0] !== 1 || dims[1] !== 1) continue;
+        if (value.data.length < plane) continue;
+        return value.data.subarray(0, plane);
+    }
+    return null;
+}
+
+export type TextMask = { data: Float32Array; scale: number; padX: number; padY: number };
+
+export type DetectionResult = { boxes: Box[]; blocks: TextBlock[]; mask: TextMask | null };
 
 export async function detectBoxes(bitmap: ImageBitmap): Promise<DetectionResult> {
     const session = await loadDetector();
@@ -269,8 +287,10 @@ export async function detectBoxes(bitmap: ImageBitmap): Promise<DetectionResult>
     if (!map) throw new Error('The detector returned no score map.');
 
     const blockTensor = pickBlockTensor(typed);
+    const seg = pickSegMask(typed);
     return {
         boxes: toBoxes(map, prepared),
         blocks: blockTensor ? toBlocks(blockTensor, prepared) : [],
+        mask: seg ? { data: seg, scale: prepared.scale, padX: prepared.padX, padY: prepared.padY } : null,
     };
 }

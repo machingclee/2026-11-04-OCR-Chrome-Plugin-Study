@@ -31,6 +31,14 @@ export const DETECTOR_SCORE_THRESHOLD = 0.3;
 export const DETECTOR_MIN_AREA = 20;
 export const DETECTOR_MIN_MEAN_SCORE = 0.6;
 
+/** Japanese recogniser, PP-OCRv6 medium in ONNX, plus its charset. */
+export const OCR_MODEL_PATH = 'models/ppocr_v6_medium_rec.onnx';
+export const OCR_DICT_PATH = 'models/ppocr_v6_dict.txt';
+export const OCR_INPUT_HEIGHT = 48;
+export const OCR_INPUT_WIDTH = 320;
+export const OCR_NORMALIZE: 'zero_one' | 'minus_one' = 'minus_one';
+export const OCR_MIN_CONFIDENCE = 0.4;
+
 /** DBNet widens a shrunken region by area * ratio / perimeter before merging. */
 export const DETECTOR_UNCLIP_RATIO = 1.5;
 
