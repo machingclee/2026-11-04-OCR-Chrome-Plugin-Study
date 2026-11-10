@@ -1,10 +1,10 @@
 import type { PingResponse } from '../types';
 
 /** Responses addressed to the service worker. */
-function ping(): PingResponse {
+function ofPing(): PingResponse {
   return { ok: true };
 }
 
-const serviceWorkerResponseFactory = { ping };
+const serviceWorkerResponseFactory = { ofPing };
 
 export default serviceWorkerResponseFactory;

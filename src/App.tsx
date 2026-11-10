@@ -63,7 +63,7 @@ export default function App() {
 
     try {
       const tabPageUrl = await getCurrentPageUrl();
-      const response = await dispatchDetectionRequest(tabPageUrl, imageUrl);
+      const response = await sendDetectionRequestToServiceWorker(tabPageUrl, imageUrl);
 
       if (!response) throw new Error('The background worker sent no answer.');
       if (!response.ok) throw new Error(response.error);
@@ -82,7 +82,7 @@ export default function App() {
     /**
      * Dispatch to service worker
      */
-    async function dispatchDetectionRequest(
+    async function sendDetectionRequestToServiceWorker(
       tabPageUrl: string | undefined,
       targetImageUrl: string
     ) {
@@ -90,7 +90,8 @@ export default function App() {
         return
       }
 
-      const request = serviceWorkerRequestFactory.detect(targetImageUrl, tabPageUrl);
+      // handled in src/background/index.ts
+      const request = serviceWorkerRequestFactory.ofDetect(targetImageUrl, tabPageUrl);
       const response = (await chrome.runtime.sendMessage(request)) as DetectResponse | undefined;
       return response;
     }

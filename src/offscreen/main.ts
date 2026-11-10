@@ -31,7 +31,7 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
   if (!request || request.target !== OFFSCREEN_TARGET) return false;
 
   if (request.type === 'ping') {
-    sendResponse(serviceWorkerResponseFactory.ping());
+    sendResponse(serviceWorkerResponseFactory.ofPing());
     return false;
   }
 

@@ -9,15 +9,20 @@ import type { DetectRequest, DetectResponse, IncomingMessage } from '../shared/t
 
 let offscreenReady: Promise<void> | null = null;
 
-// this is only for service worker
+
+// this file is the context of service worker
+// only short-lived tasks should be done here, 
+// like pinging the offscreen document and relaying the detection request to it. 
+// The offscreen document is where the ONNX model is loaded and the actual detection is done.
+
 chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
+  // message directly form the frontend
   const request = message as IncomingMessage | undefined;
   if (!request || request.target !== SERVICE_WORKER_TARGET) return false;
 
-  const handler = handlers[request.type];
-  if (!handler) return false;
+  if (request.type !== 'detect') return false;
 
-  void handler(request).then((detectionResponse) => {
+  void runDetection(request).then((detectionResponse) => {
     sendResponse(detectionResponse);
   });
   return true;
@@ -26,6 +31,38 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
 chrome.runtime.onInstalled.addListener(() => {
   offscreenReady = null;
 });
+
+
+async function runDetection(request: DetectRequest): Promise<DetectResponse> {
+  if (typeof request.imageUrl !== 'string') return { ok: false, error: 'Missing image url.' };
+
+  await ensureOffscreenReady();
+
+  const withReferer = typeof request.tabPageUrl === 'string' && request.tabPageUrl.startsWith('http');
+  if (withReferer) {
+    await installRefererRule(request.imageUrl, request.tabPageUrl as string);
+  }
+
+  try {
+    const response = (await chrome.runtime.sendMessage(
+      offscreenRequestFactory.ofDetect(request.imageUrl),
+    )) as DetectResponse | undefined;
+
+    if (!response) return { ok: false, error: 'The offscreen document sent no answer.' };
+
+    if (response.ok) {
+      await chrome.storage.session.set({
+        [LAST_RESULT_KEY]: { imageUrl: request.imageUrl, boxes: response.boxes, ms: response.ms },
+      });
+    }
+    return response;
+  } catch (cause) {
+    return { ok: false, error: cause instanceof Error ? cause.message : String(cause) };
+  } finally {
+    if (withReferer) await removeRefererRule();
+  }
+}
+
 
 
 
@@ -48,7 +85,7 @@ async function createOffscreenDocument(): Promise<void> {
 
 async function pingOffscreen(): Promise<boolean> {
   try {
-    await chrome.runtime.sendMessage(offscreenRequestFactory.ping());
+    await chrome.runtime.sendMessage(offscreenRequestFactory.ofPing());
     return true;
   } catch {
     return false;
@@ -107,41 +144,4 @@ async function removeRefererRule(): Promise<void> {
     .catch(() => undefined);
 }
 
-async function runDetection(request: DetectRequest): Promise<DetectResponse> {
-  if (typeof request.imageUrl !== 'string') return { ok: false, error: 'Missing image url.' };
-
-  await ensureOffscreenReady();
-
-  const withReferer = typeof request.tabPageUrl === 'string' && request.tabPageUrl.startsWith('http');
-  if (withReferer) {
-    await installRefererRule(request.imageUrl, request.tabPageUrl as string);
-  }
-
-  try {
-    const response = (await chrome.runtime.sendMessage(
-      offscreenRequestFactory.detect(request.imageUrl),
-    )) as DetectResponse | undefined;
-
-    if (!response) return { ok: false, error: 'The offscreen document sent no answer.' };
-
-    if (response.ok) {
-      await chrome.storage.session.set({
-        [LAST_RESULT_KEY]: { imageUrl: request.imageUrl, boxes: response.boxes, ms: response.ms },
-      });
-    }
-    return response;
-  } catch (cause) {
-    return { ok: false, error: cause instanceof Error ? cause.message : String(cause) };
-  } finally {
-    if (withReferer) await removeRefererRule();
-  }
-}
-
-type RequestHandler = (request: DetectRequest) => Promise<DetectResponse>;
-
-// The worker answers detection only. A ping belongs to the offscreen exchange,
-// so a ping addressed here falls through and nobody answers it.
-const handlers: Record<DetectRequest['type'], RequestHandler> = {
-  detect: runDetection,
-};
 
