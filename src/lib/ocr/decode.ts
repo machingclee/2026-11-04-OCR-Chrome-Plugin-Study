@@ -1,6 +1,6 @@
-const BLANK = 0;
+import type { OcrResult } from '../types';
 
-export type OcrResult = { text: string; confidence: number };
+const BLANK = 0;
 
 /** Greedy CTC: keep the argmax of each step, drop blanks, collapse repeats. */
 export function decodeCtc(logits: Float32Array, timeSteps: number, classes: number, charset: string[]): OcrResult {

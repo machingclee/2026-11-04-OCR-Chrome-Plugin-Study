@@ -1,11 +1,4 @@
-import type { Box } from './detector';
-
-export type TextMask = {
-    data: Float32Array;
-    scale: number;
-    padX: number;
-    padY: number;
-};
+import type { Box, TextMask } from './types';
 
 function backgroundColour(pixels: Uint8ClampedArray, width: number, height: number): [number, number, number] {
     const counts = new Map<number, { count: number; r: number; g: number; b: number }>();

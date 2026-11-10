@@ -1,9 +1,9 @@
 import * as ort from 'onnxruntime-web/wasm';
 import { OCR_DICT_PATH, OCR_MODEL_PATH } from '../../shared/constants';
 import { loadCharset } from './charset';
-import { decodeCtc, type OcrResult } from './decode';
+import { decodeCtc } from './decode';
 import { buildOcrInput } from './prepare';
-import type { Box } from '../detector';
+import type { Box, OcrResult } from '../types';
 
 let sessionPromise: Promise<ort.InferenceSession> | null = null;
 

@@ -1,4 +1,4 @@
-import type { Box } from '../detector';
+import type { Box } from '../types';
 import { OCR_INPUT_HEIGHT, OCR_INPUT_WIDTH, OCR_NORMALIZE } from '../../shared/constants';
 
 /**

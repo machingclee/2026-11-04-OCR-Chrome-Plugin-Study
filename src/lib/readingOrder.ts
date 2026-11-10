@@ -1,11 +1,7 @@
-import type { Box, TextBlock } from './detector';
+import type { Box, TextBlock, TextLine } from './types';
 
 /** A host must be at least this much thicker than the box beside it. */
 const RUBY_THICKNESS_RATIO = 1.6;
-
-export type TextDirection = 'vertical' | 'horizontal';
-
-export type TextLine = Box & { direction: TextDirection; ruby: Box[] };
 
 function contains(outer: Box, inner: Box): boolean {
     const inside =

@@ -1,4 +1,4 @@
-import type { Box } from './detector';
+import type { Box } from './types';
 
 const PREVIEW_MAX_WIDTH = 160;
 const PREVIEW_QUALITY = 0.8;

@@ -10,16 +10,7 @@ import {
 
 ort.env.wasm.numThreads = 1;
 
-export type Box = { x: number; y: number; width: number; height: number; score: number };
-
-type Prepared = {
-    tensor: ort.Tensor;
-    scale: number;
-    padX: number;
-    padY: number;
-    width: number;
-    height: number;
-};
+import type { Box, DetectionResult, Prepared, TextBlock } from './types';
 
 let sessionPromise: Promise<ort.InferenceSession> | null = null;
 
@@ -183,8 +174,6 @@ function toBoxes(map: Float32Array, prepared: Prepared): Box[] {
     return lines;
 }
 
-export type TextBlock = { x: number; y: number; width: number; height: number; score: number };
-
 const BLOCK_SCORE = 0.35;
 const BLOCK_NMS = 0.4;
 
@@ -270,10 +259,6 @@ function pickSegMask(outputs: Record<string, ort.Tensor>): Float32Array | null {
     }
     return null;
 }
-
-export type TextMask = { data: Float32Array; scale: number; padX: number; padY: number };
-
-export type DetectionResult = { boxes: Box[]; blocks: TextBlock[]; mask: TextMask | null };
 
 export async function detectBoxes(bitmap: ImageBitmap): Promise<DetectionResult> {
     const session = await loadDetector();
