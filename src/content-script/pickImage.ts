@@ -1,10 +1,5 @@
-import {
-    HIGHLIGHT_ID,
-    IMAGE_URL_PATTERN,
-    PICKED_IMAGE_URL_KEY,
-    SHIELD_ID,
-    TOAST_ID,
-} from '../shared/constants';
+import { PICKED_IMAGE_URL_KEY } from '../shared/constants';
+import { HIGHLIGHT_ID, IMAGE_URL_PATTERN, SHIELD_ID, TOAST_ID } from './constants';
 
 
 declare global {

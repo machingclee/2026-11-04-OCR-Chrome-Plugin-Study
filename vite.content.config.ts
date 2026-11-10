@@ -7,7 +7,7 @@ export default defineConfig({
         emptyOutDir: false,
         lib: {
             entry: {
-                pickImage: 'src/content/pickImage.ts',
+                pickImage: 'src/content-script/pickImage.ts',
             },
             name: 'comicTranslatorPicker',
             formats: ['iife'],
