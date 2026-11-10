@@ -67,7 +67,9 @@ export function attachRuby(lines: TextLine[]): TextLine[] {
         for (const candidate of body) {
             const gap = gapBetween(line, candidate);
             const distance = Math.max(gap.x, gap.y);
-            if (distance > candidate.height) continue;
+            // Ruby sits above a horizontal line and to the right of a vertical
+            // one, so the reach comes from the line thickness, not its length.
+            if (distance > smallerSide(candidate) * 1.5) continue;
             if (distance < nearest) {
                 nearest = distance;
                 host = candidate;
