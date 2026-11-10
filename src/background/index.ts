@@ -1,24 +1,47 @@
-import { REFERER_RULE_ID } from '../shared/constants';
+import { OFFSCREEN_HTML, REFERER_RULE_ID } from '../shared/constants';
 import {
   LAST_RESULT_KEY,
-  OFFSCREEN_DOCUMENT_PATH,
   OFFSCREEN_TARGET,
   SERVICE_WORKER_TARGET,
   type DetectRequest,
   type DetectResponse,
   type IncomingMessage,
-} from '../shared/messages';
 
+} from '../shared/messages';
 let offscreenReady: Promise<void> | null = null;
+
+
+// this is only for service worker
+chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
+  const request = message as IncomingMessage | undefined;
+  if (!request || request.target !== SERVICE_WORKER_TARGET) return false;
+
+  const handler = handlers[request.type];
+  if (!handler) return false;
+
+  void handler(request).then((detectionResponse) => {
+    sendResponse(detectionResponse);
+  });
+  return true;
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  offscreenReady = null;
+});
+
+
 
 async function createOffscreenDocument(): Promise<void> {
   const contexts = await chrome.runtime.getContexts({
     contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
   });
-  if (contexts.length > 0) return;
+
+  if (contexts.length > 0) {
+    return;
+  }
 
   await chrome.offscreen.createDocument({
-    url: OFFSCREEN_DOCUMENT_PATH,
+    url: OFFSCREEN_HTML,
     reasons: [chrome.offscreen.Reason.WORKERS],
     justification: 'Run the ONNX detector outside the popup so the model stays loaded.',
   });
@@ -117,20 +140,8 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
 
 type RequestHandler = (request: DetectRequest) => Promise<DetectResponse>;
 
-const handlers: Record<string, RequestHandler> = { detect: runDetection };
+const handlers: Record<IncomingMessage["type"], RequestHandler> = {
+  detect: runDetection,
+  ping: async () => ({ ok: true, boxes: [], ms: 0, warm: false }),
+};
 
-// this is only for service worker
-chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
-  const request = message as IncomingMessage | undefined;
-  if (!request || request.target !== SERVICE_WORKER_TARGET) return false;
-
-  const handler = handlers[request.type];
-  if (!handler) return false;
-
-  void handler(request).then(sendResponse);
-  return true;
-});
-
-chrome.runtime.onInstalled.addListener(() => {
-  offscreenReady = null;
-});

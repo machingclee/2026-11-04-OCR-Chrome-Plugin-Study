@@ -2,8 +2,6 @@
 export const SERVICE_WORKER_TARGET = 'service-worker';
 export const OFFSCREEN_TARGET = 'offscreen';
 
-export const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
-
 /** Last successful result, readable by the popup after a restart of the popup. */
 export const LAST_RESULT_KEY = 'lastDetection';
 
@@ -56,3 +54,4 @@ export type IncomingMessage =
 export type DetectResponse =
   | { ok: true; boxes: BoxData[]; ms: number; warm: boolean }
   | { ok: false; error: string };
+

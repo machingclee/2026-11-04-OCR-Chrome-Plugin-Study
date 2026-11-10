@@ -4,6 +4,10 @@
  * not in a literal on each side.
  */
 
+/** HTML entry points. The Vite build and the runtime must agree on these names. */
+export const POPUP_HTML = 'popup.html';
+export const OFFSCREEN_HTML = 'offscreen.html';
+
 /** Storage key that carries a picked image URL from the content script. */
 export const PICKED_IMAGE_URL_KEY = 'pickedImageUrl';
 
