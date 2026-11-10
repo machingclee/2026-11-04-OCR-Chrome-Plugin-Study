@@ -21,7 +21,7 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
   if (!request || request.target !== SERVICE_WORKER_TARGET) return false;
 
   if (request.type === 'detect') {
-    void runDetection(request).then((detectionResponse) => {
+    runDetection(request).then((detectionResponse) => {
       sendResponse(detectionResponse);
     });
     return true;
@@ -34,9 +34,10 @@ chrome.runtime.onInstalled.addListener(() => {
   offscreenReady = null;
 });
 
-
 async function runDetection(request: DetectRequest): Promise<DetectResponse> {
-  if (typeof request.imageUrl !== 'string') return { ok: false, error: 'Missing image url.' };
+  if (typeof request.imageUrl !== 'string') {
+    return { ok: false, error: 'Missing image url.' }
+  };
 
   await ensureOffscreenReady();
 
@@ -47,7 +48,7 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
 
   try {
     const response = (await chrome.runtime.sendMessage(
-      offscreenRequestFactory.ofDetect(request.imageUrl),
+      offscreenRequestFactory.ofDetection(request.imageUrl),
     )) as DetectResponse | undefined;
 
     if (!response) return { ok: false, error: 'The offscreen document sent no answer.' };
@@ -66,9 +67,12 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
 }
 
 
-
-
-async function createOffscreenDocument(): Promise<void> {
+/**
+ * Create the offscreen document when it is absent. Chrome loads offscreen.html,
+ * and the script that the page references starts in a new context.
+ * The caller pings after this call, because the document can exist before its listener answers.
+ */
+async function createOffscreenDocumentContext(): Promise<void> {
   const contexts = await chrome.runtime.getContexts({
     contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
   });
@@ -77,7 +81,7 @@ async function createOffscreenDocument(): Promise<void> {
     return;
   }
 
-  // create context, bind it into the offscreen html to execute custom js
+  // Chrome loads the page here, and the page pulls in the bundled offscreen script.
   await chrome.offscreen.createDocument({
     url: OFFSCREEN_HTML,
     reasons: [chrome.offscreen.Reason.WORKERS],
@@ -97,7 +101,7 @@ async function pingOffscreen(): Promise<boolean> {
 async function ensureOffscreenReady(): Promise<void> {
   if (!offscreenReady) {
     offscreenReady = (async () => {
-      await createOffscreenDocument();
+      await createOffscreenDocumentContext();
       for (let attempt = 0; attempt < 40; attempt += 1) {
         if (await pingOffscreen()) return;
         await new Promise((resolve) => setTimeout(resolve, 50));

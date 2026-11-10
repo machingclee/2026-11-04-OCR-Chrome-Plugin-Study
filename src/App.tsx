@@ -91,7 +91,7 @@ export default function App() {
       }
 
       // handled in src/background/index.ts
-      const request = serviceWorkerRequestFactory.ofDetect(targetImageUrl, tabPageUrl);
+      const request = serviceWorkerRequestFactory.ofDetection(targetImageUrl, tabPageUrl);
       const response = (await chrome.runtime.sendMessage(request)) as DetectResponse | undefined;
       return response;
     }
