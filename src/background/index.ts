@@ -85,6 +85,8 @@ async function removeRefererRule(): Promise<void> {
 }
 
 async function runDetection(request: DetectRequest): Promise<DetectResponse> {
+  if (typeof request.url !== 'string') return { ok: false, error: 'Missing image url.' };
+
   await ensureOffscreen();
 
   const withReferer = typeof request.pageUrl === 'string' && request.pageUrl.startsWith('http');
@@ -112,12 +114,18 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
   }
 }
 
-chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
-  const request = message as Partial<DetectRequest> | undefined;
-  if (!request || request.target !== SERVICE_WORKER_TARGET || request.type !== 'detect') return false;
-  if (typeof request.url !== 'string') return false;
+type RequestHandler = (request: DetectRequest) => Promise<DetectResponse>;
 
-  void runDetection(request as DetectRequest).then(sendResponse);
+const handlers = new Map<string, RequestHandler>([['detect', runDetection]]);
+
+chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
+  const request = message as { target?: unknown; type?: unknown } | undefined;
+  if (!request || request.target !== SERVICE_WORKER_TARGET) return false;
+
+  const handler = typeof request.type === 'string' ? handlers.get(request.type) : undefined;
+  if (!handler) return false;
+
+  void handler(request as DetectRequest).then(sendResponse);
   return true;
 });
 

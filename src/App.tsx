@@ -108,7 +108,7 @@ export default function App() {
       {error ? <p role="alert">{error}</p> : null}
 
       {url ? (
-        <div className="stage">
+        <div className="stage" key={boxes?.length || 0}>
           <img
             src={url}
             alt="Picked from the page"
@@ -121,17 +121,17 @@ export default function App() {
           />
           {size.width > 0
             ? boxes.map((box) => (
-                <span
-                  key={`${box.x}-${box.y}-${box.width}-${box.height}`}
-                  className="box"
-                  style={{
-                    left: `${(box.x / size.width) * 100}%`,
-                    top: `${(box.y / size.height) * 100}%`,
-                    width: `${(box.width / size.width) * 100}%`,
-                    height: `${(box.height / size.height) * 100}%`,
-                  }}
-                />
-              ))
+              <span
+                key={`${box.x}-${box.y}-${box.width}-${box.height}`}
+                className="box"
+                style={{
+                  left: `${(box.x / size.width) * 100}%`,
+                  top: `${(box.y / size.height) * 100}%`,
+                  width: `${(box.width / size.width) * 100}%`,
+                  height: `${(box.height / size.height) * 100}%`,
+                }}
+              />
+            ))
             : null}
         </div>
       ) : null}
