@@ -1,7 +1,16 @@
 import type { Box } from './detector';
 
-/** Largest gap between two glyphs, as a fraction of the smaller glyph. */
-const CHAR_GAP_TOLERANCE = 0.6;
+/** Largest vertical gap between two glyphs of one column. */
+const VERTICAL_GAP_TOLERANCE = 0.6;
+
+/** Largest horizontal gap between two glyphs of one row. */
+const HORIZONTAL_GAP_TOLERANCE = 0.35;
+
+/** Largest offset across the line that still counts as the same line. */
+const ALIGN_TOLERANCE = 0.25;
+
+/** Two glyphs of very different sizes belong to different lines. */
+const SIZE_RATIO_TOLERANCE = 1.8;
 
 export type TextDirection = 'vertical' | 'horizontal';
 
@@ -13,11 +22,30 @@ function charSize(box: Box): number {
     return Math.min(box.width, box.height);
 }
 
+function gapBetween(a: Box, b: Box): { x: number; y: number } {
+    return {
+        x: Math.max(a.x, b.x) - Math.min(a.x + a.width, b.x + b.width),
+        y: Math.max(a.y, b.y) - Math.min(a.y + a.height, b.y + b.height),
+    };
+}
+
+/**
+ * Two glyphs join only when they line up. Glyphs of one column share an x, and
+ * two columns sit further apart than two glyphs of one row, so the tight
+ * horizontal tolerance keeps a column from swallowing its neighbour.
+ */
 function isNeighbour(a: Box, b: Box): boolean {
-    const gapX = Math.max(a.x, b.x) - Math.min(a.x + a.width, b.x + b.width);
-    const gapY = Math.max(a.y, b.y) - Math.min(a.y + a.height, b.y + b.height);
-    const tolerance = CHAR_GAP_TOLERANCE * Math.min(charSize(a), charSize(b));
-    return gapX <= tolerance && gapY <= tolerance;
+    const smaller = Math.min(charSize(a), charSize(b));
+    const larger = Math.max(charSize(a), charSize(b));
+    if (larger > smaller * SIZE_RATIO_TOLERANCE) return false;
+
+    const gap = gapBetween(a, b);
+    const dx = Math.abs(a.x + a.width / 2 - (b.x + b.width / 2));
+    const dy = Math.abs(a.y + a.height / 2 - (b.y + b.height / 2));
+
+    const sameColumn = dx <= ALIGN_TOLERANCE * smaller && gap.y <= VERTICAL_GAP_TOLERANCE * smaller;
+    const sameRow = dy <= ALIGN_TOLERANCE * smaller && gap.x <= HORIZONTAL_GAP_TOLERANCE * smaller;
+    return sameColumn || sameRow;
 }
 
 function extentOf(boxes: Box[]): Extent {
