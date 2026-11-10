@@ -5,7 +5,7 @@ import {
   type BoxData,
   type DetectResponse,
 } from './shared/messages';
-import messageFactories from './shared/messageFactories';
+import requestFactories from './shared/requestFactories';
 
 type LastResult = { imageUrl: string; boxes: BoxData[]; ms: number };
 
@@ -94,7 +94,7 @@ export default function App() {
         return
       }
 
-      const request = messageFactories.detectForWorker(targetImageUrl, tabPageUrl);
+      const request = requestFactories.detectForWorker(targetImageUrl, tabPageUrl);
       const response = (await chrome.runtime.sendMessage(request)) as DetectResponse | undefined;
       return response;
     }

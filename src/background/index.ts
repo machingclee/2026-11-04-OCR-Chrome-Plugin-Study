@@ -1,5 +1,5 @@
 import { OFFSCREEN_HTML, REFERER_RULE_ID } from '../shared/constants';
-import messageFactories from '../shared/messageFactories';
+import requestFactories from '../shared/requestFactories';
 import {
   LAST_RESULT_KEY,
   SERVICE_WORKER_TARGET,
@@ -49,7 +49,7 @@ async function createOffscreenDocument(): Promise<void> {
 
 async function pingOffscreen(): Promise<boolean> {
   try {
-    await chrome.runtime.sendMessage(messageFactories.pingForOffscreen());
+    await chrome.runtime.sendMessage(requestFactories.pingForOffscreen());
     return true;
   } catch {
     return false;
@@ -120,7 +120,7 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
 
   try {
     const response = (await chrome.runtime.sendMessage(
-      messageFactories.detectForOffscreen(request.imageUrl),
+      requestFactories.detectForOffscreen(request.imageUrl),
     )) as DetectResponse | undefined;
 
     if (!response) return { ok: false, error: 'The offscreen document sent no answer.' };

@@ -4,7 +4,6 @@ import {
   type DetectRequest,
   type OffscreenDetectRequest,
   type OffscreenPing,
-  type PingResponse,
 } from './messages';
 
 /** Popup to service worker: translate this image, using the tab as referer. */
@@ -22,16 +21,10 @@ function pingForOffscreen(): OffscreenPing {
   return { target: OFFSCREEN_TARGET, type: 'ping' };
 }
 
-/** Offscreen document back to the worker: the listener is here. */
-function pingResponse(): PingResponse {
-  return { ok: true };
-}
-
-
-
-export default {
+const requestFactories = {
   detectForWorker,
   detectForOffscreen,
   pingForOffscreen,
-  pingResponse,
-};;
+};
+
+export default requestFactories;
