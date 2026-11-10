@@ -1,73 +1,82 @@
 import type { Box, TextMask } from './types';
 
-function backgroundColour(pixels: Uint8ClampedArray, width: number, height: number): [number, number, number] {
-    const counts = new Map<number, { count: number; r: number; g: number; b: number }>();
+const GLYPH_THRESHOLD = 0.3;
+const BACKGROUND_THRESHOLD = 0.1;
+const MODEL_SIZE = 1024;
 
-    const visit = (x: number, y: number): void => {
-        const offset = (y * width + x) * 4;
-        const r = pixels[offset];
-        const g = pixels[offset + 1];
-        const b = pixels[offset + 2];
-        const key = (r >> 3) << 10 | (g >> 3) << 5 | b >> 3;
-        const entry = counts.get(key);
-        if (entry) {
-            entry.count += 1;
-            entry.r += r;
-            entry.g += g;
-            entry.b += b;
-        } else {
-            counts.set(key, { count: 1, r, g, b });
-        }
-    };
-
-    for (let x = 0; x < width; x += 1) {
-        visit(x, 0);
-        visit(x, height - 1);
-    }
-    for (let y = 1; y < height - 1; y += 1) {
-        visit(0, y);
-        visit(width - 1, y);
-    }
-
-    let best = { count: 0, r: 255, g: 255, b: 255 };
-    for (const entry of counts.values()) if (entry.count > best.count) best = entry;
-    return [best.r / best.count, best.g / best.count, best.b / best.count];
+/** Read the seg value that belongs to one pixel of a crop. */
+function maskAt(mask: TextMask, box: Box, x: number, y: number, width: number, height: number): number {
+    const pageX = box.x + ((x + 0.5) * box.width) / width;
+    const pageY = box.y + ((y + 0.5) * box.height) / height;
+    const sourceX = Math.round(pageX * mask.scale + mask.padX);
+    const sourceY = Math.round(pageY * mask.scale + mask.padY);
+    if (sourceX < 0 || sourceY < 0 || sourceX >= MODEL_SIZE || sourceY >= MODEL_SIZE) return 0;
+    return mask.data[sourceY * MODEL_SIZE + sourceX];
 }
 
 /**
- * Paint over every text pixel of one line with the colour of the bubble behind
- * it. The detector's seg map says which pixels belong to a glyph.
+ * The bubble behind a line is mostly paper, so the median of the pixels the seg
+ * map calls background gives its colour without reading the glyph edges.
  */
-export function eraseLine(bitmap: ImageBitmap, box: Box, mask: TextMask): string {
-    const width = Math.max(1, Math.round(box.width));
-    const height = Math.max(1, Math.round(box.height));
+function backgroundColour(pixels: Uint8ClampedArray, values: Float32Array): [number, number, number] {
+    const reds: number[] = [];
+    const greens: number[] = [];
+    const blues: number[] = [];
 
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext('2d');
-    if (!context) throw new Error('The browser refused a 2D context for the erase.');
+    for (let index = 0; index < values.length; index += 1) {
+        if (values[index] > BACKGROUND_THRESHOLD) continue;
+        const offset = index * 4;
+        reds.push(pixels[offset]);
+        greens.push(pixels[offset + 1]);
+        blues.push(pixels[offset + 2]);
+    }
 
-    context.drawImage(bitmap, box.x, box.y, box.width, box.height, 0, 0, width, height);
-    const image = context.getImageData(0, 0, width, height);
-    const pixels = image.data;
-    const [r, g, b] = backgroundColour(pixels, width, height);
-    const modelSize = 1024;
+    const median = (channel: number[]): number => {
+        if (channel.length === 0) return 255;
+        channel.sort((a, b) => a - b);
+        return channel[channel.length >> 1];
+    };
+
+    return [median(reds), median(greens), median(blues)];
+}
+
+/**
+ * Paint over every glyph pixel of one crop with the colour of the bubble behind
+ * it. A pixel counts as a glyph when its own seg value passes the threshold, and
+ * the mask grows by one pixel to catch the soft edge of the stroke.
+ */
+export function eraseGlyphs(image: ImageData, box: Box, mask: TextMask): void {
+    const { width, height, data } = image;
+    const values = new Float32Array(width * height);
 
     for (let y = 0; y < height; y += 1) {
         for (let x = 0; x < width; x += 1) {
-            const sourceX = Math.round((box.x + (x + 0.5) * (box.width / width)) * mask.scale + mask.padX);
-            const sourceY = Math.round((box.y + (y + 0.5) * (box.height / height)) * mask.scale + mask.padY);
-            if (sourceX < 0 || sourceY < 0 || sourceX >= modelSize || sourceY >= modelSize) continue;
-            if (mask.data[sourceY * modelSize + sourceX] < 0.3) continue;
-
-            const offset = (y * width + x) * 4;
-            pixels[offset] = r;
-            pixels[offset + 1] = g;
-            pixels[offset + 2] = b;
+            values[y * width + x] = maskAt(mask, box, x, y, width, height);
         }
     }
 
-    context.putImageData(image, 0, 0);
-    return canvas.toDataURL('image/webp', 0.8);
+    const [red, green, blue] = backgroundColour(data, values);
+
+    for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+            let glyph = false;
+            for (let dy = -1; dy <= 1 && !glyph; dy += 1) {
+                for (let dx = -1; dx <= 1; dx += 1) {
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+                    if (values[ny * width + nx] > GLYPH_THRESHOLD) {
+                        glyph = true;
+                        break;
+                    }
+                }
+            }
+            if (!glyph) continue;
+
+            const offset = (y * width + x) * 4;
+            data[offset] = red;
+            data[offset + 1] = green;
+            data[offset + 2] = blue;
+        }
+    }
 }

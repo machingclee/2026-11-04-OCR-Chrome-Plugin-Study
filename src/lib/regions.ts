@@ -1,4 +1,5 @@
-import type { Box } from './types';
+import { eraseGlyphs } from './erase';
+import type { Box, TextMask } from './types';
 
 const PREVIEW_MAX_WIDTH = 160;
 const PREVIEW_QUALITY = 0.8;
@@ -6,8 +7,10 @@ const PREVIEW_QUALITY = 0.8;
 /**
  * Crop every box out of the decoded bitmap and return one preview per box.
  * All crops share one scale so the strip keeps the relative size of a region.
+ * With a mask, the glyphs are painted over first, so the strip shows the page
+ * the way it will look once the text is gone.
  */
-export function cropPreviews(bitmap: ImageBitmap, boxes: Box[]): string[] {
+export function cropPreviews(bitmap: ImageBitmap, boxes: Box[], mask?: TextMask): string[] {
     if (boxes.length === 0) return [];
 
     const widest = Math.max(...boxes.map((box) => box.width));
@@ -33,6 +36,11 @@ export function cropPreviews(bitmap: ImageBitmap, boxes: Box[]): string[] {
             width,
             height
         );
+        if (mask) {
+            const image = context.getImageData(0, 0, width, height);
+            eraseGlyphs(image, box, mask);
+            context.putImageData(image, 0, 0);
+        }
         return canvas.toDataURL('image/webp', PREVIEW_QUALITY);
     });
 }
