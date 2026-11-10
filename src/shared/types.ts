@@ -6,6 +6,14 @@ export type MessageTarget =
 
 export type MessageType = 'detect' | 'ping';
 
+export type RubyBox = {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    score: number;
+};
+
 export type BoxData = {
     x: number;
     y: number;
@@ -13,6 +21,7 @@ export type BoxData = {
     height: number;
     score: number;
     direction: 'vertical' | 'horizontal';
+    ruby: RubyBox[];
 };
 
 /** Popup to service worker. */

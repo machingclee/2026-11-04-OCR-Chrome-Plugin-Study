@@ -74,8 +74,9 @@ export default function App() {
             setBoxes(response.boxes);
             setPreviews(response.previews);
             const vertical = response.boxes.filter((box) => box.direction === 'vertical').length;
+            const ruby = response.boxes.reduce((sum, box) => sum + box.ruby.length, 0);
             setStatus(
-                `${response.boxes.length} lines (${vertical} vertical), ${response.previews.length} crops, ${response.ms} ms (${response.warm ? 'reused session' : 'cold session'}).`,
+                `${response.boxes.length} lines (${vertical} vertical, ${ruby} ruby), ${response.previews.length} crops, ${response.ms} ms (${response.warm ? 'reused session' : 'cold session'}).`,
             );
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));
