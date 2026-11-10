@@ -1,0 +1,10 @@
+import { SERVICE_WORKER_TARGET, type DetectRequest } from './messages';
+
+/** Messages addressed to the service worker. */
+function detect(imageUrl: string, tabPageUrl?: string): DetectRequest {
+  return { target: SERVICE_WORKER_TARGET, type: 'detect', imageUrl, tabPageUrl };
+}
+
+const serviceWorkerRequestFactory = { detect };
+
+export default serviceWorkerRequestFactory;

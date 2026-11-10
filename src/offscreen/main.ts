@@ -5,7 +5,7 @@ import {
   type IncomingMessage,
   type OffscreenDetectRequest,
 } from '../shared/messages';
-import responseFactories from '../shared/responseFactories';
+import serviceWorkerResponseFactory from '../shared/serviceWorkerResponseFactory';
 
 async function runDetection(request: OffscreenDetectRequest): Promise<DetectResponse> {
   const started = performance.now();
@@ -31,7 +31,7 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
   if (!request || request.target !== OFFSCREEN_TARGET) return false;
 
   if (request.type === 'ping') {
-    sendResponse(responseFactories.pingResponse());
+    sendResponse(serviceWorkerResponseFactory.ping());
     return false;
   }
 
