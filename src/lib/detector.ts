@@ -5,6 +5,7 @@ import {
     DETECTOR_MIN_MEAN_SCORE,
     DETECTOR_MODEL_PATH,
     DETECTOR_SCORE_THRESHOLD,
+    DETECTOR_UNCLIP_RATIO,
 } from '../shared/constants';
 
 ort.env.wasm.numThreads = 1;
@@ -73,24 +74,47 @@ async function prepareInput(bitmap: ImageBitmap): Promise<Prepared> {
     };
 }
 
-function pickScoreMap(outputs: Record<string, ort.Tensor>): Float32Array | null {
+/**
+ * The model ships three maps: blk [1, N, 7] with block quads, seg with the
+ * pixel mask used for erasing, and det with two channels whose first channel
+ * holds the text lines. Read the det channel, because the seg mask separates
+ * single glyphs and a crop of one glyph is not what OCR wants.
+ */
+function pickTextMap(outputs: Record<string, ort.Tensor>): Float32Array | null {
     const entries = Object.entries(outputs);
     const named = entries.find(([key]) => key.toLowerCase().includes('det'));
     const ordered = named ? [named, ...entries.filter(([key]) => key !== named[0])] : entries;
 
+    const plane = DETECTOR_INPUT_SIZE * DETECTOR_INPUT_SIZE;
     for (const [, value] of ordered) {
         if (!(value instanceof ort.Tensor) || !(value.data instanceof Float32Array)) continue;
         const dims = value.dims;
-        if (
-            dims.length === 4
-            && dims[0] === 1
-            && dims[1] === 1
-            && value.data.length === DETECTOR_INPUT_SIZE * DETECTOR_INPUT_SIZE
-        ) {
-            return value.data;
-        }
+        if (dims.length !== 4 || dims[0] !== 1 || dims[1] < 1) continue;
+        if (dims[2] !== DETECTOR_INPUT_SIZE || dims[3] !== DETECTOR_INPUT_SIZE) continue;
+        if (value.data.length < plane) continue;
+        return value.data.subarray(0, plane);
     }
     return null;
+}
+
+/**
+ * DBNet predicts a shrunken region, so every blob is widened before it counts as
+ * a line. The offset comes from area over perimeter, which is what the reference
+ * implementation calls unclip.
+ */
+function unclip(box: Box): Box {
+    const area = box.width * box.height;
+    const perimeter = 2 * (box.width + box.height);
+    if (area <= 0 || perimeter <= 0) return box;
+
+    const distance = (area * DETECTOR_UNCLIP_RATIO) / perimeter;
+    return {
+        x: box.x - distance,
+        y: box.y - distance,
+        width: box.width + distance * 2,
+        height: box.height + distance * 2,
+        score: box.score,
+    };
 }
 
 function toBoxes(map: Float32Array, prepared: Prepared): Box[] {
@@ -154,8 +178,9 @@ function toBoxes(map: Float32Array, prepared: Prepared): Box[] {
         boxes.push({ x: left, y: top, width: right - left, height: bottom - top, score });
     }
 
-    boxes.sort((a, b) => (Math.abs(a.y - b.y) > 8 ? a.y - b.y : a.x - b.x));
-    return boxes;
+    const lines = boxes.map(unclip);
+    lines.sort((a, b) => (Math.abs(a.y - b.y) > 8 ? a.y - b.y : a.x - b.x));
+    return lines;
 }
 
 export async function detectBoxes(bitmap: ImageBitmap): Promise<Box[]> {
@@ -165,7 +190,7 @@ export async function detectBoxes(bitmap: ImageBitmap): Promise<Box[]> {
 
     const prepared = await prepareInput(bitmap);
     const outputs = await session.run({ [inputName]: prepared.tensor });
-    const map = pickScoreMap(outputs as Record<string, ort.Tensor>);
+    const map = pickTextMap(outputs as Record<string, ort.Tensor>);
     if (!map) throw new Error('The detector returned no score map.');
     return toBoxes(map, prepared);
 }
