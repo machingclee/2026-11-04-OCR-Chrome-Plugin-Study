@@ -108,9 +108,9 @@ function gapBetween(a: Box, b: Box): { x: number; y: number } {
  * only, and each of them carries the ruby that sat beside it, so nothing is lost
  * when the crop is cut.
  *
- * The test is relative: a box is ruby when the host beside it is at least twice
- * as thick. A page median would break on a page that mixes sizes, and vertical
- * ruby is thin while horizontal ruby is short.
+ * The test is relative: a box is ruby when the host beside it is at least 1.6
+ * times as thick. A page median would break on a page that mixes sizes, and
+ * vertical ruby is thin while horizontal ruby is short.
  */
 export function separateRuby(lines: TextLine[]): TextLine[] {
     if (lines.length <= 1) return lines;
