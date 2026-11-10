@@ -6,6 +6,18 @@ earlier steps: one branch, one loadable build, one measurable result.
 The target project is GPL-3.0, so nothing here is copied from it. Its code is read as a
 specification, and every function below is written again for this repository.
 
+## What Changed Since This Plan Was Written
+
+Step 6 now reads the `det` map and unclips it, so the detector returns one box per
+line. Two tasks below changed because of that.
+
+- T2 no longer separates ruby by grouping glyphs. Ruby arrives inside the line crop,
+  so the task becomes a measurement: does the crop read correctly with ruby in it.
+- T6 no longer needs to derive `direction`. Every line already carries it.
+
+The rest of the plan stands, and the numbers in it come from a probe of the model on a
+synthetic page: `det` channel 0 gives 3 blobs where `seg` gives 22.
+
 ## What The Target Project Does
 
 | Stage | File | Facts we can reuse |
@@ -31,11 +43,12 @@ specification, and every function below is written again for this repository.
 - Record the size and the sha256 in `DETECTOR_*` style constants, named `OCR_*`.
 - Acceptance: `npm run prepare:assets` produces both files under `public/models/`, and the hash check fails on a corrupted download.
 
-### T2. Separate furigana from the main line
+### T2. Measure what ruby does to a crop
 
-- A glyph whose size is below 0.6 times the median glyph of its line is ruby, not text.
-- Keep ruby boxes in a `ruby` array on the line, and crop the main line without them.
-- Acceptance: the page used in step 6 yields lines whose crops hold no small kana beside a kanji.
+- Ruby sits inside the line box, so a crop of a kanji line also holds its small kana.
+- Run the recogniser on both a clean crop and the same crop with ruby, and compare the text.
+- Only build a ruby split if the comparison shows damage: a crop where ruby wins the decoder.
+- Acceptance: the report names how many lines on the test page carry ruby, and whether the text changed.
 
 ### T3. Build the recogniser input
 
@@ -87,7 +100,7 @@ specification, and every function below is written again for this repository.
 | The 76 MB download doubles the cold start | Load the recogniser on the first OCR request, not on the first page |
 | The dictionary is large and must stay in sync with the model | Hash both files in `prepare:assets`, and read the dictionary once per document |
 | Vertical text rotated the wrong way produces garbage | Test one vertical and one horizontal line before wiring the UI |
-| Ruby merging still confuses the crop | Do T2 before T3, so the crop never holds ruby |
+| Ruby inside the crop adds kana to the text | Measure it in T2 before writing a split; a split without evidence is guessing |
 
 ## Open Questions
 
