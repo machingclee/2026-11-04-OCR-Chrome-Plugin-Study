@@ -1,5 +1,8 @@
 import type { Box } from './detector';
 
+/** A host must be at least this much thicker than the box beside it. */
+const RUBY_THICKNESS_RATIO = 1.6;
+
 export type TextDirection = 'vertical' | 'horizontal';
 
 export type TextLine = Box & { direction: TextDirection; ruby: Box[] };
@@ -48,27 +51,27 @@ function gapBetween(a: Box, b: Box): { x: number; y: number } {
  * Ruby is the small kana printed beside a kanji to give its reading. The
  * detector returns it as its own line, so it would sit in the strip as a
  * floating crop. Attach it to the line it annotates and keep the crop clean.
+ *
+ * The test is relative: a box is ruby when the host beside it is at least twice
+ * as thick. A page median would break on a page that mixes sizes, and vertical
+ * ruby is thin while horizontal ruby is short.
  */
 export function attachRuby(lines: TextLine[]): TextLine[] {
     if (lines.length <= 1) return lines;
 
-    const sizes = lines.map(smallerSide).sort((a, b) => a - b);
-    const median = sizes[Math.floor(sizes.length / 2)] ?? 1;
-    const rubyLimit = median * 0.6;
+    const byThickness = [...lines].sort((a, b) => smallerSide(b) - smallerSide(a));
+    const hosts: TextLine[] = [];
 
-    const body = lines.filter((line) => smallerSide(line) >= rubyLimit);
-    if (body.length === 0) return lines;
-
-    for (const line of lines) {
-        if (smallerSide(line) >= rubyLimit) continue;
-
+    for (const line of byThickness) {
+        const thickness = smallerSide(line);
         let host: TextLine | null = null;
         let nearest = Infinity;
-        for (const candidate of body) {
+
+        for (const candidate of hosts) {
+            if (smallerSide(candidate) < thickness * RUBY_THICKNESS_RATIO) continue;
+
             const gap = gapBetween(line, candidate);
             const distance = Math.max(gap.x, gap.y);
-            // Ruby sits above a horizontal line and to the right of a vertical
-            // one, so the reach comes from the line thickness, not its length.
             if (distance > smallerSide(candidate) * 1.5) continue;
             if (distance < nearest) {
                 nearest = distance;
@@ -77,9 +80,10 @@ export function attachRuby(lines: TextLine[]): TextLine[] {
         }
 
         if (host) host.ruby.push({ ...line });
+        else hosts.push(line);
     }
 
-    return body;
+    return hosts;
 }
 
 /**
