@@ -41,55 +41,66 @@ function wrap(context: CanvasRenderingContext2D, text: string, width: number): s
     return lines;
 }
 
+function inner(box: GroupData): { x: number; y: number; width: number; height: number } {
+    const pad = Math.max(3, Math.min(box.width, box.height) * 0.14);
+    return {
+        x: box.x + pad,
+        y: box.y + pad,
+        width: Math.max(8, box.width - pad * 2),
+        height: Math.max(8, box.height - pad * 2),
+    };
+}
+
 function drawHorizontal(context: CanvasRenderingContext2D, box: GroupData, text: string): void {
-    const padding = Math.max(2, Math.min(box.width, box.height) * 0.08);
-    const width = box.width - padding * 2;
-    let size = Math.min(box.width, box.height * 0.9);
+    const area = inner(box);
+    // Start small enough that a short line cannot turn into a headline.
+    let size = Math.max(8, Math.min(area.width, area.height) / 4);
     let lines: string[] = [];
 
     while (size > 7) {
         context.font = `${size}px system-ui, sans-serif`;
-        lines = wrap(context, text, width);
-        if (lines.length * size * 1.15 <= box.height - padding * 2) break;
+        lines = wrap(context, text, area.width);
+        if (lines.length * size * 1.2 <= area.height) break;
         size -= 1;
     }
 
     context.font = `${size}px system-ui, sans-serif`;
-    const total = lines.length * size * 1.15;
-    let y = box.y + (box.height - total) / 2 + size;
+    const total = lines.length * size * 1.2;
+    let y = area.y + (area.height - total) / 2 + size;
     for (const line of lines) {
-        const lineWidth = context.measureText(line).width;
-        context.fillText(line, box.x + (box.width - lineWidth) / 2, y);
-        y += size * 1.15;
+        const width = context.measureText(line).width;
+        context.fillText(line, area.x + (area.width - width) / 2, y);
+        y += size * 1.2;
     }
 }
 
 function drawVertical(context: CanvasRenderingContext2D, box: GroupData, text: string, given?: string[]): void {
-    const padding = Math.max(2, Math.min(box.width, box.height) * 0.08);
-    const height = box.height - padding * 2;
-    let size = Math.min(box.width * 0.85, height);
+    const area = inner(box);
+    const characters = [...text];
+    let size = Math.max(8, Math.min(area.width, area.height) / 4);
     let columns: string[][] = [];
 
     while (size > 7) {
         context.font = `${size}px system-ui, sans-serif`;
-        const perColumn = Math.max(1, Math.floor(height / size));
+        const perColumn = Math.max(1, Math.floor(area.height / (size * 1.1)));
         columns = [];
-        const characters = [...text];
         for (let index = 0; index < characters.length; index += perColumn) {
             columns.push(characters.slice(index, index + perColumn));
         }
         if (given && given.length > 0 && given.every((column) => [...column].length <= perColumn)) {
             columns = given.map((column) => [...column]);
         }
-        if (columns.length * size * 1.1 <= box.width - padding * 2) break;
+        if (columns.length * size * 1.1 <= area.width) break;
         size -= 1;
     }
 
     context.font = `${size}px system-ui, sans-serif`;
     const total = columns.length * size * 1.1;
-    let x = box.x + box.width - (box.width - total) / 2 - size / 2;
+    let x = area.x + area.width - (area.width - total) / 2 - size / 2;
     for (const column of columns) {
-        let y = box.y + padding + size;
+        // Centre every column in the height it uses, so short columns sit evenly.
+        const used = column.length * size * 1.1;
+        let y = area.y + (area.height - used) / 2 + size;
         for (const character of column) {
             const width = context.measureText(character).width;
             context.fillText(character, x - width / 2, y);
@@ -99,10 +110,7 @@ function drawVertical(context: CanvasRenderingContext2D, box: GroupData, text: s
     }
 }
 
-/**
- * Paint the translation over the page and hand back a data url, so the page can
- * show the finished image instead of an overlay.
- */
+/** Keep the paint inside the balloon, so nothing spills over the artwork. */
 export function renderTypeset(
     image: CanvasImageSource,
     width: number,
