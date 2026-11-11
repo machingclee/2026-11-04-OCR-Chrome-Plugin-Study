@@ -91,7 +91,9 @@ function drawHorizontal(context: CanvasRenderingContext2D, box: GroupData, text:
     // Start small enough that a short line cannot turn into a headline.
     // Binary search the largest size that still fits, so short lines grow.
     let low = options.minSize;
-    let high = Math.max(options.minSize, Math.min(options.maxSize, Math.min(area.width, area.height)));
+    // A glyph may not be wider than a third of the balloon, or the text reads
+    // as a poster instead of a line of dialogue.
+    let high = Math.max(options.minSize, Math.min(options.maxSize, Math.min(area.width, area.height) / 2.5));
     let best = options.minSize;
     let bestLines: string[] = [];
     while (low <= high) {
@@ -142,7 +144,9 @@ function drawVertical(context: CanvasRenderingContext2D, box: GroupData, text: s
 
     // Search the largest size whose columns still fit across the balloon.
     let low = options.minSize;
-    let high = Math.max(options.minSize, Math.min(options.maxSize, Math.min(area.width, area.height)));
+    // A glyph may not be wider than a third of the balloon, or the text reads
+    // as a poster instead of a line of dialogue.
+    let high = Math.max(options.minSize, Math.min(options.maxSize, Math.min(area.width, area.height) / 2.5));
     let best = options.minSize;
     let bestColumns: string[][] = [];
     while (low <= high) {
