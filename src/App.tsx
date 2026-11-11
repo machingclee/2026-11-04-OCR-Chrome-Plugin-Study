@@ -160,6 +160,7 @@ export default function App() {
     const [weight, setWeight] = useState<'normal' | 'bold'>('normal');
     const [wrote, setWrote] = useState(false);
     const [erasedUrl, setErasedUrl] = useState<string | null>(null);
+    const [bubbleError, setBubbleError] = useState<string | null>(null);
 
     useEffect(() => {
         if (!translated) return;
@@ -331,6 +332,7 @@ export default function App() {
             setBubbles(response.bubbles ?? []);
             setGroups(response.groups ?? []);
             setErasedUrl(response.erasedUrl ?? null);
+            setBubbleError(response.bubbleError ?? null);
             setTranslated(null);
             const vertical = response.boxes.filter((box) => box.direction === 'vertical').length;
             const ruby = response.boxes.reduce((sum, box) => sum + box.ruby.length, 0);
@@ -424,7 +426,7 @@ export default function App() {
             await applyToPage(out, current);
             const withBalloon = countWithBalloon(current, bubbles);
             setStatus(
-                `Translated ${out.length} groups, ${withBalloon} with a balloon, ${bubbles.length} balloons, wrote them to the page.`,
+                `Translated ${out.length} groups, ${withBalloon} with a balloon, ${bubbles.length} balloons${bubbleError ? `, balloon error: ${bubbleError}` : ''}, wrote them to the page.`,
             );
             setWrote(true);
         } catch (cause) {

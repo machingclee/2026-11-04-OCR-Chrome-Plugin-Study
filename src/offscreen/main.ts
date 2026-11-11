@@ -47,6 +47,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         const collected: BoxData[] = [];
         const balloons: BubbleData[] = [];
         let dropped = 0;
+        let bubbleError: string | null = null;
         const groups: GroupData[] = [];
         const masks: {
             mask: TextMask;
@@ -80,7 +81,10 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
 
             const detected = await detectBoxes(slice, tilesX, tilesY);
             const ordered = toOrderedTextLines(detected.detBoxes, [], true);
-            const bubbles = await detectBubbles(slice).catch(() => null);
+            const bubbles = await detectBubbles(slice).catch((cause: unknown) => {
+                bubbleError = cause instanceof Error ? cause.message : String(cause);
+                return null;
+            });
             const grouped = groupByRegion(
                 ordered,
                 bubbles ? bubbles.bubbles : [],
@@ -240,6 +244,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             imageHeight: bitmap.height,
             groupedLines: collected.length - dropped,
             groups,
+            bubbleError,
             erasedUrl,
             bubbles: balloons,
             ms: Math.round(performance.now() - started),

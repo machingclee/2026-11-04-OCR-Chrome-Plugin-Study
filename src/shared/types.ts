@@ -94,6 +94,7 @@ export type DetectResponse =
           groupedLines: number;
           groups: GroupData[];
           erasedUrl: string | null;
+          bubbleError: string | null;
           bubbles: BubbleData[];
       }
     | { ok: false; error: string };
