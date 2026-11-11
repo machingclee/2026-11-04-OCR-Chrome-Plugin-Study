@@ -169,3 +169,27 @@ button[data-busy='true'] {
   font-variant-numeric: tabular-nums;
   color: #4a4a4a;
 }
+
+.debug {
+  font-size: 12px;
+}
+
+.debug-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.debug-grid figure {
+  margin: 0;
+}
+
+.debug-grid img {
+  width: 100%;
+  border: 1px solid #ccc;
+}
+
+.debug-grid figcaption {
+  text-align: center;
+  color: #555;
+}

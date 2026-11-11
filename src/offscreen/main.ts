@@ -174,6 +174,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         // Erase at stroke level instead of filling a white box, so the artwork
         // behind the text survives.
         let erasedUrl: string | null = null;
+        let maskUrl: string | null = null;
         if (masks.length > 0) {
             const canvas = document.createElement('canvas');
             canvas.width = bitmap.width;
@@ -237,6 +238,26 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
 
                 context.putImageData(image, 0, 0);
                 erasedUrl = canvas.toDataURL('image/webp', 0.9);
+
+                // A black and white copy of the mask, so the erase can be judged
+                // without guessing which stage went wrong.
+                const debugCanvas = document.createElement('canvas');
+                debugCanvas.width = canvas.width;
+                debugCanvas.height = canvas.height;
+                const debugContext = debugCanvas.getContext('2d');
+                if (debugContext) {
+                    const debugImage = debugContext.createImageData(canvas.width, canvas.height);
+                    for (let index = 0; index < refined.length; index += 1) {
+                        const value = refined[index] === 1 ? 255 : 0;
+                        const offset = index * 4;
+                        debugImage.data[offset] = value;
+                        debugImage.data[offset + 1] = value;
+                        debugImage.data[offset + 2] = value;
+                        debugImage.data[offset + 3] = 255;
+                    }
+                    debugContext.putImageData(debugImage, 0, 0);
+                    maskUrl = debugCanvas.toDataURL('image/png');
+                }
             }
         }
 
@@ -251,6 +272,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             groups,
             bubbleError,
             erasedUrl,
+            maskUrl,
             bubbles: balloons,
             ms: Math.round(performance.now() - started),
             warm

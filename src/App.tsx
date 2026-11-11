@@ -161,6 +161,8 @@ export default function App() {
     const [wrote, setWrote] = useState(false);
     const [erasedUrl, setErasedUrl] = useState<string | null>(null);
     const [bubbleError, setBubbleError] = useState<string | null>(null);
+    const [maskUrl, setMaskUrl] = useState<string | null>(null);
+    const [typesetUrl, setTypesetUrl] = useState<string | null>(null);
 
     useEffect(() => {
         if (!translated) return;
@@ -337,6 +339,7 @@ export default function App() {
             setGroups(response.groups ?? []);
             setErasedUrl(response.erasedUrl ?? null);
             setBubbleError(response.bubbleError ?? null);
+            setMaskUrl(response.maskUrl ?? null);
             setTranslated(null);
             const vertical = response.boxes.filter((box) => box.direction === 'vertical').length;
             const ruby = response.boxes.reduce((sum, box) => sum + box.ruby.length, 0);
@@ -667,6 +670,33 @@ export default function App() {
                         ))}
                     </ol>
                 </section>
+            ) : null}
+
+
+            {maskUrl || erasedUrl || typesetUrl ? (
+                <details className="debug">
+                    <summary>Debug stages</summary>
+                    <div className="debug-grid">
+                        {maskUrl ? (
+                            <figure>
+                                <img src={maskUrl} alt="Refined erase mask" />
+                                <figcaption>mask</figcaption>
+                            </figure>
+                        ) : null}
+                        {erasedUrl ? (
+                            <figure>
+                                <img src={erasedUrl} alt="Page after the erase" />
+                                <figcaption>erased page</figcaption>
+                            </figure>
+                        ) : null}
+                        {typesetUrl ? (
+                            <figure>
+                                <img src={typesetUrl} alt="Page after the typesetting" />
+                                <figcaption>typeset</figcaption>
+                            </figure>
+                        ) : null}
+                    </div>
+                </details>
             ) : null}
 
             {previews.length > 0 ? (
