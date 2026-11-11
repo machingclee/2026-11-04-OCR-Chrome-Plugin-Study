@@ -1,4 +1,5 @@
 import type { GroupData } from '../shared/types';
+import { bestBreak, toVertical } from './punct';
 
 type Paragraph = { box: GroupData; text: string; columns?: string[]; outline?: { x: number; y: number }[] };
 
@@ -76,7 +77,8 @@ function drawHorizontal(context: CanvasRenderingContext2D, box: GroupData, text:
 
 function drawVertical(context: CanvasRenderingContext2D, box: GroupData, text: string, given?: string[]): void {
     const area = inner(box);
-    const characters = [...text];
+    // Vertical punctuation has its own glyphs, and a mark may not lead a column.
+    const characters = [...toVertical(text)];
     let size = Math.max(8, Math.min(area.width, area.height) / 4);
     let columns: string[][] = [];
 
@@ -84,8 +86,13 @@ function drawVertical(context: CanvasRenderingContext2D, box: GroupData, text: s
         context.font = `${size}px system-ui, sans-serif`;
         const perColumn = Math.max(1, Math.floor(area.height / (size * 1.1)));
         columns = [];
-        for (let index = 0; index < characters.length; index += perColumn) {
-            columns.push(characters.slice(index, index + perColumn));
+        let cursor = 0;
+        while (cursor < characters.length) {
+            const limit = Math.min(cursor + perColumn, characters.length);
+            const preferred = bestBreak(characters, limit - cursor);
+            const take = preferred > 0 ? cursor + preferred : limit;
+            columns.push(characters.slice(cursor, take));
+            cursor = take;
         }
         if (given && given.length > 0 && given.every((column) => [...column].length <= perColumn)) {
             columns = given.map((column) => [...column]);
