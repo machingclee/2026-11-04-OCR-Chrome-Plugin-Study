@@ -19,6 +19,12 @@ import serviceWorkerResponseFactory from '../shared/factories/serviceWorkerRespo
 /** Each crop is a data url in storage, so the strip stops at this many. */
 const MAX_PREVIEWS = 30;
 
+/** Whether a line centre sits inside a group box. */
+function centreInsideBox(box: { x: number; y: number; width: number; height: number }, group: { x: number; y: number; width: number; height: number }): boolean {
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    return x >= group.x && x <= group.x + group.width && y >= group.y && y <= group.y + group.height;
+}
 async function runDetection(request: OffscreenDetectRequest): Promise<DetectResponse> {
     const started = performance.now();
     const warm = isSessionReady();
@@ -102,6 +108,20 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
                 if (text.length === 0) return;
                 groups.push({ ...box, lines: text });
             });
+
+            // A line outside every region still has to be translated, so it
+            // becomes a group of its own instead of being left out.
+            for (const line of collected) {
+                if (groups.some((group) => centreInsideBox(line, group))) continue;
+                if (line.text.length === 0) continue;
+                groups.push({
+                    x: line.x,
+                    y: line.y,
+                    width: line.width,
+                    height: line.height,
+                    lines: [line.text],
+                });
+            }
 
         }
 

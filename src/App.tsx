@@ -243,7 +243,7 @@ export default function App() {
                 <button
                     type="button"
                     onClick={handleTranslate}
-                    disabled={groups.length === 0 || translating}
+                    disabled={boxes.length === 0 || translating}
                     title={canTranslate() ? undefined : 'This browser ships no translator.'}
                 >
                     {translating ? 'Translating' : 'Translate'}
