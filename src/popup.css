@@ -1,6 +1,6 @@
 /* Chrome caps an action popup at 800 by 600, so the page fills that box. */
 body {
-  width: 784px;
+  width: 1800px;
   min-height: 560px;
   max-height: 600px;
   overflow-y: auto;
@@ -101,4 +101,11 @@ button[data-busy='true'] {
   display: block;
   margin: 0 0 8px;
   color: #444;
+}
+
+.bubble {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px dashed #2f7bd8;
+  pointer-events: none;
 }

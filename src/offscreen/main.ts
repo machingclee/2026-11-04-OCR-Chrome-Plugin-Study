@@ -1,6 +1,8 @@
 import { detectBoxes, isSessionReady } from '../lib/detector';
+import { detectBubbles } from '../lib/bubble';
 import { cropPreviews } from '../lib/regions';
-import { toOrderedTextLines } from '../lib/readingOrder';
+import { expandToInk } from '../lib/expand';
+import { groupByRegion, toOrderedTextLines } from '../lib/readingOrder';
 import { recognizeLine } from '../lib/ocr/recognize';
 import { OFFSCREEN_TARGET } from '../shared/constants';
 import type {
@@ -11,7 +13,8 @@ import type {
 } from '../shared/types';
 import serviceWorkerResponseFactory from '../shared/factories/serviceWorkerResponseFactory';
 
-const MAX_PREVIEWS = 60;
+/** Each crop is a data url in storage, so the strip stops at this many. */
+const MAX_PREVIEWS = 30;
 
 async function runDetection(request: OffscreenDetectRequest): Promise<DetectResponse> {
     const started = performance.now();
@@ -25,7 +28,20 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
 
         const bitmap = await createImageBitmap(await response.blob());
         const detected = await detectBoxes(bitmap);
-        const lines = toOrderedTextLines(detected.detBoxes, detected.blkBoxes, request.keepOutside === true);
+        // The block gate runs later, against the balloon masks, which are the
+        // better evidence for "is this line inside a balloon".
+        const ordered = toOrderedTextLines(detected.detBoxes, [], true);
+        const bubbles = await detectBubbles(bitmap).catch(() => null);
+        const grouped = groupByRegion(
+            ordered,
+            bubbles ? bubbles.bubbles : [],
+            detected.blkBoxes,
+            request.keepOutside !== true,
+        );
+        const lines = grouped.lines.map((line) => ({
+            ...line,
+            ...expandToInk(line, detected.mask),
+        }));
         const boxes: BoxData[] = [];
         for (const line of lines) {
             const recognised = await recognizeLine(bitmap, line, line.direction === 'vertical').catch(
@@ -40,6 +56,17 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             previews,
             imageWidth: bitmap.width,
             imageHeight: bitmap.height,
+            // Only the outline crosses the message boundary. The mask is a
+            // Float32Array, and JSON would turn its 25,600 cells into keys.
+            groupedLines: grouped.grouped,
+            bubbles: bubbles
+                ? bubbles.bubbles.map((bubble) => ({
+                      x: bubble.x,
+                      y: bubble.y,
+                      width: bubble.width,
+                      height: bubble.height,
+                  }))
+                : [],
             ms: Math.round(performance.now() - started),
             warm
         };

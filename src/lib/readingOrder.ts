@@ -1,4 +1,4 @@
-import type { Box, TextBlock, TextLine } from './types';
+import type { Box, Bubble, TextBlock, TextLine } from './types';
 
 /** A host must be at least this much thicker than the box beside it. */
 const RUBY_THICKNESS_RATIO = 1.6;
@@ -133,6 +133,118 @@ function gapBetween(a: Box, b: Box): { x: number; y: number } {
         x: Math.max(0, Math.max(a.x, b.x) - Math.min(a.x + a.width, b.x + b.width)),
         y: Math.max(0, Math.max(a.y, b.y) - Math.min(a.y + a.height, b.y + b.height)),
     };
+}
+
+/**
+ * How much of a line sits inside a balloon. The centre alone is not enough when
+ * two balloons overlap, and a box alone is too coarse for a round balloon.
+ */
+function overlapScore(bubble: Bubble, line: TextLine): number {
+    const size = bubble.shapeSize;
+    let hits = 0;
+    let total = 0;
+
+    for (let row = 0; row < 3; row += 1) {
+        for (let column = 0; column < 3; column += 1) {
+            const pageX = line.x + line.width * ((column + 0.5) / 3);
+            const pageY = line.y + line.height * ((row + 0.5) / 3);
+            total += 1;
+
+            const x = Math.round(pageX * bubble.shapeScale + bubble.shapePadX);
+            const y = Math.round(pageY * bubble.shapeScale + bubble.shapePadY);
+            const inMask = x >= 0 && y >= 0 && x < size && y < size
+                && bubble.shape[y * size + x] > 0.5;
+            const inBox = pageX >= bubble.x && pageX <= bubble.x + bubble.width
+                && pageY >= bubble.y && pageY <= bubble.y + bubble.height;
+            if (inMask || inBox) hits += 1;
+        }
+    }
+
+    return hits / total;
+}
+
+/** A region is either a balloon or a text block: both answer "text lives here". */
+type Region = {
+    id: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    cover: (line: TextLine) => boolean;
+};
+
+function regionOfBalloon(bubble: Bubble, index: number): Region {
+    return {
+        id: `balloon-${index}`,
+        x: bubble.x,
+        y: bubble.y,
+        width: bubble.width,
+        height: bubble.height,
+        cover: (line) => overlapScore(bubble, line) >= 0.5,
+    };
+}
+
+function regionOfBlock(block: TextBlock, index: number): Region {
+    return {
+        id: `block-${index}`,
+        x: block.x,
+        y: block.y,
+        width: block.width,
+        height: block.height,
+        cover: (line) => centreInside(line, block),
+    };
+}
+
+/**
+ * Group the lines by the region that holds them. Blocks are the main source and
+ * the balloons are the fallback, which is the order the target project uses.
+ */
+export function groupByRegion(
+    lines: TextLine[],
+    bubbles: Bubble[],
+    blocks: TextBlock[],
+    strict: boolean,
+): { lines: TextLine[]; grouped: number; dropped: number; regions: number } {
+    // The target project prefers the block head and falls back to the balloons,
+    // so the two never argue about which region a line belongs to.
+    const regions: Region[] = blocks.length > 0
+        ? blocks.map(regionOfBlock)
+        : bubbles.map(regionOfBalloon);
+
+    const groups = new Map<string, TextLine[]>();
+    const loose: TextLine[] = [];
+
+    for (const line of lines) {
+        let best: Region | null = null;
+        for (const region of regions) {
+            if (!region.cover(line)) continue;
+            if (!best || region.width * region.height < best.width * best.height) best = region;
+        }
+        if (!best) {
+            loose.push(line);
+            continue;
+        }
+        const bucket = groups.get(best.id);
+        if (bucket) bucket.push(line);
+        else groups.set(best.id, [line]);
+    }
+
+    const ordered: TextLine[] = [];
+    const ids = [...groups.keys()].sort((a, b) => {
+        const first = regions.find((region) => region.id === a) as Region;
+        const second = regions.find((region) => region.id === b) as Region;
+        const band = Math.max(first.height, second.height) * 0.35;
+        if (Math.abs(first.y - second.y) > band) return first.y - second.y;
+        return second.x + second.width - (first.x + first.width);
+    });
+
+    for (const id of ids) ordered.push(...(groups.get(id) as TextLine[]));
+    const grouped = ordered.length;
+
+    if (strict) {
+        return { lines: ordered, grouped, dropped: lines.length - grouped, regions: ids.length };
+    }
+    return { lines: ordered.concat(loose), grouped, dropped: 0, regions: ids.length };
 }
 
 /**

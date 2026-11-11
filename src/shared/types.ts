@@ -39,6 +39,9 @@ export type DetectRequest = {
     keepOutside?: boolean;
 };
 
+/** One speech balloon, in page pixels. */
+export type BubbleData = { x: number; y: number; width: number; height: number };
+
 /** Service worker to offscreen document. */
 export type OffscreenDetectRequest = {
     target: typeof OFFSCREEN_TARGET;
@@ -75,6 +78,8 @@ export type DetectResponse =
           warm: boolean;
           imageWidth: number;
           imageHeight: number;
+          groupedLines: number;
+          bubbles: BubbleData[];
       }
     | { ok: false; error: string };
 

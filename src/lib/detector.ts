@@ -353,6 +353,8 @@ function toBlkBoxes(tensor: ort.Tensor, prepared: Prepared): TextBlock[] {
         const boxWidth = width / prepared.scale;
         const boxHeight = height / prepared.scale;
         if (boxWidth < 6 || boxHeight < 6) continue;
+        // The target project drops a very wide block, which is usually a border.
+        if (boxWidth / boxHeight > 1.8) continue;
         if (boxWidth > prepared.width * 0.35 || boxHeight > prepared.height * 0.45) continue;
 
         candidates.push({

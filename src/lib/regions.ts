@@ -2,8 +2,8 @@ import { eraseGlyphs } from './erase';
 import type { Box, TextMask } from './types';
 import { cropSize, drawUpright } from './warp';
 
-const PREVIEW_MAX_WIDTH = 160;
-const PREVIEW_QUALITY = 0.8;
+const PREVIEW_MAX_WIDTH = 140;
+const PREVIEW_QUALITY = 0.72;
 
 /**
  * Crop every box out of the decoded bitmap and return one preview per box.

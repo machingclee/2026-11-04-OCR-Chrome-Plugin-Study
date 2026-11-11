@@ -48,4 +48,11 @@ export const OCR_MIN_CONFIDENCE = 0.4;
 
 /** DBNet widens a shrunken region by area * ratio / perimeter before merging. */
 export const DETECTOR_UNCLIP_RATIO = 1.5;
+/** Bubble segmentation, a YOLOv8 seg export that finds speech balloons. */
+export const BUBBLE_MODEL_PATH = 'models/bubble.onnx';
+export const BUBBLE_INPUT_SIZE = 640;
+export const BUBBLE_SCORE_THRESHOLD = 0.3;
+export const BUBBLE_NMS = 0.45;
+export const BUBBLE_MASK_THRESHOLD = 0.5;
+
 

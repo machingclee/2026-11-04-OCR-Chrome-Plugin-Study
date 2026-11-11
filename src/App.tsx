@@ -10,7 +10,15 @@ import { BUILD_ID } from './shared/build';
 import serviceWorkerRequestFactory from './shared/factories/serviceWorkerRequestFactory';
 import { cropSize } from './lib/warp';
 
-type LastResult = { version?: string; imageUrl: string; boxes: BoxData[]; previews?: string[]; ms: number };
+type BubbleStroke = { x: number; y: number; width: number; height: number };
+type LastResult = {
+    version?: string;
+    imageUrl: string;
+    boxes: BoxData[];
+    previews?: string[];
+    bubbles?: BubbleStroke[];
+    ms: number;
+};
 
 export default function App() {
     const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -20,7 +28,8 @@ export default function App() {
     const [status, setStatus] = useState('No image picked yet.');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [keepOutside, setKeepOutside] = useState(false);
+    const [keepOutside, setKeepOutside] = useState(true);
+    const [bubbles, setBubbles] = useState<BubbleStroke[]>([]);
 
     useEffect(() => {
         // start working when we open this popup again,
@@ -31,7 +40,7 @@ export default function App() {
         ])
             .then(([local, session]) => {
                 const pickedImageUrl = local[PICKED_IMAGE_URL_KEY];
-                setKeepOutside(local[KEEP_OUTSIDE_KEY] === true);
+                setKeepOutside(local[KEEP_OUTSIDE_KEY] !== false);
                 const lastResult = session[LAST_RESULT_KEY] as LastResult | undefined;
 
                 if (typeof pickedImageUrl !== 'string' || pickedImageUrl.length === 0) {
@@ -45,6 +54,7 @@ export default function App() {
                 if (fresh && lastResult.imageUrl === pickedImageUrl && Array.isArray(lastResult.boxes)) {
                     setBoxes(lastResult.boxes);
                     setPreviews(Array.isArray(lastResult.previews) ? lastResult.previews : []);
+                    setBubbles(Array.isArray(lastResult.bubbles) ? lastResult.bubbles : []);
                     setStatus(`Restored ${lastResult.boxes.length} boxes from ${lastResult.ms} ms.`);
                     return;
                 }
@@ -83,11 +93,12 @@ export default function App() {
 
             setBoxes(response.boxes);
             setPreviews(response.previews);
+            setBubbles(response.bubbles ?? []);
             const vertical = response.boxes.filter((box) => box.direction === 'vertical').length;
             const ruby = response.boxes.reduce((sum, box) => sum + box.ruby.length, 0);
             const read = response.boxes.filter((box) => box.text.length > 0).length;
             setStatus(
-                `${response.boxes.length} lines (${vertical} vertical, ${ruby} ruby), ${read} read, image ${response.imageWidth}x${response.imageHeight}, ${response.ms} ms (${response.warm ? 'reused session' : 'cold session'}).`,
+                `${response.boxes.length} lines (${vertical} vertical, ${ruby} ruby), ${read} read, ${response.bubbles?.length ?? 0} balloons, ${response.groupedLines} grouped, image ${response.imageWidth}x${response.imageHeight}, ${response.ms} ms (${response.warm ? 'reused session' : 'cold session'}).`,
             );
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));
@@ -167,6 +178,18 @@ export default function App() {
                             })
                         }
                     />
+                    {bubbles.map((bubble) => (
+                        <span
+                            key={`bubble-${bubble.x}-${bubble.y}`}
+                            className="bubble"
+                            style={{
+                                left: `${(bubble.x / size.width) * 100}%`,
+                                top: `${(bubble.y / size.height) * 100}%`,
+                                width: `${(bubble.width / size.width) * 100}%`,
+                                height: `${(bubble.height / size.height) * 100}%`,
+                            }}
+                        />
+                    ))}
                     {size.width > 0
                         ? boxes.map((box) => {
                             const angle = box.angle ?? 0;

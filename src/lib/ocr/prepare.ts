@@ -14,8 +14,10 @@ export function buildOcrInput(
     vertical: boolean,
 ): { data: Float32Array; dims: number[]; width: number } {
     const size = cropSize(box);
-    const thickness = vertical ? size.height : size.width;
-    const length = vertical ? size.width : size.height;
+    // A vertical column is thin across and long down. Getting these two the wrong
+    // way round stretches the glyphs and the recogniser answers with nothing.
+    const thickness = vertical ? size.width : size.height;
+    const length = vertical ? size.height : size.width;
     const scale = OCR_INPUT_HEIGHT / Math.max(1, thickness);
     const rawWidth = Math.max(1, Math.round(length * scale));
     const width = Math.min(OCR_INPUT_WIDTH, Math.ceil(rawWidth / 32) * 32);
@@ -30,9 +32,11 @@ export function buildOcrInput(
     context.fillStyle = '#ffffff';
     context.fillRect(0, 0, width, OCR_INPUT_HEIGHT);
 
+    // The crop keeps the page orientation, so a column stays tall here and the
+    // quarter turn below is the only one applied.
     const upright = document.createElement('canvas');
-    upright.width = Math.max(1, Math.round(length));
-    upright.height = Math.max(1, Math.round(thickness));
+    upright.width = Math.max(1, Math.round(size.width));
+    upright.height = Math.max(1, Math.round(size.height));
     const uprightContext = upright.getContext('2d');
     if (!uprightContext) throw new Error('The browser refused a 2D context for the upright crop.');
     drawUpright(uprightContext, bitmap, box, upright.width, upright.height);

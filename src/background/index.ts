@@ -54,14 +54,20 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
         if (!response) return { ok: false, error: 'The offscreen document sent no answer.' };
 
         if (response.ok) {
+            const payload = {
+                version: BUILD_ID,
+                imageUrl: request.imageUrl,
+                boxes: response.boxes,
+                previews: response.previews,
+                bubbles: response.bubbles,
+                ms: response.ms,
+            };
+
+            // Session storage holds 10 MB. The crops are the only large part, so
+            // they are the first thing to drop when a page has many lines.
+            const tooBig = JSON.stringify(payload).length > 5_000_000;
             await chrome.storage.session.set({
-                [LAST_RESULT_KEY]: {
-                    version: BUILD_ID,
-                    imageUrl: request.imageUrl,
-                    boxes: response.boxes,
-                    previews: response.previews,
-                    ms: response.ms,
-                },
+                [LAST_RESULT_KEY]: tooBig ? { ...payload, previews: [] } : payload,
             });
         }
         return response;

@@ -54,5 +54,21 @@ export type TextLine = Box & { direction: TextDirection; ruby: Box[] };
 /** A union of every bubble mask, in the 640 grid the bubble model uses. */
 export type BubbleMask = { data: Float32Array; scale: number; padX: number; padY: number; size: number };
 
+/** One speech balloon, with an id so lines can name the group they belong to. */
+export type Bubble = {
+    id: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    score: number;
+    /** The balloon itself, at prototype resolution. */
+    shape: Float32Array;
+    shapeSize: number;
+    shapeScale: number;
+    shapePadX: number;
+    shapePadY: number;
+};
+
 /** What the recogniser returns for one line. */
 export type OcrResult = { text: string; confidence: number };
