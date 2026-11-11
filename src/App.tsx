@@ -6,6 +6,7 @@ import {
 } from './shared/constants';
 import type { BoxData, DetectResponse } from './shared/types';
 import serviceWorkerRequestFactory from './shared/factories/serviceWorkerRequestFactory';
+import { cropSize } from './lib/warp';
 
 type LastResult = { imageUrl: string; boxes: BoxData[]; previews?: string[]; ms: number };
 
@@ -151,8 +152,9 @@ export default function App() {
                     {size.width > 0
                         ? boxes.map((box) => {
                             const angle = box.angle ?? 0;
-                            const width = box.lineLength ?? box.width;
-                            const height = box.lineThickness ?? box.height;
+                            // A vertical column keeps its long side vertical, so the
+                            // crop size, not the raw line length, decides the box.
+                            const { width, height } = cropSize(box);
                             const centreX = box.x + box.width / 2;
                             const centreY = box.y + box.height / 2;
                             return (
