@@ -60,6 +60,7 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
                 boxes: response.boxes,
                 previews: response.previews,
                 bubbles: response.bubbles,
+                groups: response.groups,
                 ms: response.ms,
             };
 
