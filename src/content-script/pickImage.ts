@@ -1,4 +1,4 @@
-import { PICKED_IMAGE_URL_KEY } from '../shared/constants';
+import { PICKED_IMAGE_URL_KEY, REPLACE_IMAGE_MESSAGE } from '../shared/constants';
 import { HIGHLIGHT_ID, IMAGE_URL_PATTERN, SHIELD_ID, TOAST_ID } from './constants';
 
 
@@ -255,6 +255,30 @@ function start(): void {
     window.addEventListener('keydown', onKey, true);
     showToast('Pick mode is on. Click an image, or press Escape.');
 }
+
+type ReplaceMessage = { type?: string; url?: string; dataUrl?: string };
+
+/** Put the finished image in place of the one the page shows. */
+chrome.runtime.onMessage.addListener((message: ReplaceMessage) => {
+    if (!message || message.type !== REPLACE_IMAGE_MESSAGE) return false;
+    const url = message.url ?? '';
+    const dataUrl = message.dataUrl ?? '';
+    if (dataUrl.length === 0) return false;
+
+    const target = [...document.images].find(
+        (image) => image.currentSrc === url || image.src === url,
+    );
+    if (!target) {
+        showToast('The page no longer shows that image.');
+        return false;
+    }
+
+    target.removeAttribute('srcset');
+    target.removeAttribute('sizes');
+    target.src = dataUrl;
+    showToast('Replaced the page image with the translation.');
+    return false;
+});
 
 if (!window.__comicTranslatorPickerActive) {
     window.__comicTranslatorPickerActive = true;

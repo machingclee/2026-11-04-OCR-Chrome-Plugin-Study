@@ -27,6 +27,8 @@ export const LAST_RESULT_KEY = 'lastDetection';
 export const KEEP_OUTSIDE_KEY = 'keepOutside';
 /** Stored in the browser only, and sent to DeepSeek by the extension itself. */
 export const DEEPSEEK_KEY = 'deepseekKey';
+/** The popup asks the page to show its finished image. */
+export const REPLACE_IMAGE_MESSAGE = 'comic-translator:replace-image';
 /** Gemini wins the tie by default: its free tier needs nothing but a key. */
 export const GEMINI_KEY = 'geminiKey';
 export const TRANSLATOR_KEY = 'translator';

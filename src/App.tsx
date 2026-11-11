@@ -4,6 +4,7 @@ import {
     KEEP_OUTSIDE_KEY,
     DEEPSEEK_KEY,
     GEMINI_KEY,
+    REPLACE_IMAGE_MESSAGE,
     TRANSLATOR_KEY,
     type TranslatorChoice,
     LAST_RESULT_KEY,
@@ -14,6 +15,7 @@ import { BUILD_ID } from './shared/build';
 import { canTranslate, translateAll } from './lib/translate';
 import { translateWithDeepSeek } from './lib/translateDeepSeek';
 import { translateWithGemini } from './lib/translateGemini';
+import { renderTypeset } from './lib/typeset';
 import serviceWorkerRequestFactory from './shared/factories/serviceWorkerRequestFactory';
 import { cropSize } from './lib/warp';
 
@@ -124,6 +126,34 @@ export default function App() {
             setError(cause instanceof Error ? cause.message : String(cause));
         }
     }, []);
+
+    const handleWriteBack = useCallback(async () => {
+        if (!translated || groups.length === 0 || !imageUrl) return;
+        const source = document.querySelector<HTMLImageElement>('.stage img');
+        if (!source) return;
+
+        try {
+            const dataUrl = renderTypeset(
+                source,
+                source.naturalWidth,
+                source.naturalHeight,
+                groups.map((group, index) => ({
+                    box: group,
+                    text: translated[index] ?? group.lines.join(''),
+                })),
+            );
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (!tab?.id) throw new Error('There is no active tab.');
+            await chrome.tabs.sendMessage(tab.id, {
+                type: REPLACE_IMAGE_MESSAGE,
+                url: imageUrl,
+                dataUrl,
+            });
+            setStatus('Wrote the translation back to the page.');
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : String(cause));
+        }
+    }, [groups, imageUrl, translated]);
 
     const handleSaveSettings = useCallback(async () => {
         await chrome.storage.local.set({
@@ -268,6 +298,9 @@ export default function App() {
                     title={canTranslate() ? undefined : 'This browser ships no translator.'}
                 >
                     {translating ? 'Translating' : 'Translate'}
+                </button>
+                <button type="button" onClick={handleWriteBack} disabled={!translated}>
+                    Write back to the page
                 </button>
             </div>
 
