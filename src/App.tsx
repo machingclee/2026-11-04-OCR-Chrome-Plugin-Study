@@ -103,6 +103,10 @@ export default function App() {
 
     const handleTranslate = useCallback(async () => {
         if (groups.length === 0) return;
+        if (!canTranslate()) {
+            setError('This Chrome ships no translator. Enable the built-in AI in chrome://flags, or use Chrome 138 and later.');
+            return;
+        }
         setTranslating(true);
         try {
             const joined = groups.map((group) => group.lines.join(''));
