@@ -1,7 +1,32 @@
 import type * as ort from 'onnxruntime-web/wasm';
 
+export type Point = { x: number; y: number };
+
+/** A line that may sit at any angle: the length follows the text, not the x axis. */
+export type LineFrame = {
+    origin: Point;
+    /** Unit vector along the text. */
+    along: Point;
+    /** Unit vector across the text. */
+    across: Point;
+    length: number;
+    thickness: number;
+};
+
 /** One axis aligned rectangle, in page pixels. */
-export type Box = { x: number; y: number; width: number; height: number; score: number };
+export type Box = {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    score: number;
+    /** Radians of the text direction, 0 when the line sits on the page axes. */
+    angle?: number;
+    /** Length along the text direction, which differs from width once angle is set. */
+    lineLength?: number;
+    /** Thickness across the text direction. */
+    lineThickness?: number;
+};
 
 /** A text block from the blk output, which groups the lines of one bubble. */
 export type TextBlock = { x: number; y: number; width: number; height: number; score: number };

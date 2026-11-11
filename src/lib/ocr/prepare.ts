@@ -1,4 +1,5 @@
 import type { Box } from '../types';
+import { cropSize, drawUpright } from '../warp';
 import { OCR_INPUT_HEIGHT, OCR_INPUT_WIDTH, OCR_NORMALIZE } from '../../shared/constants';
 
 /**
@@ -12,8 +13,9 @@ export function buildOcrInput(
     box: Box,
     vertical: boolean,
 ): { data: Float32Array; dims: number[]; width: number } {
-    const thickness = vertical ? box.width : box.height;
-    const length = vertical ? box.height : box.width;
+    const size = cropSize(box);
+    const thickness = vertical ? size.height : size.width;
+    const length = vertical ? size.width : size.height;
     const scale = OCR_INPUT_HEIGHT / Math.max(1, thickness);
     const rawWidth = Math.max(1, Math.round(length * scale));
     const width = Math.min(OCR_INPUT_WIDTH, Math.ceil(rawWidth / 32) * 32);
@@ -28,22 +30,19 @@ export function buildOcrInput(
     context.fillStyle = '#ffffff';
     context.fillRect(0, 0, width, OCR_INPUT_HEIGHT);
 
+    const upright = document.createElement('canvas');
+    upright.width = Math.max(1, Math.round(length));
+    upright.height = Math.max(1, Math.round(thickness));
+    const uprightContext = upright.getContext('2d');
+    if (!uprightContext) throw new Error('The browser refused a 2D context for the upright crop.');
+    drawUpright(uprightContext, bitmap, box, upright.width, upright.height);
+
     if (vertical) {
         context.translate(0, OCR_INPUT_HEIGHT);
         context.rotate(-Math.PI / 2);
-        context.drawImage(
-            bitmap,
-            box.x,
-            box.y,
-            box.width,
-            box.height,
-            0,
-            0,
-            OCR_INPUT_HEIGHT,
-            contentWidth,
-        );
+        context.drawImage(upright, 0, 0, upright.width, upright.height, 0, 0, OCR_INPUT_HEIGHT, contentWidth);
     } else {
-        context.drawImage(bitmap, box.x, box.y, box.width, box.height, 0, 0, contentWidth, OCR_INPUT_HEIGHT);
+        context.drawImage(upright, 0, 0, upright.width, upright.height, 0, 0, contentWidth, OCR_INPUT_HEIGHT);
     }
 
     const pixels = context.getImageData(0, 0, width, OCR_INPUT_HEIGHT).data;

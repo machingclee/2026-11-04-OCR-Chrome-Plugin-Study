@@ -10,6 +10,7 @@ import {
 
 ort.env.wasm.numThreads = 1;
 
+import { minAreaRect } from './rect';
 import type { Box, DetectionResult, Prepared, TextBlock } from './types';
 
 let sessionPromise: Promise<ort.InferenceSession> | null = null;
@@ -113,6 +114,9 @@ function toDetBoxes(map: Float32Array, prepared: Prepared): Box[] {
     const visited = new Uint8Array(size * size);
     const boxes: Box[] = [];
     const stack: number[] = [];
+    // The mask is walked once and every component keeps its own points, because a
+    // slanted line needs a rectangle that follows the slant, not the page axes.
+    const points: { x: number; y: number }[] = [];
 
     for (let start = 0; start < size * size; start += 1) {
         if (map[start] < DETECTOR_SCORE_THRESHOLD || visited[start]) continue;
@@ -125,6 +129,7 @@ function toDetBoxes(map: Float32Array, prepared: Prepared): Box[] {
         let maxY = -1;
         let count = 0;
         let sum = 0;
+        points.length = 0;
 
         while (stack.length > 0) {
             const index = stack.pop() as number;
@@ -136,6 +141,12 @@ function toDetBoxes(map: Float32Array, prepared: Prepared): Box[] {
             if (y < minY) minY = y;
             if (x > maxX) maxX = x;
             if (y > maxY) maxY = y;
+            if ((count & 3) === 0) {
+                points.push({
+                    x: (x - prepared.padX) / prepared.scale,
+                    y: (y - prepared.padY) / prepared.scale,
+                });
+            }
 
             for (let dy = -1; dy <= 1; dy += 1) {
                 for (let dx = -1; dx <= 1; dx += 1) {
@@ -166,7 +177,19 @@ function toDetBoxes(map: Float32Array, prepared: Prepared): Box[] {
         const bottom = Math.min(prepared.height, y + height);
         if (right - left < 4 || bottom - top < 4) continue;
 
-        boxes.push({ x: left, y: top, width: right - left, height: bottom - top, score });
+        const rect = minAreaRect(points);
+        const angle = rect ? (Math.abs(rect.angle) > Math.PI / 2 ? 0 : rect.angle) : 0;
+
+        boxes.push({
+            x: left,
+            y: top,
+            width: right - left,
+            height: bottom - top,
+            score,
+            angle,
+            lineLength: rect ? rect.length : right - left,
+            lineThickness: rect ? rect.thickness : bottom - top,
+        });
     }
 
     const lines = boxes.map(unclip);

@@ -1,13 +1,16 @@
 import type { Box, TextMask } from './types';
+import { pagePointAt, uprightFrame } from './warp';
 
 const GLYPH_THRESHOLD = 0.3;
 const BACKGROUND_THRESHOLD = 0.1;
 const MODEL_SIZE = 1024;
 
-/** Read the seg value that belongs to one pixel of a crop. */
-function maskAt(mask: TextMask, box: Box, x: number, y: number, width: number, height: number): number {
-    const pageX = box.x + ((x + 0.5) * box.width) / width;
-    const pageY = box.y + ((y + 0.5) * box.height) / height;
+/** Read the seg value that belongs to one pixel of the upright crop. */
+function maskAt(mask: TextMask, box: Box, x: number, y: number): number {
+    const frame = uprightFrame(box);
+    const page = pagePointAt(frame, x + 0.5, y + 0.5);
+    const pageX = page.x;
+    const pageY = page.y;
     const sourceX = Math.round(pageX * mask.scale + mask.padX);
     const sourceY = Math.round(pageY * mask.scale + mask.padY);
     if (sourceX < 0 || sourceY < 0 || sourceX >= MODEL_SIZE || sourceY >= MODEL_SIZE) return 0;
@@ -51,7 +54,7 @@ export function eraseGlyphs(image: ImageData, box: Box, mask: TextMask): void {
 
     for (let y = 0; y < height; y += 1) {
         for (let x = 0; x < width; x += 1) {
-            values[y * width + x] = maskAt(mask, box, x, y, width, height);
+            values[y * width + x] = maskAt(mask, box, x, y);
         }
     }
 
