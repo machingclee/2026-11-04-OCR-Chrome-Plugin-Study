@@ -48,6 +48,19 @@ type LastResult = {
     ms: number;
 };
 
+/** Pull a balloon inward, so text sits in its middle instead of on its edge. */
+function insetBubble(bubble: BubbleStroke, ratio = 0.14): GroupStroke {
+    const dx = bubble.width * ratio;
+    const dy = bubble.height * ratio;
+    return {
+        x: bubble.x + dx,
+        y: bubble.y + dy,
+        width: Math.max(12, bubble.width - dx * 2),
+        height: Math.max(12, bubble.height - dy * 2),
+        lines: [],
+    };
+}
+
 export default function App() {
     const [imageUrl, setImageUrl] = useState<string | null>(null);
     const [boxes, setBoxes] = useState<BoxData[]>([]);
@@ -146,8 +159,10 @@ export default function App() {
                     && group.x + group.width / 2 <= bubble.x + bubble.width
                     && group.y + group.height / 2 >= bubble.y
                     && group.y + group.height / 2 <= bubble.y + bubble.height);
+                // A column box is not a container. The balloon is, so the text
+                // is laid out in its middle and clipped to its edge.
                 return {
-                    box: group,
+                    box: holder ? insetBubble(holder) : group,
                     text: answers[index]?.text ?? group.lines.join(''),
                     columns: answers[index]?.columns,
                     outline: holder?.outline,
