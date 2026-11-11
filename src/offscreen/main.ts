@@ -209,11 +209,16 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
 
                 // Stage two: ask the model to fill the holes. A colour fill stays
                 // as the fallback, so a missing model still produces a page.
+                // The model is off until the mask and the composite are right:
+                // a wrong mask erases the artwork and looks worse than a fill.
+                const USE_INPAINT = false;
                 let painted: ImageData | null = null;
-                try {
-                    painted = await inpaintPage(image, refined);
-                } catch {
-                    painted = null;
+                if (USE_INPAINT) {
+                    try {
+                        painted = await inpaintPage(image, refined);
+                    } catch {
+                        painted = null;
+                    }
                 }
 
                 if (painted) {
