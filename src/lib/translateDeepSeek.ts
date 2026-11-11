@@ -1,22 +1,9 @@
-/**
- * DeepSeek speaks the OpenAI chat shape. The extension calls it straight from
- * the service worker, so there is no proxy to deploy and no server to keep.
- */
+import { buildUserPrompt, readRegions, SYSTEM_PROMPT, type PromptRegion } from './translatePrompt';
+
 const ENDPOINT = 'https://api.deepseek.com/chat/completions';
 const MODEL = 'deepseek-chat';
 
-const SYSTEM = [
-    'You translate manga dialogue from Japanese into Traditional Chinese.',
-    'Keep the tone of the speaker, and keep it short enough for a speech balloon.',
-    'Answer with JSON only: {"lines": ["...", "..."]}.',
-    'The array must have the same length and the same order as the input array.',
-].join(' ');
-
-export async function translateWithDeepSeek(
-    lines: string[],
-    apiKey: string,
-    target = 'Traditional Chinese',
-): Promise<string[]> {
+export async function translateWithDeepSeek(regions: PromptRegion[], apiKey: string): Promise<string[]> {
     const response = await fetch(ENDPOINT, {
         method: 'POST',
         headers: {
@@ -28,8 +15,8 @@ export async function translateWithDeepSeek(
             temperature: 0.3,
             response_format: { type: 'json_object' },
             messages: [
-                { role: 'system', content: `${SYSTEM} Target language: ${target}.` },
-                { role: 'user', content: JSON.stringify({ lines }) },
+                { role: 'system', content: SYSTEM_PROMPT },
+                { role: 'user', content: buildUserPrompt(regions, '繁體中文') },
             ],
         }),
     });
@@ -39,18 +26,8 @@ export async function translateWithDeepSeek(
         throw new Error(`DeepSeek answered ${response.status}. ${detail.slice(0, 160)}`);
     }
 
-    const payload = (await response.json()) as {
-        choices?: { message?: { content?: string } }[];
-    };
+    const payload = (await response.json()) as { choices?: { message?: { content?: string } }[] };
     const content = payload.choices?.[0]?.message?.content;
     if (!content) throw new Error('DeepSeek returned no content.');
-
-    const parsed = JSON.parse(content) as { lines?: unknown };
-    const translated = parsed.lines;
-    if (!Array.isArray(translated)) throw new Error('DeepSeek did not return a line array.');
-
-    return lines.map((line, index) => {
-        const value = translated[index];
-        return typeof value === 'string' ? value : line;
-    });
+    return readRegions(content, regions);
 }

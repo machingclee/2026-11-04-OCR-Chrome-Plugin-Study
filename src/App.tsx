@@ -126,6 +126,7 @@ export default function App() {
 
     /** Paint the finished page and put it in place of the picked image. */
     const applyToPage = useCallback(async (texts: string[], list: GroupStroke[]): Promise<void> => {
+        const ruby = boxes.flatMap((box) => box.ruby);
         if (!imageUrl) throw new Error('No image was picked.');
 
         // The page image comes from another origin, so drawing the <img> would
@@ -142,6 +143,7 @@ export default function App() {
                 box: group,
                 text: texts[index] ?? group.lines.join(''),
             })),
+            ruby,
         );
 
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -152,7 +154,7 @@ export default function App() {
             dataUrl,
         });
         bitmap.close();
-    }, [imageUrl]);
+    }, [boxes, imageUrl]);
 
     const handleSaveSettings = useCallback(async () => {
         await chrome.storage.local.set({
@@ -243,6 +245,10 @@ export default function App() {
             if (current.length === 0) throw new Error('No text was found on this page.');
 
             const joined = current.map((group) => group.lines.join(''));
+            const regions = current.map((group, index) => ({
+                id: `r${index + 1}`,
+                text: group.lines.join(''),
+            }));
             const key = translator === 'gemini' ? geminiKey.trim() : deepSeekKey.trim();
 
             let out: string[] | null = null;
@@ -250,8 +256,8 @@ export default function App() {
                 out = canTranslate() ? await translateAll(joined, 'ja', 'zh-Hant') : null;
             } else if (key.length > 0) {
                 out = translator === 'gemini'
-                    ? await translateWithGemini(joined, key)
-                    : await translateWithDeepSeek(joined, key);
+                    ? await translateWithGemini(regions, key)
+                    : await translateWithDeepSeek(regions, key);
             } else if (canTranslate()) {
                 out = await translateAll(joined, 'ja', 'zh-Hant');
                 setStatus('No key, so the browser translator did the work.');

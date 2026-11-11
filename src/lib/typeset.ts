@@ -82,7 +82,13 @@ function drawVertical(context: CanvasRenderingContext2D, box: GroupData, text: s
  * Paint the translation over the page and hand back a data url, so the page can
  * show the finished image instead of an overlay.
  */
-export function renderTypeset(image: CanvasImageSource, width: number, height: number, groups: Paragraph[]): string {
+export function renderTypeset(
+    image: CanvasImageSource,
+    width: number,
+    height: number,
+    groups: Paragraph[],
+    ruby: { x: number; y: number; width: number; height: number }[] = [],
+): string {
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
@@ -93,8 +99,21 @@ export function renderTypeset(image: CanvasImageSource, width: number, height: n
     context.textBaseline = 'alphabetic';
     context.fillStyle = '#ffffff';
 
+    // Grow each fill the way the target dilates its mask, so the small kana
+    // sitting beside a column are cleared with the column itself.
     for (const group of groups) {
-        context.fillRect(group.box.x, group.box.y, group.box.width, group.box.height);
+        const margin = Math.max(2, Math.min(group.box.width, group.box.height) * 0.12);
+        context.fillRect(
+            group.box.x - margin,
+            group.box.y - margin,
+            group.box.width + margin * 2,
+            group.box.height + margin * 2,
+        );
+    }
+
+    // Ruby that was pulled off a line keeps its own box, and it is still ink.
+    for (const box of ruby) {
+        context.fillRect(box.x - 1, box.y - 1, box.width + 2, box.height + 2);
     }
 
     context.fillStyle = '#111111';
