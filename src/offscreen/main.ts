@@ -2,6 +2,7 @@ import { detectBoxes, isSessionReady } from '../lib/detector';
 import { detectBubbles } from '../lib/bubble';
 import { cropPreviews } from '../lib/regions';
 import { expandToInk } from '../lib/expand';
+import { offsetBox, splitPages } from '../lib/pages';
 import { groupByRegion, toOrderedTextLines } from '../lib/readingOrder';
 import { recognizeLine } from '../lib/ocr/recognize';
 import { OFFSCREEN_TARGET } from '../shared/constants';
@@ -27,56 +28,70 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         }
 
         const bitmap = await createImageBitmap(await response.blob());
-        // One 1024 square pass shrinks the page by 1024 / longest side. Tiling
-        // lifts that back towards 1, so a small column keeps its strokes.
-        // A page that is two pages tall needs more rows than columns, so the grid
-        // follows each side and the pass count stays under sixteen.
-        let tilesX = Math.max(1, Math.ceil(bitmap.width / 1024));
-        let tilesY = Math.max(1, Math.ceil(bitmap.height / 1024));
-        while (tilesX * tilesY > 16) {
-            if (tilesX >= tilesY) tilesX -= 1;
-            else tilesY -= 1;
-        }
-        const detected = await detectBoxes(bitmap, tilesX, tilesY);
-        // The block gate runs later, against the balloon masks, which are the
-        // better evidence for "is this line inside a balloon".
-        const ordered = toOrderedTextLines(detected.detBoxes, [], true);
-        const bubbles = await detectBubbles(bitmap).catch(() => null);
-        const grouped = groupByRegion(
-            ordered,
-            bubbles ? bubbles.bubbles : [],
-            detected.blkBoxes,
-            request.keepOutside !== true,
-        );
-        const lines = grouped.lines.map((line) => ({
-            ...line,
-            ...expandToInk(line, detected.mask),
-        }));
-        const boxes: BoxData[] = [];
-        for (const line of lines) {
-            const recognised = await recognizeLine(bitmap, line, line.direction === 'vertical').catch(
-                () => ({ text: '', confidence: 0 }),
+
+        // A scan can hold two pages. Each page is measured on its own, so the
+        // reading order never mixes the right page into the left one.
+        const pages = splitPages(bitmap);
+        const collected: BoxData[] = [];
+        const balloons: { x: number; y: number; width: number; height: number }[] = [];
+        let dropped = 0;
+
+        for (const page of pages) {
+            const slice = pages.length === 1
+                ? bitmap
+                : await createImageBitmap(bitmap, page.x, page.y, page.width, page.height);
+
+            // One 1024 square pass shrinks the page by 1024 / longest side. Tiling
+            // lifts that back towards 1, so a small column keeps its strokes.
+            let tilesX = Math.max(1, Math.ceil(slice.width / 1024));
+            let tilesY = Math.max(1, Math.ceil(slice.height / 1024));
+            while (tilesX * tilesY > 16) {
+                if (tilesX >= tilesY) tilesX -= 1;
+                else tilesY -= 1;
+            }
+
+            const detected = await detectBoxes(slice, tilesX, tilesY);
+            const ordered = toOrderedTextLines(detected.detBoxes, [], true);
+            const bubbles = await detectBubbles(slice).catch(() => null);
+            const grouped = groupByRegion(
+                ordered,
+                bubbles ? bubbles.bubbles : [],
+                detected.blkBoxes,
+                request.keepOutside !== true,
             );
-            boxes.push({ ...line, text: recognised.text, confidence: recognised.confidence });
+            dropped += grouped.dropped;
+
+            const lines = grouped.lines.map((line) => offsetBox(
+                { ...line, ...expandToInk(line, detected.mask) },
+                page,
+            ));
+
+            for (const bubble of bubbles ? bubbles.bubbles : []) {
+                balloons.push({
+                    x: bubble.x + page.x,
+                    y: bubble.y + page.y,
+                    width: bubble.width,
+                    height: bubble.height,
+                });
+            }
+
+            for (const line of lines) {
+                const recognised = await recognizeLine(bitmap, line, line.direction === 'vertical')
+                    .catch(() => ({ text: '', confidence: 0 }));
+                collected.push({ ...line, text: recognised.text, confidence: recognised.confidence });
+            }
+
         }
-        const previews = cropPreviews(bitmap, boxes.slice(0, MAX_PREVIEWS), detected.mask ?? undefined);
+
+        const previews = cropPreviews(bitmap, collected.slice(0, MAX_PREVIEWS));
         return {
             ok: true,
-            boxes,
+            boxes: collected,
             previews,
             imageWidth: bitmap.width,
             imageHeight: bitmap.height,
-            // Only the outline crosses the message boundary. The mask is a
-            // Float32Array, and JSON would turn its 25,600 cells into keys.
-            groupedLines: grouped.grouped,
-            bubbles: bubbles
-                ? bubbles.bubbles.map((bubble) => ({
-                      x: bubble.x,
-                      y: bubble.y,
-                      width: bubble.width,
-                      height: bubble.height,
-                  }))
-                : [],
+            groupedLines: collected.length - dropped,
+            bubbles: balloons,
             ms: Math.round(performance.now() - started),
             warm
         };
