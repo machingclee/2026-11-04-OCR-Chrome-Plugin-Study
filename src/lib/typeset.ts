@@ -122,14 +122,14 @@ function drawVertical(context: CanvasRenderingContext2D, box: GroupData, text: s
     const weight = weightFor(text, options.weight);
     const area = inner(box);
     // Vertical punctuation has its own glyphs, and a mark may not lead a column.
-    const characters = [...toVertical(text)].flatMap((character) => [character]);
-    let size = Math.max(options.minSize, Math.min(options.maxSize, Math.min(area.width, area.height) / 2));
-    let columns: string[][] = [];
+    const characters = [...toVertical(text)];
 
-    while (size > options.minSize) {
-        context.font = `${weight} ${size}px ${options.family}`;
+    const columnsFor = (size: number): string[][] => {
         const perColumn = Math.max(1, Math.floor(area.height / (size * 1.1)));
-        columns = [];
+        if (given && given.length > 0 && given.every((column) => [...column].length <= perColumn)) {
+            return given.map((column) => toVertical(column).split(''));
+        }
+        const columns: string[][] = [];
         let cursor = 0;
         while (cursor < characters.length) {
             const limit = Math.min(cursor + perColumn, characters.length);
@@ -137,18 +137,34 @@ function drawVertical(context: CanvasRenderingContext2D, box: GroupData, text: s
             columns.push(characters.slice(cursor, take));
             cursor = take;
         }
-        if (given && given.length > 0 && given.every((column) => [...column].length <= perColumn)) {
-            columns = given.map((column) => [...column]);
+        return columns;
+    };
+
+    // Search the largest size whose columns still fit across the balloon.
+    let low = options.minSize;
+    let high = Math.max(options.minSize, Math.min(options.maxSize, Math.min(area.width, area.height)));
+    let best = options.minSize;
+    let bestColumns: string[][] = [];
+    while (low <= high) {
+        const size = Math.floor((low + high) / 2);
+        const columns = columnsFor(size);
+        const widest = columns.reduce((max, column) => Math.max(max, column.length), 0) * size * 1.1;
+        const across = columns.length * size * 1.1;
+        if (widest <= area.height && across <= area.width) {
+            best = size;
+            bestColumns = columns;
+            low = size + 1;
+        } else {
+            high = size - 1;
         }
-        if (columns.length * size * 1.1 <= area.width) break;
-        size -= 1;
     }
 
+    const size = best;
+    const columns = bestColumns.length > 0 ? bestColumns : columnsFor(size);
     context.font = `${weight} ${size}px ${options.family}`;
     const total = columns.length * size * 1.1;
     let x = area.x + area.width - (area.width - total) / 2 - size / 2;
     for (const column of columns) {
-        // A mark takes half a cell, so the column is measured with the same rule.
         const used = column.reduce((sum, character) => sum + size * squeeze(character), 0);
         let y = area.y + (area.height - used) / 2 + size;
         for (const character of column) {
