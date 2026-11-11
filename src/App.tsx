@@ -126,13 +126,18 @@ export default function App() {
 
     /** Paint the finished page and put it in place of the picked image. */
     const applyToPage = useCallback(async (texts: string[]): Promise<void> => {
-        const source = document.querySelector<HTMLImageElement>('.stage img');
-        if (!source || !imageUrl) throw new Error('The picked image is not on screen.');
+        if (!imageUrl) throw new Error('No image was picked.');
+
+        // The page image comes from another origin, so drawing the <img> would
+        // taint the canvas. Fetching the bytes gives us a clean source instead.
+        const response = await fetch(imageUrl, { credentials: 'include' });
+        if (!response.ok) throw new Error(`Image fetch failed with ${response.status}.`);
+        const bitmap = await createImageBitmap(await response.blob());
 
         const dataUrl = renderTypeset(
-            source,
-            source.naturalWidth,
-            source.naturalHeight,
+            bitmap,
+            bitmap.width,
+            bitmap.height,
             groups.map((group, index) => ({
                 box: group,
                 text: texts[index] ?? group.lines.join(''),
@@ -146,6 +151,7 @@ export default function App() {
             url: imageUrl,
             dataUrl,
         });
+        bitmap.close();
     }, [groups, imageUrl]);
 
     const handleSaveSettings = useCallback(async () => {
