@@ -125,7 +125,7 @@ export default function App() {
     }, []);
 
     /** Paint the finished page and put it in place of the picked image. */
-    const applyToPage = useCallback(async (texts: string[]): Promise<void> => {
+    const applyToPage = useCallback(async (texts: string[], list: GroupStroke[]): Promise<void> => {
         if (!imageUrl) throw new Error('No image was picked.');
 
         // The page image comes from another origin, so drawing the <img> would
@@ -138,7 +138,7 @@ export default function App() {
             bitmap,
             bitmap.width,
             bitmap.height,
-            groups.map((group, index) => ({
+            list.map((group, index) => ({
                 box: group,
                 text: texts[index] ?? group.lines.join(''),
             })),
@@ -152,7 +152,7 @@ export default function App() {
             dataUrl,
         });
         bitmap.close();
-    }, [groups, imageUrl]);
+    }, [imageUrl]);
 
     const handleSaveSettings = useCallback(async () => {
         await chrome.storage.local.set({
@@ -164,47 +164,9 @@ export default function App() {
         setStatus('Settings saved.');
     }, [deepSeekKey, geminiKey, translator]);
 
-    const handleTranslate = useCallback(async () => {
-        if (groups.length === 0) return;
-        setTranslating(true);
-        setError('');
-        try {
-            const joined = groups.map((group) => group.lines.join(''));
-            const key = translator === 'gemini' ? geminiKey.trim() : deepSeekKey.trim();
 
-            let out: string[] | null = null;
-            if (translator === 'builtin') {
-                out = canTranslate() ? await translateAll(joined, 'ja', 'zh-Hant') : null;
-            } else if (key.length > 0) {
-                out = translator === 'gemini'
-                    ? await translateWithGemini(joined, key)
-                    : await translateWithDeepSeek(joined, key);
-            } else if (canTranslate()) {
-                // No key yet, so fall back to the translator the browser ships.
-                out = await translateAll(joined, 'ja', 'zh-Hant');
-                setStatus('No key, so the browser translator did the work.');
-            }
-
-            if (!out) {
-                setError(
-                    translator === 'builtin'
-                        ? 'This Chrome ships no translator. Pick Gemini or DeepSeek and paste a key.'
-                        : `Paste a ${translator === 'gemini' ? 'Gemini' : 'DeepSeek'} key above.`,
-                );
-                return;
-            }
-            setTranslated(out);
-            await applyToPage(out);
-            setStatus(`Translated ${out.length} groups and wrote them to the page.`);
-        } catch (cause) {
-            setError(cause instanceof Error ? cause.message : String(cause));
-        } finally {
-            setTranslating(false);
-        }
-    }, [applyToPage, deepSeekKey, geminiKey, groups, translator]);
-
-    const handleDetect = useCallback(async () => {
-        if (!imageUrl) return;
+    const runDetect = useCallback(async (): Promise<DetectResponse | null> => {
+        if (!imageUrl) return null;
         setBusy(true);
         setError(null);
         setBoxes([]);
@@ -229,9 +191,11 @@ export default function App() {
             setStatus(
                 `${response.boxes.length} lines (${vertical} vertical, ${ruby} ruby), ${read} read, ${response.bubbles?.length ?? 0} balloons, ${response.groupedLines} grouped, image ${response.imageWidth}x${response.imageHeight}, ${response.ms} ms (${response.warm ? 'reused session' : 'cold session'}).`,
             );
+            return response;
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));
             setStatus('Detection failed.');
+            return null;
         } finally {
             setBusy(false);
         }
@@ -260,6 +224,57 @@ export default function App() {
         }
     }, [imageUrl]);
 
+    const handleDetect = useCallback(async () => {
+        await runDetect();
+    }, [runDetect]);
+
+    const handleTranslate = useCallback(async () => {
+        setTranslating(true);
+        setError('');
+        try {
+            // One press does the whole job: measure the page when it has not been
+            // measured yet, translate every group, then paint the answer back.
+            let current = groups;
+            if (current.length === 0) {
+                const detected = await runDetect();
+                if (!detected || !detected.ok) throw new Error('The detection pass failed.');
+                current = detected.groups ?? [];
+            }
+            if (current.length === 0) throw new Error('No text was found on this page.');
+
+            const joined = current.map((group) => group.lines.join(''));
+            const key = translator === 'gemini' ? geminiKey.trim() : deepSeekKey.trim();
+
+            let out: string[] | null = null;
+            if (translator === 'builtin') {
+                out = canTranslate() ? await translateAll(joined, 'ja', 'zh-Hant') : null;
+            } else if (key.length > 0) {
+                out = translator === 'gemini'
+                    ? await translateWithGemini(joined, key)
+                    : await translateWithDeepSeek(joined, key);
+            } else if (canTranslate()) {
+                out = await translateAll(joined, 'ja', 'zh-Hant');
+                setStatus('No key, so the browser translator did the work.');
+            }
+
+            if (!out) {
+                throw new Error(
+                    translator === 'builtin'
+                        ? 'This Chrome ships no translator. Pick Gemini or DeepSeek and paste a key.'
+                        : `Paste a ${translator === 'gemini' ? 'Gemini' : 'DeepSeek'} key above.`,
+                );
+            }
+
+            setTranslated(out);
+            await applyToPage(out, current);
+            setStatus(`Translated ${out.length} groups and wrote them to the page.`);
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : String(cause));
+        } finally {
+            setTranslating(false);
+        }
+    }, [applyToPage, deepSeekKey, geminiKey, groups, runDetect, translator]);
+
     return (
         <main>
             <h1>Comic Translator</h1>
@@ -282,7 +297,7 @@ export default function App() {
                 <button
                     type="button"
                     onClick={handleTranslate}
-                    disabled={boxes.length === 0 || translating}
+                    disabled={translating || !imageUrl}
                     title={canTranslate() ? undefined : 'This browser ships no translator.'}
                 >
                     {translating ? 'Translating' : 'Translate the page'}
