@@ -15,7 +15,6 @@ import type {
     IncomingMessage,
     OffscreenDetectRequest,
 } from '../shared/types';
-import type { Box, TextMask } from '../lib/types';
 import serviceWorkerResponseFactory from '../shared/factories/serviceWorkerResponseFactory';
 
 /** Each crop is a data url in storage, so the strip stops at this many. */
@@ -47,21 +46,10 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         let dropped = 0;
         let bubbleError: string | null = null;
         const groups: GroupData[] = [];
-        const masks: {
-            mask: TextMask;
-            lines: Box[];
-            balloons: {
-                x: number;
-                y: number;
-                width: number;
-                height: number;
-                shape: Float32Array;
-                shapeSize: number;
-                shapeScale: number;
-                shapePadX: number;
-                shapePadY: number;
-            }[];
-        }[] = [];
+        const erasedCanvas = document.createElement('canvas');
+        erasedCanvas.width = bitmap.width;
+        erasedCanvas.height = bitmap.height;
+        const erasedContext = erasedCanvas.getContext('2d', { willReadFrequently: true });
 
         for (const page of pages) {
             const slice = pages.length === 1
@@ -107,27 +95,45 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
                 });
             }
 
-            if (detected.mask) {
-                masks.push({
-                    mask: {
-                        data: detected.mask.data,
-                        scale: detected.mask.scale,
-                        padX: detected.mask.padX - page.x * detected.mask.scale,
-                        padY: detected.mask.padY - page.y * detected.mask.scale,
-                    },
-                    lines,
-                    balloons: (bubbles ? bubbles.bubbles : []).map((bubble) => ({
-                        x: bubble.x + page.x,
-                        y: bubble.y + page.y,
-                        width: bubble.width,
-                        height: bubble.height,
-                        shape: bubble.shape,
-                        shapeSize: bubble.shapeSize,
-                        shapeScale: bubble.shapeScale,
-                        shapePadX: bubble.shapePadX - page.x * bubble.shapeScale,
-                        shapePadY: bubble.shapePadY - page.y * bubble.shapeScale,
-                    })),
-                });
+            if (detected.mask && erasedContext) {
+                // Everything here stays in slice coordinates, the space the mask
+                // was measured in, so no offset conversion can go wrong.
+                const sliceCanvas = document.createElement('canvas');
+                sliceCanvas.width = page.width;
+                sliceCanvas.height = page.height;
+                const sliceContext = sliceCanvas.getContext('2d', { willReadFrequently: true });
+                if (sliceContext) {
+                    sliceContext.drawImage(
+                        pages.length === 1 ? bitmap : slice,
+                        0,
+                        0,
+                    );
+                    const sliceImage = sliceContext.getImageData(0, 0, page.width, page.height);
+                    const sliceLines = grouped.lines.map((line) => ({
+                        ...line,
+                        ...expandToInk(line, detected.mask),
+                    }));
+
+                    for (const line of sliceLines) {
+                        const centreX = line.x + line.width / 2;
+                        const centreY = line.y + line.height / 2;
+                        const balloon = (bubbles ? bubbles.bubbles : []).find((bubble) =>
+                            centreX >= bubble.x && centreX <= bubble.x + bubble.width
+                            && centreY >= bubble.y && centreY <= bubble.y + bubble.height);
+                        const allow = balloon
+                            ? (pageX: number, pageY: number) => {
+                                const x = Math.round(pageX * balloon.shapeScale + balloon.shapePadX);
+                                const y = Math.round(pageY * balloon.shapeScale + balloon.shapePadY);
+                                if (x < 0 || y < 0 || x >= balloon.shapeSize || y >= balloon.shapeSize) return false;
+                                return balloon.shape[y * balloon.shapeSize + x] > 0.4;
+                            }
+                            : undefined;
+                        eraseGlyphs(sliceImage, line, detected.mask, allow);
+                    }
+
+                    sliceContext.putImageData(sliceImage, 0, 0);
+                    erasedContext.drawImage(sliceCanvas, page.x, page.y);
+                }
             }
 
             const perGroup: string[][] = groupBoxes.map(() => []);
@@ -169,44 +175,11 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
 
         }
 
-        // Erase at stroke level instead of filling a white box, so the artwork
-        // behind the text survives.
-        let erasedUrl: string | null = null;
-        const maskUrl: string | null = null;
-        if (masks.length > 0) {
-            const canvas = document.createElement('canvas');
-            canvas.width = bitmap.width;
-            canvas.height = bitmap.height;
-            const context = canvas.getContext('2d', { willReadFrequently: true });
-            if (context) {
-                context.drawImage(bitmap, 0, 0);
-                const image = context.getImageData(0, 0, canvas.width, canvas.height);
-                // Erase at stroke level, and only inside the balloon that holds
-                // the line, so the artwork beside a balloon keeps its strokes.
-                for (const entry of masks) {
-                    for (const line of entry.lines) {
-                        const centreX = line.x + line.width / 2;
-                        const centreY = line.y + line.height / 2;
-                        const balloon = entry.balloons.find((item) =>
-                            centreX >= item.x && centreX <= item.x + item.width
-                            && centreY >= item.y && centreY <= item.y + item.height);
-                        const allow = balloon
-                            ? (pageX: number, pageY: number) => {
-                                const x = Math.round(pageX * balloon.shapeScale + balloon.shapePadX);
-                                const y = Math.round(pageY * balloon.shapeScale + balloon.shapePadY);
-                                if (x < 0 || y < 0 || x >= balloon.shapeSize || y >= balloon.shapeSize) return false;
-                                return balloon.shape[y * balloon.shapeSize + x] > 0.4;
-                            }
-                            : undefined;
-                        eraseGlyphs(image, line, entry.mask, allow);
-                    }
-                }
-
-                context.putImageData(image, 0, 0);
-                erasedUrl = canvas.toDataURL('image/webp', 0.9);
-
-            }
-        }
+        // The erased page travels to the popup, which letters it without filling
+        // anything, so the artwork keeps its strokes.
+        const erasedUrl = erasedContext && pages.length > 0
+            ? erasedCanvas.toDataURL('image/webp', 0.9)
+            : null;
 
         const previews = cropPreviews(bitmap, collected.slice(0, MAX_PREVIEWS));
         return {
@@ -219,7 +192,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             groups,
             bubbleError,
             erasedUrl,
-            maskUrl,
+            maskUrl: null,
             bubbles: balloons,
             ms: Math.round(performance.now() - started),
             warm
