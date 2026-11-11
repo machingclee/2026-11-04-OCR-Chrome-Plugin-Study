@@ -1,5 +1,4 @@
 import { detectBoxes, isSessionReady } from '../lib/detector';
-import { detectBubbles } from '../lib/bubble';
 import { cropPreviews } from '../lib/regions';
 import { toOrderedTextLines } from '../lib/readingOrder';
 import { recognizeLine } from '../lib/ocr/recognize';
@@ -34,14 +33,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             );
             boxes.push({ ...line, text: recognised.text, confidence: recognised.confidence });
         }
-        const bubbles = await detectBubbles(bitmap).catch(() => undefined);
-        const previews = await cropPreviews(
-            bitmap,
-            boxes.slice(0, MAX_PREVIEWS),
-            detected.mask ?? undefined,
-            bubbles,
-            request.useInpaint === true,
-        );
+        const previews = cropPreviews(bitmap, boxes.slice(0, MAX_PREVIEWS), detected.mask ?? undefined);
         return {
             ok: true,
             boxes,

@@ -1,29 +1,16 @@
 import { eraseGlyphs } from './erase';
-import { inpaintBox } from './inpaint';
-import type { Box, BubbleMask, TextMask } from './types';
+import type { Box, TextMask } from './types';
 
 const PREVIEW_MAX_WIDTH = 160;
 const PREVIEW_QUALITY = 0.8;
 
 /**
  * Crop every box out of the decoded bitmap and return one preview per box.
- * With a mask the glyphs come out first. The plain fill is the default, because
- * it is enough for a flat bubble, and the inpaint model is opt in.
+ * With a mask the glyphs come out first, so the strip shows the page the way it
+ * will look once the original text is gone.
  */
-export async function cropPreviews(
-    bitmap: ImageBitmap,
-    boxes: Box[],
-    mask?: TextMask,
-    bubbles?: BubbleMask,
-    useInpaint = false,
-): Promise<string[]> {
+export function cropPreviews(bitmap: ImageBitmap, boxes: Box[], mask?: TextMask): string[] {
     if (boxes.length === 0) return [];
-
-    if (mask && useInpaint) {
-        const previews: string[] = [];
-        for (const box of boxes) previews.push(await inpaintBox(bitmap, box, mask, bubbles));
-        return previews;
-    }
 
     const widest = Math.max(...boxes.map((box) => box.width));
     const scale = Math.min(1, PREVIEW_MAX_WIDTH / widest);

@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { inflateRawSync } from 'node:zlib';
 import { once } from 'node:events';
 import { createWriteStream } from 'node:fs';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
@@ -26,68 +25,6 @@ const DICT_SHA256 = '118d0f0714ad2a37668c23d6541f2c3feb65b8214041265b567f7fd5b33
 const MODEL_SIZE = 94_669_756;
 const MODEL_SHA256 = '1a86ace74961413cbd650002e7bb4dcec4980ffa21b2f19b86933372071d718f';
 
-
-const releaseZip =
-    'https://github.com/DonutShinobu/ShinobuTranslator/releases/download/v0.8.7/ShinobuTranslator-chrome-v0.8.7.zip';
-const bubbleTarget = join(root, 'public', 'models', 'bubble.onnx');
-const BUBBLE_SIZE = 11_626_988;
-const BUBBLE_SHA256 = '3da3317f6dffe27cf5c9396dc95d5324fb647e22adeb7bf304edbe921789f0a0';
-const inpaintTarget = join(root, 'public', 'models', 'aot_inpaint_512.onnx');
-const INPAINT_SIZE = 22_749_561;
-const INPAINT_SHA256 = 'acdddccfdc32780c8947946814e9eea6a8b0d5b1880fb46f3be8389510f11689';
-
-/** Read one entry out of a remote zip without downloading the whole archive. */
-async function extractFromZip(url: string, entryName: string): Promise<Buffer> {
-    const probe = await fetch(url, { method: 'HEAD' });
-    const total = Number(probe.headers.get('content-length'));
-    if (!Number.isFinite(total) || total <= 0) throw new Error('the release archive reports no size');
-
-    const head = await fetch(url, { headers: { Range: `bytes=${total - 66000}-${total - 1}` } });
-    if (head.status !== 206) throw new Error(`the release host answered ${head.status} for a range read`);
-    const tail = Buffer.from(await head.arrayBuffer());
-    const end = tail.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
-    if (end < 0) throw new Error('the release archive has no end of central directory');
-
-    const entries = tail.readUInt16LE(end + 10);
-    const directorySize = tail.readUInt32LE(end + 12);
-    const directoryOffset = tail.readUInt32LE(end + 16);
-    const directoryStart = directoryOffset;
-
-    const directory = await fetch(url, {
-        headers: { Range: `bytes=${directoryStart}-${directoryStart + directorySize - 1}` },
-    });
-    const central = Buffer.from(await directory.arrayBuffer());
-
-    let cursor = 0;
-    for (let entry = 0; entry < entries; entry += 1) {
-        if (central.readUInt32LE(cursor) !== 0x02014b50) throw new Error('bad central directory');
-        const method = central.readUInt16LE(cursor + 10);
-        const compressed = central.readUInt32LE(cursor + 20);
-        const nameLength = central.readUInt16LE(cursor + 28);
-        const extraLength = central.readUInt16LE(cursor + 30);
-        const commentLength = central.readUInt16LE(cursor + 32);
-        const localOffset = central.readUInt32LE(cursor + 42);
-        const name = central.toString('utf8', cursor + 46, cursor + 46 + nameLength);
-        cursor += 46 + nameLength + extraLength + commentLength;
-
-        if (name !== entryName) continue;
-
-        const localHeader = await fetch(url, { headers: { Range: `bytes=${localOffset}-${localOffset + 29}` } });
-        const header = Buffer.from(await localHeader.arrayBuffer());
-        const localNameLength = header.readUInt16LE(26);
-        const localExtraLength = header.readUInt16LE(28);
-        const dataStart = localOffset + 30 + localNameLength + localExtraLength;
-
-        const body = await fetch(url, {
-            headers: { Range: `bytes=${dataStart}-${dataStart + compressed - 1}` },
-        });
-        const raw = Buffer.from(await body.arrayBuffer());
-        if (method === 0) return raw;
-        return inflateRawSync(raw);
-    }
-
-    throw new Error(`${entryName} is not in the release archive`);
-}
 
 async function sha256(path: string): Promise<string> {
     const hash = createHash('sha256');
@@ -216,25 +153,5 @@ async function ensureModel(): Promise<void> {
 
 await ensureModel();
 
-async function ensureFromRelease(target: string, entryName: string, size: number, digest: string, label: string): Promise<void> {
-    const existing = await stat(target).catch(() => null);
-    if (existing && existing.size === size && (await sha256(target)) === digest) {
-        console.log(`${label} already present`);
-        return;
-    }
-
-    console.log(`extracting ${entryName} from the release archive`);
-    const bytes = await extractFromZip(releaseZip, entryName);
-    if (bytes.byteLength !== size) throw new Error(`${label}: unexpected size ${bytes.byteLength}`);
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, bytes);
-
-    const actual = await sha256(target);
-    if (actual !== digest) throw new Error(`${label}: unexpected sha256 ${actual}`);
-    console.log(`${label} extracted and verified`);
-}
-
-await ensureFromRelease(bubbleTarget, 'models/bubble.onnx', BUBBLE_SIZE, BUBBLE_SHA256, 'bubble model');
-await ensureFromRelease(inpaintTarget, 'models/aot_inpaint_512.onnx', INPAINT_SIZE, INPAINT_SHA256, 'inpaint model');
 await ensureFile(ocrTarget, OCR_MODEL_URL, OCR_MODEL_SIZE, OCR_MODEL_SHA256, 'recogniser model');
 await ensureCharset();

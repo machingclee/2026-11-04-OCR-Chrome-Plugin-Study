@@ -32,14 +32,12 @@ export type DetectRequest = {
     type: 'detect';
     imageUrl: string;
     tabPageUrl?: string;
-    useInpaint?: boolean;
 };
 
 /** Service worker to offscreen document. */
 export type OffscreenDetectRequest = {
     target: typeof OFFSCREEN_TARGET;
     type: 'detect';
-    useInpaint?: boolean;
     imageUrl: string;
 };
 

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
     CONTENT_SCRIPT_FILE,
-    INPAINT_ENABLED_KEY,
     LAST_RESULT_KEY,
     PICKED_IMAGE_URL_KEY,
 } from './shared/constants';
@@ -18,18 +17,16 @@ export default function App() {
     const [status, setStatus] = useState('No image picked yet.');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [useInpaint, setUseInpaint] = useState(false);
 
     useEffect(() => {
         // start working when we open this popup again,
         // at this point our newly picked image url is nonempty.
         Promise.all([
-            chrome.storage.local.get([PICKED_IMAGE_URL_KEY, INPAINT_ENABLED_KEY]),
+            chrome.storage.local.get(PICKED_IMAGE_URL_KEY),
             chrome.storage.session.get(LAST_RESULT_KEY),
         ])
             .then(([local, session]) => {
                 const pickedImageUrl = local[PICKED_IMAGE_URL_KEY];
-                setUseInpaint(local[INPAINT_ENABLED_KEY] === true);
                 const lastResult = session[LAST_RESULT_KEY] as LastResult | undefined;
 
                 if (typeof pickedImageUrl !== 'string' || pickedImageUrl.length === 0) {
@@ -105,7 +102,7 @@ export default function App() {
             }
 
             // handled in src/background/index.ts
-            const request = serviceWorkerRequestFactory.ofDetection(targetImageUrl, tabPageUrl, useInpaint);
+            const request = serviceWorkerRequestFactory.ofDetection(targetImageUrl, tabPageUrl);
             const response = (await chrome.runtime.sendMessage(request)) as DetectResponse | undefined;
             return response;
         }
@@ -115,25 +112,12 @@ export default function App() {
             const pageUrl = tab?.url?.startsWith('http') ? tab.url : undefined;
             return pageUrl;
         }
-    }, [imageUrl, useInpaint]);
+    }, [imageUrl]);
 
     return (
         <main>
             <h1>Comic Translator</h1>
             <p>{status}</p>
-
-            <label className="toggle">
-                <input
-                    type="checkbox"
-                    checked={useInpaint}
-                    onChange={(event) => {
-                        const next = event.target.checked;
-                        setUseInpaint(next);
-                        void chrome.storage.local.set({ [INPAINT_ENABLED_KEY]: next });
-                    }}
-                />
-                Inpaint the crops
-            </label>
 
             <div className="actions">
                 <button type="button" onClick={handlePick}>
