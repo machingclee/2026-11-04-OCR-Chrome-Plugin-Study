@@ -114,8 +114,8 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
                     mask: {
                         data: detected.mask.data,
                         scale: detected.mask.scale,
-                        padX: detected.mask.padX + page.x * detected.mask.scale,
-                        padY: detected.mask.padY + page.y * detected.mask.scale,
+                        padX: detected.mask.padX - page.x * detected.mask.scale,
+                        padY: detected.mask.padY - page.y * detected.mask.scale,
                     },
                     lines,
                     balloons: (bubbles ? bubbles.bubbles : []).map((bubble) => ({
@@ -126,8 +126,8 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
                         shape: bubble.shape,
                         shapeSize: bubble.shapeSize,
                         shapeScale: bubble.shapeScale,
-                        shapePadX: bubble.shapePadX + page.x * bubble.shapeScale,
-                        shapePadY: bubble.shapePadY + page.y * bubble.shapeScale,
+                        shapePadX: bubble.shapePadX - page.x * bubble.shapeScale,
+                        shapePadY: bubble.shapePadY - page.y * bubble.shapeScale,
                     })),
                 });
             }
