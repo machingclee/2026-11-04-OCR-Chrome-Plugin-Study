@@ -47,7 +47,7 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
 
     try {
         const response = (await chrome.runtime.sendMessage(
-            offscreenRequestFactory.ofDetection(request.imageUrl),
+            offscreenRequestFactory.ofDetection(request.imageUrl, request.useInpaint),
         )) as DetectResponse | undefined;
 
         if (!response) return { ok: false, error: 'The offscreen document sent no answer.' };

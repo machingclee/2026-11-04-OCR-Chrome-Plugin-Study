@@ -67,12 +67,16 @@ export async function inpaintBox(
     const maskTensor = new Float32Array(size * size);
     for (let index = 0; index < size * size; index += 1) {
         const offset = index * 4;
-        image[index] = (pixels[offset] / 127.5) - 1;
-        image[size * size + index] = (pixels[offset + 1] / 127.5) - 1;
-        image[size * size * 2 + index] = (pixels[offset + 2] / 127.5) - 1;
         let changed = pixels[offset] !== erased[offset] || pixels[offset + 1] !== erased[offset + 1]
             || pixels[offset + 2] !== erased[offset + 2];
         if (changed && bubbles) changed = insideBubble(bubbles, box, index % size, Math.floor(index / size), size);
+
+        // The export asks for maskFill zero_after_normalize: the hole must read as
+        // mid grey, so the model paints paper instead of tracing the glyphs it sees.
+        const keep = changed ? 0 : 1;
+        image[index] = ((pixels[offset] / 127.5) - 1) * keep;
+        image[size * size + index] = ((pixels[offset + 1] / 127.5) - 1) * keep;
+        image[size * size * 2 + index] = ((pixels[offset + 2] / 127.5) - 1) * keep;
         maskTensor[index] = changed ? 1 : 0;
     }
 

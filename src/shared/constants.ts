@@ -19,6 +19,9 @@ export const CONTENT_SCRIPT_FILE = 'pickImage.js';
 export const PICKED_IMAGE_URL_KEY = 'pickedImageUrl';
 
 /** Last successful result, readable by the popup after it reopens. */
+/** Whether the strip uses the inpaint model or the plain colour fill. */
+export const INPAINT_ENABLED_KEY = 'inpaintEnabled';
+
 export const LAST_RESULT_KEY = 'lastDetection';
 
 /** Id of the temporary declarativeNetRequest rule that sets Referer. */

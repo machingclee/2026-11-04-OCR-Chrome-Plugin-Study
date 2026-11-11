@@ -7,18 +7,19 @@ const PREVIEW_QUALITY = 0.8;
 
 /**
  * Crop every box out of the decoded bitmap and return one preview per box.
- * With a mask the glyphs are removed first: the inpaint model redraws the paper
- * behind them, and the plain fill stays as the fallback when it is not loaded.
+ * With a mask the glyphs come out first. The plain fill is the default, because
+ * it is enough for a flat bubble, and the inpaint model is opt in.
  */
 export async function cropPreviews(
     bitmap: ImageBitmap,
     boxes: Box[],
     mask?: TextMask,
     bubbles?: BubbleMask,
+    useInpaint = false,
 ): Promise<string[]> {
     if (boxes.length === 0) return [];
 
-    if (mask) {
+    if (mask && useInpaint) {
         const previews: string[] = [];
         for (const box of boxes) previews.push(await inpaintBox(bitmap, box, mask, bubbles));
         return previews;
@@ -37,6 +38,13 @@ export async function cropPreviews(
         const context = canvas.getContext('2d');
         if (!context) throw new Error('The browser refused a 2D context for the crop.');
         context.drawImage(bitmap, box.x, box.y, box.width, box.height, 0, 0, width, height);
+
+        if (mask) {
+            const image = context.getImageData(0, 0, width, height);
+            eraseGlyphs(image, box, mask);
+            context.putImageData(image, 0, 0);
+        }
+
         return canvas.toDataURL('image/webp', PREVIEW_QUALITY);
     });
 }

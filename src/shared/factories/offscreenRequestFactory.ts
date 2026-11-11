@@ -2,8 +2,8 @@ import { OFFSCREEN_TARGET } from '../constants';
 import type { OffscreenDetectRequest, OffscreenPing } from '../types';
 
 /** Messages addressed to the offscreen document. */
-function ofDetection(imageUrl: string): OffscreenDetectRequest {
-    return { target: OFFSCREEN_TARGET, type: 'detect', imageUrl };
+function ofDetection(imageUrl: string, useInpaint?: boolean): OffscreenDetectRequest {
+    return { target: OFFSCREEN_TARGET, type: 'detect', imageUrl, useInpaint };
 }
 
 /** Is a listener ready yet. */
