@@ -2,6 +2,7 @@ import offscreenRequestFactory from '../shared/factories/offscreenRequestFactory
 import {
     LAST_RESULT_KEY,
     OFFSCREEN_HTML,
+    RESULT_VERSION,
     REFERER_RULE_ID,
     SERVICE_WORKER_TARGET,
 } from '../shared/constants';
@@ -55,6 +56,7 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
         if (response.ok) {
             await chrome.storage.session.set({
                 [LAST_RESULT_KEY]: {
+                    version: RESULT_VERSION,
                     imageUrl: request.imageUrl,
                     boxes: response.boxes,
                     previews: response.previews,

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
     CONTENT_SCRIPT_FILE,
+    RESULT_VERSION,
     LAST_RESULT_KEY,
     PICKED_IMAGE_URL_KEY,
 } from './shared/constants';
@@ -8,7 +9,7 @@ import type { BoxData, DetectResponse } from './shared/types';
 import serviceWorkerRequestFactory from './shared/factories/serviceWorkerRequestFactory';
 import { cropSize } from './lib/warp';
 
-type LastResult = { imageUrl: string; boxes: BoxData[]; previews?: string[]; ms: number };
+type LastResult = { version?: number; imageUrl: string; boxes: BoxData[]; previews?: string[]; ms: number };
 
 export default function App() {
     const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -37,7 +38,8 @@ export default function App() {
                 setImageUrl(pickedImageUrl);
 
                 // don't do it again if we pick the same image
-                if (lastResult && lastResult.imageUrl === pickedImageUrl && Array.isArray(lastResult.boxes)) {
+                const fresh = lastResult?.version === RESULT_VERSION;
+                if (fresh && lastResult.imageUrl === pickedImageUrl && Array.isArray(lastResult.boxes)) {
                     setBoxes(lastResult.boxes);
                     setPreviews(Array.isArray(lastResult.previews) ? lastResult.previews : []);
                     setStatus(`Restored ${lastResult.boxes.length} boxes from ${lastResult.ms} ms.`);
