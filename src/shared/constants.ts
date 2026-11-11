@@ -32,9 +32,9 @@ export const REFERER_RULE_ID = 1;
 /** Detector model and postprocessing thresholds. */
 export const DETECTOR_MODEL_PATH = 'models/comictextdetector.pt.onnx';
 export const DETECTOR_INPUT_SIZE = 1024;
-export const DETECTOR_SCORE_THRESHOLD = 0.3;
+export const DETECTOR_SCORE_THRESHOLD = 0.25;
 export const DETECTOR_MIN_AREA = 20;
-export const DETECTOR_MIN_MEAN_SCORE = 0.6;
+export const DETECTOR_MIN_MEAN_SCORE = 0.5;
 
 /** Japanese recogniser, PP-OCRv6 medium in ONNX, plus its charset. */
 
