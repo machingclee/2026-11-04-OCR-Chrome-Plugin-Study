@@ -25,13 +25,12 @@ type BubbleStroke = {
     outline?: { x: number; y: number }[];
 };
 type GroupStroke = { x: number; y: number; width: number; height: number; lines: string[] };
-type FitSpan = (element: HTMLSpanElement | null) => void;
-
 /** Shrink the text until it fits its balloon, one pixel at a time. */
-const fitText: FitSpan = (element) => {
-    if (!element) return;
-    let size = Number.parseFloat(element.style.fontSize || '16');
+const fitText = (element: HTMLSpanElement): void => {
+    const start = Number.parseFloat(element.dataset.max ?? '40');
+    let size = start;
     element.style.fontSize = `${size}px`;
+    if (element.clientHeight === 0) return;
     while (size > 7 && (element.scrollHeight > element.clientHeight || element.scrollWidth > element.clientWidth)) {
         size -= 1;
         element.style.fontSize = `${size}px`;
@@ -65,6 +64,13 @@ export default function App() {
     const [translator, setTranslator] = useState<TranslatorChoice>('gemini');
     const [dirty, setDirty] = useState(false);
 
+    useEffect(() => {
+        if (!translated) return;
+        const frame = requestAnimationFrame(() => {
+            document.querySelectorAll<HTMLSpanElement>('.typeset').forEach(fitText);
+        });
+        return () => cancelAnimationFrame(frame);
+    }, [translated, groups]);
     useEffect(() => {
         // start working when we open this popup again,
         // at this point our newly picked image url is nonempty.
@@ -345,13 +351,12 @@ export default function App() {
                                       key={`group-${group.x}-${group.y}-${(translated[index] ?? '').length}`}
                                       className="typeset"
                                       data-vertical={vertical}
-                                      ref={fitText}
+                                      data-max={Math.max(12, Math.round(Math.min(group.width, group.height)))}
                                       style={{
                                           left: `${(group.x / size.width) * 100}%`,
                                           top: `${(group.y / size.height) * 100}%`,
                                           width: `${(group.width / size.width) * 100}%`,
                                           height: `${(group.height / size.height) * 100}%`,
-                                          fontSize: `${Math.max(9, Math.min(18, group.width / 5))}px`,
                                           clipPath: clip,
                                       }}
                                   >
