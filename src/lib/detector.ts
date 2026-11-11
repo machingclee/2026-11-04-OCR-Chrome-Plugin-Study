@@ -392,6 +392,96 @@ function pickSegMask(outputs: Record<string, ort.Tensor>): Float32Array | null {
     return null;
 }
 
+/**
+ * The det map sometimes misses a whole column in a dense balloon, while seg still
+ * marks every stroke. Those strokes are merged into line sized boxes and added as
+ * a second source, which the target project does when its block head is empty.
+ */
+function toSegBoxes(seg: Float32Array, prepared: Prepared): Box[] {
+    const size = DETECTOR_INPUT_SIZE;
+    const visited = new Uint8Array(size * size);
+    const clusters: { x0: number; y0: number; x1: number; y1: number }[] = [];
+    const stack: number[] = [];
+
+    for (let start = 0; start < size * size; start += 1) {
+        if (seg[start] < 0.46 || visited[start]) continue;
+        stack.push(start);
+        visited[start] = 1;
+        let count = 0;
+        let x0 = size;
+        let y0 = size;
+        let x1 = -1;
+        let y1 = -1;
+        while (stack.length > 0) {
+            const index = stack.pop() as number;
+            const x = index % size;
+            const y = (index - x) / size;
+            count += 1;
+            if (x < x0) x0 = x;
+            if (y < y0) y0 = y;
+            if (x > x1) x1 = x;
+            if (y > y1) y1 = y;
+            for (let dy = -1; dy <= 1; dy += 1) {
+                for (let dx = -1; dx <= 1; dx += 1) {
+                    if (dx === 0 && dy === 0) continue;
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+                    const next = ny * size + nx;
+                    if (visited[next] || seg[next] < 0.46) continue;
+                    visited[next] = 1;
+                    stack.push(next);
+                }
+            }
+        }
+        if (count < 16) continue;
+        clusters.push({ x0, y0, x1, y1 });
+    }
+
+    // Join clusters that sit within a few pixels of each other, so the glyphs of
+    // one column become one box instead of ten.
+    const gap = Math.max(4, Math.round(size / 200));
+    const boxes: Box[] = [];
+    for (const cluster of clusters) {
+        let merged = { ...cluster };
+        let changed = true;
+        while (changed) {
+            changed = false;
+            for (let index = 0; index < clusters.length; index += 1) {
+                const other = clusters[index];
+                if (other === null) continue;
+                const near = merged.x0 - gap <= other.x1 && other.x0 - gap <= merged.x1
+                    && merged.y0 - gap <= other.y1 && other.y0 - gap <= merged.y1;
+                if (!near) continue;
+                merged = {
+                    x0: Math.min(merged.x0, other.x0),
+                    y0: Math.min(merged.y0, other.y0),
+                    x1: Math.max(merged.x1, other.x1),
+                    y1: Math.max(merged.y1, other.y1),
+                };
+                clusters[index] = null as unknown as { x0: number; y0: number; x1: number; y1: number };
+                changed = true;
+            }
+        }
+
+        const x = (merged.x0 - prepared.padX) / prepared.scale;
+        const y = (merged.y0 - prepared.padY) / prepared.scale;
+        const width = (merged.x1 - merged.x0 + 1) / prepared.scale;
+        const height = (merged.y1 - merged.y0 + 1) / prepared.scale;
+        if (width < 8 || height < 8) continue;
+        if (width / height > 6 || height / width > 12) continue;
+        boxes.push({
+            x: Math.max(0, x),
+            y: Math.max(0, y),
+            width,
+            height,
+            score: 0.9,
+            angle: 0,
+        });
+    }
+    return boxes;
+}
+
 type Pass = {
     boxes: Box[];
     blocks: TextBlock[];
@@ -422,8 +512,12 @@ async function runPass(source: PixelSource): Promise<Pass> {
 
     const blockTensor = pickBlockTensor(typed);
     const seg = pickSegMask(typed);
+    const detBoxes = toDetBoxes(map, prepared);
+    const segBoxes = seg ? toSegBoxes(seg, prepared) : [];
+    const extra = segBoxes.filter((box) => !detBoxes.some((other) => overlapRatio(box, other) > 0.5));
+
     return {
-        boxes: toDetBoxes(map, prepared),
+        boxes: [...detBoxes, ...extra],
         blocks: blockTensor ? toBlkBoxes(blockTensor, prepared) : [],
         mask: seg ? { data: seg, scale: prepared.scale, padX: prepared.padX, padY: prepared.padY } : null,
     };
