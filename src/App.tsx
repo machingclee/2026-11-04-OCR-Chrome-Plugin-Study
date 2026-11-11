@@ -161,7 +161,6 @@ export default function App() {
     const [wrote, setWrote] = useState(false);
     const [erasedUrl, setErasedUrl] = useState<string | null>(null);
     const [bubbleError, setBubbleError] = useState<string | null>(null);
-    const [maskUrl, setMaskUrl] = useState<string | null>(null);
     const [typesetUrl, setTypesetUrl] = useState<string | null>(null);
     const [showDebug, setShowDebug] = useState(false);
 
@@ -341,7 +340,6 @@ export default function App() {
             setGroups(response.groups ?? []);
             setErasedUrl(response.erasedUrl ?? null);
             setBubbleError(response.bubbleError ?? null);
-            setMaskUrl(response.maskUrl ?? null);
             setTranslated(null);
             const vertical = response.boxes.filter((box) => box.direction === 'vertical').length;
             const ruby = response.boxes.reduce((sum, box) => sum + box.ruby.length, 0);
@@ -682,10 +680,6 @@ export default function App() {
                 <section className="debug">
                     <h2>Stages</h2>
                     <div className="debug-grid">
-                        <figure>
-                            {maskUrl ? <img src={maskUrl} alt="Refined erase mask" /> : <p>Press Detect boxes first.</p>}
-                            <figcaption>mask</figcaption>
-                        </figure>
                         <figure>
                             {erasedUrl ? <img src={erasedUrl} alt="Page after the erase" /> : <p>Press Detect boxes first.</p>}
                             <figcaption>erased page</figcaption>

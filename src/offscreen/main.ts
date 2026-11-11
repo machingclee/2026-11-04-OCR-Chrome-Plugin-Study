@@ -133,7 +133,6 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             groups,
             bubbleError,
             erasedUrl,
-            maskUrl: null,
             bubbles: balloonList.map((bubble) => ({
                 x: bubble.x,
                 y: bubble.y,
