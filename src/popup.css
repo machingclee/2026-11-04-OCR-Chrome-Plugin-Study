@@ -149,3 +149,7 @@ button[data-busy='true'] {
   font-family: inherit;
   font-size: 12px;
 }
+
+.keys .save {
+  justify-self: start;
+}

@@ -63,6 +63,7 @@ export default function App() {
     const [deepSeekKey, setDeepSeekKey] = useState('');
     const [geminiKey, setGeminiKey] = useState('');
     const [translator, setTranslator] = useState<TranslatorChoice>('gemini');
+    const [dirty, setDirty] = useState(false);
 
     useEffect(() => {
         // start working when we open this popup again,
@@ -117,6 +118,16 @@ export default function App() {
             setError(cause instanceof Error ? cause.message : String(cause));
         }
     }, []);
+
+    const handleSaveSettings = useCallback(async () => {
+        await chrome.storage.local.set({
+            [GEMINI_KEY]: geminiKey.trim(),
+            [DEEPSEEK_KEY]: deepSeekKey.trim(),
+            [TRANSLATOR_KEY]: translator,
+        });
+        setDirty(false);
+        setStatus('Settings saved.');
+    }, [deepSeekKey, geminiKey, translator]);
 
     const handleTranslate = useCallback(async () => {
         if (groups.length === 0) return;
@@ -260,10 +271,8 @@ export default function App() {
                     <select
                         value={translator}
                         onChange={(event) => {
-                            const choice = event.target.value as TranslatorChoice;
-                            setTranslator(choice);
-                            void chrome.storage.local.set({ [TRANSLATOR_KEY]: choice });
-                            setStatus(`Translator: ${choice}.`);
+                            setTranslator(event.target.value as TranslatorChoice);
+                            setDirty(true);
                         }}
                     >
                         <option value="gemini">Gemini (free tier)</option>
@@ -280,8 +289,7 @@ export default function App() {
                         placeholder="AIza..."
                         onChange={(event) => {
                             setGeminiKey(event.target.value);
-                            void chrome.storage.local.set({ [GEMINI_KEY]: event.target.value });
-                            setStatus(event.target.value.length > 0 ? 'Gemini key saved.' : 'Gemini key cleared.');
+                            setDirty(true);
                         }}
                     />
                 </label>
@@ -294,11 +302,15 @@ export default function App() {
                         placeholder="sk-..."
                         onChange={(event) => {
                             setDeepSeekKey(event.target.value);
-                            void chrome.storage.local.set({ [DEEPSEEK_KEY]: event.target.value });
-                            setStatus(event.target.value.length > 0 ? 'DeepSeek key saved.' : 'DeepSeek key cleared.');
+                            setDirty(true);
                         }}
                     />
                 </label>
+
+                <span />
+                <button type="button" className="save" onClick={handleSaveSettings} disabled={!dirty}>
+                    {dirty ? 'Save settings' : 'Saved'}
+                </button>
             </div>
 
             {error ? <p role="alert">{error}</p> : null}
