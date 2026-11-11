@@ -204,7 +204,7 @@ export function groupByRegion(
     bubbles: Bubble[],
     blocks: TextBlock[],
     strict: boolean,
-): { lines: TextLine[]; grouped: number; dropped: number; regions: number } {
+): { lines: TextLine[]; grouped: number; dropped: number; regions: number; boxes: Box[] } {
     // The target project prefers the block head and falls back to the balloons,
     // so the two never argue about which region a line belongs to.
     const regions: Region[] = blocks.length > 0
@@ -241,10 +241,15 @@ export function groupByRegion(
     for (const id of ids) ordered.push(...(groups.get(id) as TextLine[]));
     const grouped = ordered.length;
 
+    const boxes: Box[] = ids.map((id) => {
+        const region = regions.find((item) => item.id === id) as Region;
+        return { x: region.x, y: region.y, width: region.width, height: region.height, score: 1, angle: 0 };
+    });
+
     if (strict) {
-        return { lines: ordered, grouped, dropped: lines.length - grouped, regions: ids.length };
+        return { lines: ordered, grouped, dropped: lines.length - grouped, regions: ids.length, boxes };
     }
-    return { lines: ordered.concat(loose), grouped, dropped: 0, regions: ids.length };
+    return { lines: ordered.concat(loose), grouped, dropped: 0, regions: ids.length, boxes };
 }
 
 /**

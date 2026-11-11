@@ -42,6 +42,15 @@ export type DetectRequest = {
 /** One speech balloon, in page pixels. */
 export type BubbleData = { x: number; y: number; width: number; height: number };
 
+/** One reading group: the box that holds it and the text inside, line by line. */
+export type GroupData = {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    lines: string[];
+};
+
 /** Service worker to offscreen document. */
 export type OffscreenDetectRequest = {
     target: typeof OFFSCREEN_TARGET;
@@ -79,6 +88,7 @@ export type DetectResponse =
           imageWidth: number;
           imageHeight: number;
           groupedLines: number;
+          groups: GroupData[];
           bubbles: BubbleData[];
       }
     | { ok: false; error: string };

@@ -9,6 +9,7 @@ import { OFFSCREEN_TARGET } from '../shared/constants';
 import type {
     BoxData,
     DetectResponse,
+    GroupData,
     IncomingMessage,
     OffscreenDetectRequest,
 } from '../shared/types';
@@ -35,6 +36,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         const collected: BoxData[] = [];
         const balloons: { x: number; y: number; width: number; height: number }[] = [];
         let dropped = 0;
+        const groups: GroupData[] = [];
 
         for (const page of pages) {
             const slice = pages.length === 1
@@ -60,6 +62,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
                 request.keepOutside !== true,
             );
             dropped += grouped.dropped;
+            const groupBoxes = grouped.boxes.map((box) => offsetBox(box, page));
 
             const lines = grouped.lines.map((line) => offsetBox(
                 { ...line, ...expandToInk(line, detected.mask) },
@@ -75,11 +78,28 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
                 });
             }
 
+            const perGroup: string[][] = groupBoxes.map(() => []);
             for (const line of lines) {
                 const recognised = await recognizeLine(bitmap, line, line.direction === 'vertical')
                     .catch(() => ({ text: '', confidence: 0 }));
                 collected.push({ ...line, text: recognised.text, confidence: recognised.confidence });
+
+                const centreX = line.x + line.width / 2;
+                const centreY = line.y + line.height / 2;
+                for (let index = 0; index < groupBoxes.length; index += 1) {
+                    const box = groupBoxes[index];
+                    if (centreX < box.x || centreX > box.x + box.width) continue;
+                    if (centreY < box.y || centreY > box.y + box.height) continue;
+                    perGroup[index].push(recognised.text);
+                    break;
+                }
             }
+
+            groupBoxes.forEach((box, index) => {
+                const text = perGroup[index].filter((line) => line.length > 0);
+                if (text.length === 0) return;
+                groups.push({ ...box, lines: text });
+            });
 
         }
 
@@ -91,6 +111,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             imageWidth: bitmap.width,
             imageHeight: bitmap.height,
             groupedLines: collected.length - dropped,
+            groups,
             bubbles: balloons,
             ms: Math.round(performance.now() - started),
             warm
