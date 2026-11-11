@@ -4,6 +4,10 @@ import {
     DEEPSEEK_KEY,
     GEMINI_KEY,
     FONT_KEY,
+    LEADING_KEY,
+    LEADING_MAX,
+    LEADING_MIN,
+    WEIGHT_KEY,
     REPLACE_IMAGE_MESSAGE,
     UNDO_IMAGE_MESSAGE,
     type FontChoice,
@@ -81,6 +85,8 @@ export default function App() {
     const [translator, setTranslator] = useState<TranslatorChoice>('gemini');
     const [dirty, setDirty] = useState(false);
     const [font, setFont] = useState<FontChoice>('sans');
+    const [leading, setLeading] = useState(1.15);
+    const [weight, setWeight] = useState<'normal' | 'bold'>('normal');
     const [wrote, setWrote] = useState(false);
 
     useEffect(() => {
@@ -103,6 +109,10 @@ export default function App() {
                 if (typeof storedDeepSeek === 'string') setDeepSeekKey(storedDeepSeek);
                 const storedGemini = local[GEMINI_KEY];
                 if (typeof storedGemini === 'string') setGeminiKey(storedGemini);
+                const storedLeading = local[LEADING_KEY];
+                if (typeof storedLeading === 'number') setLeading(storedLeading);
+                const storedWeight = local[WEIGHT_KEY];
+                if (storedWeight === 'normal' || storedWeight === 'bold') setWeight(storedWeight);
                 const storedFont = local[FONT_KEY];
                 if (storedFont === 'sans' || storedFont === 'serif') setFont(storedFont);
                 const storedChoice = local[TRANSLATOR_KEY];
@@ -180,7 +190,10 @@ export default function App() {
                 family: font === 'serif'
                     ? '"Songti TC", "Noto Serif CJK TC", serif'
                     : 'system-ui, "PingFang TC", sans-serif',
-                leading: 1.15,
+                leading,
+                weight,
+                minSize: 8,
+                maxSize: 96,
             },
         );
 
@@ -192,7 +205,7 @@ export default function App() {
             dataUrl,
         });
         bitmap.close();
-    }, [boxes, bubbles, font, imageUrl]);
+    }, [boxes, bubbles, font, imageUrl, leading, weight]);
 
     const handleUndo = useCallback(async () => {
         try {
@@ -212,10 +225,12 @@ export default function App() {
             [DEEPSEEK_KEY]: deepSeekKey.trim(),
             [TRANSLATOR_KEY]: translator,
             [FONT_KEY]: font,
+            [LEADING_KEY]: leading,
+            [WEIGHT_KEY]: weight,
         });
         setDirty(false);
         setStatus('Settings saved.');
-    }, [deepSeekKey, font, geminiKey, translator]);
+    }, [deepSeekKey, font, geminiKey, leading, translator, weight]);
 
 
     const runDetect = useCallback(async (): Promise<DetectResponse | null> => {
@@ -410,6 +425,36 @@ export default function App() {
                             setDirty(true);
                         }}
                     />
+                </label>
+
+                <label>
+                    Line spacing
+                    <input
+                        type="range"
+                        min={LEADING_MIN}
+                        max={LEADING_MAX}
+                        step={0.05}
+                        value={leading}
+                        onChange={(event) => {
+                            setLeading(Number(event.target.value));
+                            setDirty(true);
+                        }}
+                    />
+                    <span className="hint">{leading.toFixed(2)}</span>
+                </label>
+
+                <label>
+                    Weight
+                    <select
+                        value={weight}
+                        onChange={(event) => {
+                            setWeight(event.target.value as 'normal' | 'bold');
+                            setDirty(true);
+                        }}
+                    >
+                        <option value="normal">Normal</option>
+                        <option value="bold">Bold</option>
+                    </select>
                 </label>
 
                 <label>

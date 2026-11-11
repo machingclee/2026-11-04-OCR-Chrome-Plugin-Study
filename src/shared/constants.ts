@@ -31,6 +31,10 @@ export const REPLACE_IMAGE_MESSAGE = 'comic-translator:replace-image';
 /** The page can put its own image back. */
 export const UNDO_IMAGE_MESSAGE = 'comic-translator:undo-image';
 export const FONT_KEY = 'typesetFont';
+export const LEADING_KEY = 'typesetLeading';
+export const WEIGHT_KEY = 'typesetWeight';
+export const LEADING_MIN = 1;
+export const LEADING_MAX = 1.6;
 export const FONT_CHOICES = ['sans', 'serif'] as const;
 export type FontChoice = (typeof FONT_CHOICES)[number];
 /** Gemini wins the tie by default: its free tier needs nothing but a key. */

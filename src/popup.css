@@ -164,3 +164,8 @@ button[data-busy='true'] {
 .groups .target {
   margin: 0 0 6px;
 }
+
+.keys .hint {
+  font-variant-numeric: tabular-nums;
+  color: #4a4a4a;
+}

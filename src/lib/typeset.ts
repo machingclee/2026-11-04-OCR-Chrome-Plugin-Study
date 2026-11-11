@@ -6,14 +6,30 @@ type Paragraph = { box: GroupData; text: string; columns?: string[]; outline?: {
 export type TypesetOptions = {
     /** The font family the page is lettered in. */
     family: string;
-    /** Multiplier for the gap between lines, 1 is tight and 1.4 is airy. */
+    /** Multiplier for the gap between lines, 1 is tight and 1.6 is airy. */
     leading: number;
+    /** Base weight for ordinary dialogue. */
+    weight: 'normal' | 'bold';
+    /** Smallest size the fit may fall back to. */
+    minSize: number;
+    /** Largest size the fit may reach, before the balloon caps it. */
+    maxSize: number;
 };
 
 const DEFAULT_OPTIONS: TypesetOptions = {
     family: 'system-ui, "PingFang TC", sans-serif',
     leading: 1.15,
+    weight: 'normal',
+    minSize: 8,
+    maxSize: 96,
 };
+
+/** A short shout is set heavier, which is how a letterer marks it. */
+function weightFor(text: string, base: 'normal' | 'bold'): 'normal' | 'bold' {
+    const trimmed = text.trim();
+    if (trimmed.length <= 6 && /[!?！？]$/.test(trimmed)) return 'bold';
+    return base;
+}
 
 function isVertical(box: { width: number; height: number }): boolean {
     return box.height > box.width * 1.3;
@@ -70,16 +86,17 @@ function inner(box: GroupData): { x: number; y: number; width: number; height: n
 }
 
 function drawHorizontal(context: CanvasRenderingContext2D, box: GroupData, text: string, options: TypesetOptions): void {
+    const weight = weightFor(text, options.weight);
     const area = inner(box);
     // Start small enough that a short line cannot turn into a headline.
     // Binary search the largest size that still fits, so short lines grow.
-    let low = 7;
-    let high = Math.max(8, Math.min(area.width, area.height));
-    let best = 7;
+    let low = options.minSize;
+    let high = Math.max(options.minSize, Math.min(options.maxSize, Math.min(area.width, area.height)));
+    let best = options.minSize;
     let bestLines: string[] = [];
     while (low <= high) {
         const size = Math.floor((low + high) / 2);
-        context.font = `${size}px ${options.family}`;
+        context.font = `${weight} ${size}px ${options.family}`;
         const lines = wrap(context, text, area.width);
         if (lines.length * size * options.leading <= area.height) {
             best = size;
@@ -90,7 +107,7 @@ function drawHorizontal(context: CanvasRenderingContext2D, box: GroupData, text:
         }
     }
 
-    context.font = `${best}px ${options.family}`;
+    context.font = `${weight} ${best}px ${options.family}`;
     const lines = bestLines.length > 0 ? bestLines : wrap(context, text, area.width);
     const total = lines.length * best * options.leading;
     let y = area.y + (area.height - total) / 2 + best;
@@ -102,14 +119,15 @@ function drawHorizontal(context: CanvasRenderingContext2D, box: GroupData, text:
 }
 
 function drawVertical(context: CanvasRenderingContext2D, box: GroupData, text: string, options: TypesetOptions, given?: string[]): void {
+    const weight = weightFor(text, options.weight);
     const area = inner(box);
     // Vertical punctuation has its own glyphs, and a mark may not lead a column.
     const characters = [...toVertical(text)].flatMap((character) => [character]);
-    let size = Math.max(8, Math.min(area.width, area.height) / 4);
+    let size = Math.max(options.minSize, Math.min(options.maxSize, Math.min(area.width, area.height) / 2));
     let columns: string[][] = [];
 
-    while (size > 7) {
-        context.font = `${size}px ${options.family}`;
+    while (size > options.minSize) {
+        context.font = `${weight} ${size}px ${options.family}`;
         const perColumn = Math.max(1, Math.floor(area.height / (size * 1.1)));
         columns = [];
         let cursor = 0;
@@ -126,7 +144,7 @@ function drawVertical(context: CanvasRenderingContext2D, box: GroupData, text: s
         size -= 1;
     }
 
-    context.font = `${size}px ${options.family}`;
+    context.font = `${weight} ${size}px ${options.family}`;
     const total = columns.length * size * 1.1;
     let x = area.x + area.width - (area.width - total) / 2 - size / 2;
     for (const column of columns) {
