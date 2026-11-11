@@ -1,148 +1,130 @@
-# Handoff: restart the renderer
+# Handoff: restart the inpainting
 
-A fresh session should read this before writing code. The detection is the part
-that works. The painting is the part that does not, and several rewrites have made
-it worse rather than better.
+Scope: the erase only. The detector is good and the text boxes are trusted. Do not
+change detection, grouping, translation, or typesetting in this pass.
 
-## Repos
+## Repo
 
-| What | Path | Branch |
+```
+/Users/chingcheonglee/Repos/Javascript/2026-11-04-OCR-Chrome-Plugin-Study
+branch step-10-typeset-quality
+```
+
+## What exists right now
+
+The erase is a white rectangle over every line box, drawn in the offscreen
+document, in `src/offscreen/main.ts`:
+
+```ts
+context.fillStyle = '#ffffff';
+for (const line of lines) {
+    context.fillRect(line.x - 2, line.y - 2, line.width + 4, line.height + 4);
+    for (const ruby of line.ruby) {
+        context.fillRect(ruby.x - 2, ruby.y - 2, ruby.width + 4, ruby.height + 4);
+    }
+}
+```
+
+It is reliable and ugly. That rectangle is what the next attempt replaces.
+
+## Inputs the erase already has
+
+| Name | Shape | Space |
 | --- | --- | --- |
-| Extension | `/Users/chingcheonglee/Repos/Javascript/2026-11-04-OCR-Chrome-Plugin-Study` | `step-10-typeset-quality` |
-| Blog | `/Users/chingcheonglee/Repos/Javascript/machingclee.github.io.source` | `main` |
-| Reference | `/Users/chingcheonglee/Repos/Javascript/ShinobuTranslator` | read only |
+| `bitmap` | page | page pixels |
+| `lines` | `Box[]` with `ruby` | page pixels |
+| `detected.mask` | `seg`, 1024 square | letterboxed page |
+| balloons | `x, y, w, h`, `shape` 160 square | page pixels, then 640 letterboxed |
 
-The reference project is GPL-3.0. Reimplement its decisions, never copy its code.
+Three spaces. Every previous failure came from converting between them by hand.
 
-## What already works
+## What went wrong before
 
-1. Pick an image from a page, fetch it, decode it.
-2. Detect text lines. The boxes are good, which is why this part should be left
-   alone. `det` gives a kernel per line, `seg` fills in the columns `det` misses,
-   and `blk` carries block level boxes.
-3. OCR each line with `PP-OCRv6_medium_rec.onnx`. Text quality is fine.
-4. Group lines into balloons and blocks, and order them for reading.
-5. Translate the groups through Gemini, DeepSeek, or the browser translator.
-6. Paint a page in the popup and offer it as a PNG download.
+1. Sampling `seg` per page pixel and filling where it fires. Where the mapping was
+   off by a page offset, the whole page was treated as a glyph and turned white.
+2. The AOT model, once at 512 and once tiled. Both filled large areas, because the
+   mask handed to the model was in the wrong space.
+3. A refined mask with per line dilation. Right page empty, because the offset was
+   added instead of subtracted.
 
-## What does not work
+The models are deleted. `src/lib/inpaint.ts`, `src/lib/mask.ts`, and
+`src/lib/erase.ts` are still in the tree but unused.
 
-The painting. Three separate problems, and they are easy to confuse.
+## A restart that cannot go white
 
-| Problem | Symptom |
-| --- | --- |
-| Erase | white boxes over the artwork, or the whole page turning white |
-| Placement | text drawn outside its balloon, sometimes huge |
-| Size | one syllable filling half the page |
+The reason the page turned white is that a mask was used as the source of truth
+for pixels. The restart should treat the line box as the source of truth, because
+the boxes are known to be good.
 
-## The current state of the code
+### Step one: fill each box with the paper colour around it
 
-The popup renders; the page is never touched.
+For each line box, expand it by eight percent, sample the pixels on that border,
+take the median colour, and fill the inner box with it.
 
+```ts
+function paperColour(image: ImageData, box: Box): [number, number, number] {
+    // walk the ring of the expanded box, collect pixels, return the median
+}
 ```
-Popup  →  Worker  →  Offscreen (detect, erase, OCR)  →  Popup (paint, download)
+
+On a white balloon this returns white. Inside a grey screentone it returns the
+grey of that tone, which is already better than the current white rectangle.
+
+### Step two: feather the edge
+
+A hard rectangle reads as a sticker. Blend the last two pixels of the fill into
+the page, so the patch has a soft edge. That alone removes most of the "unusable"
+feeling.
+
+### Step three: only then consider texture
+
+If a balloon sits on screentone or on artwork, a flat patch still shows. Two
+cheap options before any model:
+
+- mirror the pixels just outside the box into it,
+- copy a patch of the same size from the nearest area with a similar mean colour.
+
+Both are a few dozen lines and need no assets.
+
+### Step four: a model, if still needed
+
+The reference implementation uses `aot_inpaint_512.onnx`, 22,749,561 bytes,
+sha256 `acdddccf…`, in a single 512 pass over the whole page. Two settings matter:
+normalise to minus one to one, and set the hole to zero **after** normalising. If
+this stage is attempted, write one function that converts a page point into the
+model grid and use it everywhere:
+
+```ts
+toModel(x, y) => ({
+    x: (x - cropX) * scale + padX,
+    y: (y - cropY) * scale + padY,
+});
 ```
 
-| File | Job |
-| --- | --- |
-| `src/offscreen/main.ts` | one image, detect, fill each line box white, OCR, group |
-| `src/lib/detector.ts` | det, blk and seg boxes, tiling for resolution |
-| `src/lib/readingOrder.ts` | grouping by balloon then block |
-| `src/lib/typeset.ts` | canvas painter, size capped at 26 px |
-| `src/App.tsx` | popup state, translate, paint, download |
+Never write that arithmetic inline twice.
 
-The erase is deliberately dumb: a white rectangle over every line box, plus a
-white rectangle over every ruby box. It cannot be subtle, but it cannot cover the
-wrong area either.
+## Definition of done
 
-## What has been tried and must not be repeated
+1. No white rectangle is visible outside a text box.
+2. On a white balloon the patch is invisible at a glance.
+3. On a grey tone the patch keeps the tone, even if the texture is flat.
+4. A full pass stays under ten seconds for a 1500 by 1100 page.
+5. The popup shows the same image that the erase produced.
 
-Each of these looked reasonable and each one made the result worse.
-
-1. **A colour fill computed from the `seg` mask.** The paper colour came out
-   wrong, and where the mask was offset the whole page turned white.
-2. **An AOT inpaint model, single 512 pass.** The page turned nearly white,
-   because the mask and the page were in different coordinate spaces.
-3. **An AOT inpaint model, tiled at 512.** Twelve passes, 33 seconds, and the
-   same coordinate confusion.
-4. **A refined mask with dilation, per line.** Produced a near empty mask on the
-   right hand page because the slice offset was added instead of subtracted.
-5. **Splitting a two page scan into pages.** Every offset had to be applied four
-   times, in four coordinate spaces, and one of them was always wrong.
-6. **Balloon outline as the text container.** The outline is tight, but the
-   polygon to rectangle conversion put text over the drawing.
-7. **Font size by binary search up to 96 px.** Short lines became headlines.
-8. **Writing the result back into the page.** Correct in principle, but it made
-   the popup and the page disagree, which hid the real bug for several rounds.
-
-All of it is in the history. The lesson is not "these were bad ideas" but "each
-one crossed a coordinate space boundary, and the boundary was written by hand
-every time".
-
-## Constraints that are real
-
-- The detector input is fixed at `1 x 3 x 1024 x 1024`. A batch of two fails.
-  Large pages are tiled instead, up to sixteen passes.
-- `chrome.storage.session` holds 10 MB. Masks are `Float32Array` of 1024 square
-  and must never cross a message boundary.
-- A cross-origin `<img>` taints a canvas, so the painter fetches the bytes again
-  before drawing.
-- Models are gitignored. `scripts/prepare-assets.ts` downloads and hash checks
-  them: detector 94 MB, recogniser 76 MB, bubble 11 MB, and a charset.
-
-## How to run it
+## How to look at the result
 
 ```bash
-cd /Users/chingcheonglee/Repos/Javascript/2026-11-04-OCR-Chrome-Plugin-Study
 npm run build
 ```
 
-Reload the extension at `chrome://extensions`, pick an image, press Detect boxes.
+Reload the extension, press Detect boxes, open `Show stages`. The first image is
+the erased page. That image is the only honest signal for this task.
 
-The status line is the instrument:
+## Do not touch
 
-```
-25 lines (25 vertical, 0 ruby), 25 read, 9 balloons, 25 grouped, image 1518x1088
-```
+- `src/lib/detector.ts`
+- `src/lib/readingOrder.ts`
+- `src/lib/typeset.ts`
+- the popup layout
 
-`Show stages` in the popup shows the erased page and the painted page. Those two
-images are the only honest feedback loop this project has. Use them.
-
-## A restart plan that keeps the coordinate problem out
-
-The mistake so far has been to compute things in one space and paint in another.
-The next attempt should have exactly one space: the page bitmap.
-
-1. Keep detection exactly as it is. Do not touch `detector.ts`.
-2. Erase: white rectangle over each line box. Already done, keep it.
-3. Paint into the *line boxes*, not the group boxes, and not the balloons. A line
-   box is small and measured by the same detector that found the text, so it
-   cannot be far off.
-4. One text block per group, but laid out with the group's line boxes as target
-   anchors: first line of the translation goes into the first line box, and so
-   on. If the translation has fewer lines, centre the rest.
-5. Cap the font at the height of a source line box. That is a number the detector
-   already produced, so it can never be wrong by an order of magnitude.
-6. No balloon outline, no polygon, no clipping, no inpaint model.
-7. Only when the result is boring but correct, add ornament: a balloon clip, a
-   nicer face, hyphenation, vertical punctuation.
-
-## Acceptance criteria for the restart
-
-1. No white rectangle outside a text box.
-2. No text larger than the tallest source line box.
-3. Every translated line sits where a source line used to be.
-4. The painted page and the popup show the same image, byte for byte.
-5. A full pass under ten seconds on a 1500 by 1100 page.
-
-## The article
-
-`app/src/mds/articles/tech/660-build-a-chrome-extension-minimal-mv3-shell.md`
-and its `-tc` pair describe steps 1 to 10. They are published, with `wip`
-removed. Step 10 currently claims the erase is stroke level with a mask, which is
-no longer true. If the renderer is rewritten, step 10 needs a matching edit, in
-both languages, and the code fences must stay identical between the two files.
-
-Rules for that article: an anchor on every heading, single line paragraphs, no
-bold, no em dash, sentences under 25 words, and the `-tc` file avoids the banned
-word list in `app/.claude/skills/translate-article-traditional-chinese`.
+If a change seems to need one of those, it is a different task.
