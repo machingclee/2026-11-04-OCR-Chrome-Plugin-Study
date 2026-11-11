@@ -27,8 +27,10 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         }
 
         const bitmap = await createImageBitmap(await response.blob());
-        // A page taller than this loses too much detail in one 1024 square pass.
-        const tiles = Math.max(bitmap.width, bitmap.height) > 1200 ? 2 : 1;
+        // One 1024 square pass shrinks the page by 1024 / longest side. Tiling
+        // lifts that back towards 1, so a small column keeps its strokes.
+        const longest = Math.max(bitmap.width, bitmap.height);
+        const tiles = Math.min(4, Math.max(1, Math.ceil(longest / 1024)));
         const detected = await detectBoxes(bitmap, tiles);
         // The block gate runs later, against the balloon masks, which are the
         // better evidence for "is this line inside a balloon".
