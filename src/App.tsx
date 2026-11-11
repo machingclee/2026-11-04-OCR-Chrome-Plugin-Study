@@ -2,15 +2,15 @@ import { useCallback, useEffect, useState } from 'react';
 import {
     CONTENT_SCRIPT_FILE,
     KEEP_OUTSIDE_KEY,
-    RESULT_VERSION,
     LAST_RESULT_KEY,
     PICKED_IMAGE_URL_KEY,
 } from './shared/constants';
 import type { BoxData, DetectResponse } from './shared/types';
+import { BUILD_ID } from './shared/build';
 import serviceWorkerRequestFactory from './shared/factories/serviceWorkerRequestFactory';
 import { cropSize } from './lib/warp';
 
-type LastResult = { version?: number; imageUrl: string; boxes: BoxData[]; previews?: string[]; ms: number };
+type LastResult = { version?: string; imageUrl: string; boxes: BoxData[]; previews?: string[]; ms: number };
 
 export default function App() {
     const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -41,7 +41,7 @@ export default function App() {
                 setImageUrl(pickedImageUrl);
 
                 // don't do it again if we pick the same image
-                const fresh = lastResult?.version === RESULT_VERSION;
+                const fresh = lastResult?.version === BUILD_ID;
                 if (fresh && lastResult.imageUrl === pickedImageUrl && Array.isArray(lastResult.boxes)) {
                     setBoxes(lastResult.boxes);
                     setPreviews(Array.isArray(lastResult.previews) ? lastResult.previews : []);

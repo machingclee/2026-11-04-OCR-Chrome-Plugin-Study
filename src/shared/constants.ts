@@ -22,11 +22,6 @@ export const PICKED_IMAGE_URL_KEY = 'pickedImageUrl';
 
 export const LAST_RESULT_KEY = 'lastDetection';
 
-/**
- * Bump this whenever the pipeline changes. A stored result from another version
- * is ignored, so a rebuild never shows the boxes of the previous run.
- */
-export const RESULT_VERSION = 7;
 
 /** When true, a line outside every block is still kept. */
 export const KEEP_OUTSIDE_KEY = 'keepOutside';
