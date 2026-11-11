@@ -263,6 +263,7 @@ export default function App() {
                             const choice = event.target.value as TranslatorChoice;
                             setTranslator(choice);
                             void chrome.storage.local.set({ [TRANSLATOR_KEY]: choice });
+                            setStatus(`Translator: ${choice}.`);
                         }}
                     >
                         <option value="gemini">Gemini (free tier)</option>
@@ -280,6 +281,7 @@ export default function App() {
                         onChange={(event) => {
                             setGeminiKey(event.target.value);
                             void chrome.storage.local.set({ [GEMINI_KEY]: event.target.value });
+                            setStatus(event.target.value.length > 0 ? 'Gemini key saved.' : 'Gemini key cleared.');
                         }}
                     />
                 </label>
@@ -293,6 +295,7 @@ export default function App() {
                         onChange={(event) => {
                             setDeepSeekKey(event.target.value);
                             void chrome.storage.local.set({ [DEEPSEEK_KEY]: event.target.value });
+                            setStatus(event.target.value.length > 0 ? 'DeepSeek key saved.' : 'DeepSeek key cleared.');
                         }}
                     />
                 </label>
