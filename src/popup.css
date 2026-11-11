@@ -130,3 +130,17 @@ button[data-busy='true'] {
   writing-mode: vertical-rl;
   text-align: start;
 }
+
+.key {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.key input {
+  flex: 1;
+  padding: 4px 6px;
+  font-family: inherit;
+  font-size: 12px;
+}

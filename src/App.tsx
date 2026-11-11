@@ -2,12 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import {
     CONTENT_SCRIPT_FILE,
     KEEP_OUTSIDE_KEY,
+    DEEPSEEK_KEY,
     LAST_RESULT_KEY,
     PICKED_IMAGE_URL_KEY,
 } from './shared/constants';
 import type { BoxData, DetectResponse } from './shared/types';
 import { BUILD_ID } from './shared/build';
 import { canTranslate, translateAll } from './lib/translate';
+import { translateWithDeepSeek } from './lib/translateDeepSeek';
 import serviceWorkerRequestFactory from './shared/factories/serviceWorkerRequestFactory';
 import { cropSize } from './lib/warp';
 
@@ -54,6 +56,7 @@ export default function App() {
     const [groups, setGroups] = useState<GroupStroke[]>([]);
     const [translated, setTranslated] = useState<string[] | null>(null);
     const [translating, setTranslating] = useState(false);
+    const [apiKey, setApiKey] = useState('');
 
     useEffect(() => {
         // start working when we open this popup again,
@@ -65,6 +68,8 @@ export default function App() {
             .then(([local, session]) => {
                 const pickedImageUrl = local[PICKED_IMAGE_URL_KEY];
                 setKeepOutside(local[KEEP_OUTSIDE_KEY] !== false);
+                const storedKey = local[DEEPSEEK_KEY];
+                if (typeof storedKey === 'string') setApiKey(storedKey);
                 const lastResult = session[LAST_RESULT_KEY] as LastResult | undefined;
 
                 if (typeof pickedImageUrl !== 'string' || pickedImageUrl.length === 0) {
@@ -103,14 +108,19 @@ export default function App() {
 
     const handleTranslate = useCallback(async () => {
         if (groups.length === 0) return;
-        if (!canTranslate()) {
-            setError('This Chrome ships no translator. Enable the built-in AI in chrome://flags, or use Chrome 138 and later.');
-            return;
-        }
         setTranslating(true);
+        setError('');
         try {
             const joined = groups.map((group) => group.lines.join(''));
-            const out = await translateAll(joined, 'ja', 'zh-Hant');
+            const out = apiKey.trim().length > 0
+                ? await translateWithDeepSeek(joined, apiKey.trim())
+                : canTranslate()
+                    ? await translateAll(joined, 'ja', 'zh-Hant')
+                    : null;
+            if (!out) {
+                setError('No key and no built-in translator. Paste a DeepSeek key above.');
+                return;
+            }
             setTranslated(out);
             setStatus(`Translated ${out.length} groups.`);
         } catch (cause) {
@@ -118,7 +128,7 @@ export default function App() {
         } finally {
             setTranslating(false);
         }
-    }, [groups]);
+    }, [apiKey, groups]);
 
     const handleDetect = useCallback(async () => {
         if (!imageUrl) return;
@@ -217,6 +227,19 @@ export default function App() {
                     {translating ? 'Translating' : 'Translate'}
                 </button>
             </div>
+
+            <label className="key">
+                DeepSeek API key
+                <input
+                    type="password"
+                    value={apiKey}
+                    placeholder="sk-..."
+                    onChange={(event) => {
+                        setApiKey(event.target.value);
+                        void chrome.storage.local.set({ [DEEPSEEK_KEY]: event.target.value });
+                    }}
+                />
+            </label>
 
             {error ? <p role="alert">{error}</p> : null}
 
