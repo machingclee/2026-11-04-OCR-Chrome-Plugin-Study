@@ -125,3 +125,8 @@ button[data-busy='true'] {
   pointer-events: none;
   overflow: hidden;
 }
+
+.typeset[data-vertical='true'] {
+  writing-mode: vertical-rl;
+  text-align: start;
+}

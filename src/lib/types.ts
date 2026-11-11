@@ -62,6 +62,8 @@ export type Bubble = {
     width: number;
     height: number;
     score: number;
+    /** A small polygon that follows the balloon edge, in page pixels. */
+    outline: { x: number; y: number }[];
     /** The balloon itself, at prototype resolution. */
     shape: Float32Array;
     shapeSize: number;

@@ -40,7 +40,13 @@ export type DetectRequest = {
 };
 
 /** One speech balloon, in page pixels. */
-export type BubbleData = { x: number; y: number; width: number; height: number };
+export type BubbleData = {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    outline?: { x: number; y: number }[];
+};
 
 /** One reading group: the box that holds it and the text inside, line by line. */
 export type GroupData = {

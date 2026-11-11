@@ -11,8 +11,26 @@ import { canTranslate, translateAll } from './lib/translate';
 import serviceWorkerRequestFactory from './shared/factories/serviceWorkerRequestFactory';
 import { cropSize } from './lib/warp';
 
-type BubbleStroke = { x: number; y: number; width: number; height: number };
+type BubbleStroke = {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    outline?: { x: number; y: number }[];
+};
 type GroupStroke = { x: number; y: number; width: number; height: number; lines: string[] };
+type FitSpan = (element: HTMLSpanElement | null) => void;
+
+/** Shrink the text until it fits its balloon, one pixel at a time. */
+const fitText: FitSpan = (element) => {
+    if (!element) return;
+    let size = Number.parseFloat(element.style.fontSize || '16');
+    element.style.fontSize = `${size}px`;
+    while (size > 7 && (element.scrollHeight > element.clientHeight || element.scrollWidth > element.clientWidth)) {
+        size -= 1;
+        element.style.fontSize = `${size}px`;
+    }
+};
 type LastResult = {
     version?: string;
     imageUrl: string;
@@ -211,21 +229,37 @@ export default function App() {
                         }
                     />
                     {translated
-                        ? groups.map((group, index) => (
-                              <span
-                                  key={`group-${group.x}-${group.y}`}
-                                  className="typeset"
-                                  style={{
-                                      left: `${(group.x / size.width) * 100}%`,
-                                      top: `${(group.y / size.height) * 100}%`,
-                                      width: `${(group.width / size.width) * 100}%`,
-                                      height: `${(group.height / size.height) * 100}%`,
-                                      fontSize: `${Math.max(9, Math.min(18, group.width / 6))}px`,
-                                  }}
-                              >
-                                  {translated[index] ?? group.lines.join('')}
-                              </span>
-                          ))
+                        ? groups.map((group, index) => {
+                              const holder = bubbles.find((bubble) =>
+                                  group.x + group.width / 2 >= bubble.x
+                                  && group.x + group.width / 2 <= bubble.x + bubble.width
+                                  && group.y + group.height / 2 >= bubble.y
+                                  && group.y + group.height / 2 <= bubble.y + bubble.height);
+                              const vertical = group.height > group.width * 1.3;
+                              const clip = holder?.outline && holder.outline.length > 2
+                                  ? `polygon(${holder.outline
+                                        .map((point) => `${((point.x - group.x) / group.width) * 100}% ${((point.y - group.y) / group.height) * 100}%`)
+                                        .join(', ')})`
+                                  : undefined;
+                              return (
+                                  <span
+                                      key={`group-${group.x}-${group.y}`}
+                                      className="typeset"
+                                      data-vertical={vertical}
+                                      ref={fitText}
+                                      style={{
+                                          left: `${(group.x / size.width) * 100}%`,
+                                          top: `${(group.y / size.height) * 100}%`,
+                                          width: `${(group.width / size.width) * 100}%`,
+                                          height: `${(group.height / size.height) * 100}%`,
+                                          fontSize: `${Math.max(9, Math.min(18, group.width / 5))}px`,
+                                          clipPath: clip,
+                                      }}
+                                  >
+                                      {translated[index] ?? group.lines.join('')}
+                                  </span>
+                              );
+                          })
                         : null}
                     {bubbles.map((bubble) => (
                         <span

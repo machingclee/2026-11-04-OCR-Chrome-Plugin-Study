@@ -41,6 +41,45 @@ function intersectionOverUnion(a: Box, b: Box): number {
  * 8400 anchors carries a box, one confidence, and 32 mask coefficients that the
  * prototypes turn into a mask.
  */
+/** Walk the mask outward on a few rays, so the shape becomes a small polygon. */
+function outlineOf(shape: Float32Array, size: number, scale: number, padX: number, padY: number, model: number) {
+    const points: { x: number; y: number }[] = [];
+    let sumX = 0;
+    let sumY = 0;
+    let count = 0;
+    for (let y = 0; y < size; y += 1) {
+        for (let x = 0; x < size; x += 1) {
+            if (shape[y * size + x] <= 0.5) continue;
+            sumX += x;
+            sumY += y;
+            count += 1;
+        }
+    }
+    if (count === 0) return points;
+
+    const centreX = sumX / count;
+    const centreY = sumY / count;
+    const rays = 24;
+    for (let ray = 0; ray < rays; ray += 1) {
+        const angle = (ray / rays) * Math.PI * 2;
+        const stepX = Math.cos(angle);
+        const stepY = Math.sin(angle);
+        let furthest = 0;
+        for (let radius = 1; radius < size; radius += 1) {
+            const x = Math.round(centreX + stepX * radius);
+            const y = Math.round(centreY + stepY * radius);
+            if (x < 0 || y < 0 || x >= size || y >= size) break;
+            if (shape[y * size + x] > 0.5) furthest = radius;
+        }
+        const x = centreX + stepX * furthest;
+        const y = centreY + stepY * furthest;
+        const modelX = (x / size) * model;
+        const modelY = (y / size) * model;
+        points.push({ x: (modelX - padX) / scale, y: (modelY - padY) / scale });
+    }
+    return points;
+}
+
 export async function detectBubbles(bitmap: ImageBitmap): Promise<{ mask: BubbleMask; bubbles: Bubble[] }> {
     const session = await loadBubble();
     const inputName = session.inputNames[0];
@@ -146,6 +185,7 @@ export async function detectBubbles(bitmap: ImageBitmap): Promise<{ mask: Bubble
         width: candidate.box.width / scale,
         height: candidate.box.height / scale,
         score: candidate.score,
+        outline: outlineOf(shapes[id], prototypeSize, scale, padX, padY, size),
         shape: shapes[id],
         shapeSize: prototypeSize,
         shapeScale: scale,

@@ -8,6 +8,7 @@ import { recognizeLine } from '../lib/ocr/recognize';
 import { OFFSCREEN_TARGET } from '../shared/constants';
 import type {
     BoxData,
+    BubbleData,
     DetectResponse,
     GroupData,
     IncomingMessage,
@@ -34,7 +35,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         // reading order never mixes the right page into the left one.
         const pages = splitPages(bitmap);
         const collected: BoxData[] = [];
-        const balloons: { x: number; y: number; width: number; height: number }[] = [];
+        const balloons: BubbleData[] = [];
         let dropped = 0;
         const groups: GroupData[] = [];
 
@@ -75,6 +76,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
                     y: bubble.y + page.y,
                     width: bubble.width,
                     height: bubble.height,
+                    outline: bubble.outline.map((point) => ({ x: point.x + page.x, y: point.y + page.y })),
                 });
             }
 
