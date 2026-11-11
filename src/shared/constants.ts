@@ -28,6 +28,9 @@ export const LAST_RESULT_KEY = 'lastDetection';
  */
 export const RESULT_VERSION = 7;
 
+/** When true, a line outside every block is still kept. */
+export const KEEP_OUTSIDE_KEY = 'keepOutside';
+
 /** Id of the temporary declarativeNetRequest rule that sets Referer. */
 export const REFERER_RULE_ID = 1;
 

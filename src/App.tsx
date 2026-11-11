@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
     CONTENT_SCRIPT_FILE,
+    KEEP_OUTSIDE_KEY,
     RESULT_VERSION,
     LAST_RESULT_KEY,
     PICKED_IMAGE_URL_KEY,
@@ -19,16 +20,18 @@ export default function App() {
     const [status, setStatus] = useState('No image picked yet.');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [keepOutside, setKeepOutside] = useState(false);
 
     useEffect(() => {
         // start working when we open this popup again,
         // at this point our newly picked image url is nonempty.
         Promise.all([
-            chrome.storage.local.get(PICKED_IMAGE_URL_KEY),
+            chrome.storage.local.get([PICKED_IMAGE_URL_KEY, KEEP_OUTSIDE_KEY]),
             chrome.storage.session.get(LAST_RESULT_KEY),
         ])
             .then(([local, session]) => {
                 const pickedImageUrl = local[PICKED_IMAGE_URL_KEY];
+                setKeepOutside(local[KEEP_OUTSIDE_KEY] === true);
                 const lastResult = session[LAST_RESULT_KEY] as LastResult | undefined;
 
                 if (typeof pickedImageUrl !== 'string' || pickedImageUrl.length === 0) {
@@ -105,7 +108,7 @@ export default function App() {
             }
 
             // handled in src/background/index.ts
-            const request = serviceWorkerRequestFactory.ofDetection(targetImageUrl, tabPageUrl);
+            const request = serviceWorkerRequestFactory.ofDetection(targetImageUrl, tabPageUrl, keepOutside);
             const response = (await chrome.runtime.sendMessage(request)) as DetectResponse | undefined;
             return response;
         }
@@ -115,12 +118,25 @@ export default function App() {
             const pageUrl = tab?.url?.startsWith('http') ? tab.url : undefined;
             return pageUrl;
         }
-    }, [imageUrl]);
+    }, [imageUrl, keepOutside]);
 
     return (
         <main>
             <h1>Comic Translator</h1>
             <p>{status}</p>
+
+            <label className="toggle">
+                <input
+                    type="checkbox"
+                    checked={keepOutside}
+                    onChange={(event) => {
+                        const next = event.target.checked;
+                        setKeepOutside(next);
+                        void chrome.storage.local.set({ [KEEP_OUTSIDE_KEY]: next });
+                    }}
+                />
+                Keep text outside bubbles
+            </label>
 
             <div className="actions">
                 <button type="button" onClick={handlePick}>

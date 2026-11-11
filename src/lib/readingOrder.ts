@@ -177,8 +177,12 @@ export function orderForReading(lines: TextLine[]): TextLine[] {
 }
 
 /** One call for the offscreen document: detector boxes in, ordered lines out. */
-export function toOrderedTextLines(detBoxes: Box[], blkBoxes: TextBlock[] = []): TextLine[] {
-    const inside = blkBoxes.length === 0
+export function toOrderedTextLines(
+    detBoxes: Box[],
+    blkBoxes: TextBlock[] = [],
+    keepOutside = false,
+): TextLine[] {
+    const inside = keepOutside || blkBoxes.length === 0
         ? detBoxes
         : detBoxes.filter((box) => blkBoxes.some((block) => centreInside(box, block)));
 

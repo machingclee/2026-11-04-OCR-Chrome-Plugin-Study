@@ -36,6 +36,7 @@ export type DetectRequest = {
     type: 'detect';
     imageUrl: string;
     tabPageUrl?: string;
+    keepOutside?: boolean;
 };
 
 /** Service worker to offscreen document. */
@@ -43,6 +44,7 @@ export type OffscreenDetectRequest = {
     target: typeof OFFSCREEN_TARGET;
     type: 'detect';
     imageUrl: string;
+    keepOutside?: boolean;
 };
 
 /** Offscreen document to service worker. */
