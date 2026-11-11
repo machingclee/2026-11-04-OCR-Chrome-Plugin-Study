@@ -128,6 +128,17 @@ function bubbleBox(bubble: BubbleStroke): GroupStroke {
     };
 }
 
+/** How many groups found a balloon, which is the number that places them. */
+function countWithBalloon(list: GroupStroke[], balloons: BubbleStroke[]): number {
+    return list.filter((group) => {
+        const centreX = group.x + group.width / 2;
+        const centreY = group.y + group.height / 2;
+        return balloons.some((bubble) =>
+            centreX >= bubble.x && centreX <= bubble.x + bubble.width
+            && centreY >= bubble.y && centreY <= bubble.y + bubble.height);
+    }).length;
+}
+
 export default function App() {
     const [imageUrl, setImageUrl] = useState<string | null>(null);
     const [boxes, setBoxes] = useState<BoxData[]>([]);
@@ -411,14 +422,17 @@ export default function App() {
 
             setTranslated(out);
             await applyToPage(out, current);
-            setStatus(`Translated ${out.length} groups and wrote them to the page.`);
+            const withBalloon = countWithBalloon(current, bubbles);
+            setStatus(
+                `Translated ${out.length} groups, ${withBalloon} with a balloon, ${bubbles.length} balloons, wrote them to the page.`,
+            );
             setWrote(true);
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));
         } finally {
             setTranslating(false);
         }
-    }, [applyToPage, deepSeekKey, geminiKey, groups, runDetect, translator]);
+    }, [applyToPage, bubbles, deepSeekKey, geminiKey, groups, runDetect, translator]);
 
     return (
         <main>
