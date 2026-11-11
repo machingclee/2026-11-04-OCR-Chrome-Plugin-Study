@@ -553,7 +553,7 @@ export default function App() {
             {imageUrl ? (
                 <div className="stage" key={boxes?.length || 0}>
                     <img
-                        src={typesetUrl ?? erasedUrl ?? imageUrl}
+                        src={typesetUrl ?? imageUrl}
                         alt="Picked from the page"
                         onLoad={(event) =>
                             setSize({
