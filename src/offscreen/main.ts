@@ -2,8 +2,6 @@ import { detectBoxes, isSessionReady } from '../lib/detector';
 import { detectBubbles } from '../lib/bubble';
 import { cropPreviews } from '../lib/regions';
 import { eraseGlyphs } from '../lib/erase';
-import { inpaintPage } from '../lib/inpaint';
-import { refineMask } from '../lib/mask';
 import { expandToInk } from '../lib/expand';
 import { offsetBox, splitPages } from '../lib/pages';
 import { groupByRegion, toOrderedTextLines } from '../lib/readingOrder';
@@ -174,7 +172,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         // Erase at stroke level instead of filling a white box, so the artwork
         // behind the text survives.
         let erasedUrl: string | null = null;
-        let maskUrl: string | null = null;
+        const maskUrl: string | null = null;
         if (masks.length > 0) {
             const canvas = document.createElement('canvas');
             canvas.width = bitmap.width;
@@ -183,9 +181,8 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             if (context) {
                 context.drawImage(bitmap, 0, 0);
                 const image = context.getImageData(0, 0, canvas.width, canvas.height);
-                // Stage one: refine the mask, so it covers the soft edge and the
-                // small kana the threshold misses.
-                const refined = new Uint8Array(canvas.width * canvas.height);
+                // Erase at stroke level, and only inside the balloon that holds
+                // the line, so the artwork beside a balloon keeps its strokes.
                 for (const entry of masks) {
                     for (const line of entry.lines) {
                         const centreX = line.x + line.width / 2;
@@ -201,63 +198,13 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
                                 return balloon.shape[y * balloon.shapeSize + x] > 0.4;
                             }
                             : undefined;
-                        const part = refineMask([line], entry.mask, canvas.width, canvas.height, allow);
-                        for (let index = 0; index < refined.length; index += 1) {
-                            if (part[index] === 1) refined[index] = 1;
-                        }
-                    }
-                }
-
-                // Stage two: ask the model to fill the holes. A colour fill stays
-                // as the fallback, so a missing model still produces a page.
-                // The model is off until the mask and the composite are right:
-                // a wrong mask erases the artwork and looks worse than a fill.
-                const USE_INPAINT = false;
-                let painted: ImageData | null = null;
-                if (USE_INPAINT) {
-                    try {
-                        painted = await inpaintPage(image, refined);
-                    } catch {
-                        painted = null;
-                    }
-                }
-
-                if (painted) {
-                    for (let index = 0; index < refined.length; index += 1) {
-                        if (refined[index] !== 1) continue;
-                        const offset = index * 4;
-                        image.data[offset] = painted.data[offset];
-                        image.data[offset + 1] = painted.data[offset + 1];
-                        image.data[offset + 2] = painted.data[offset + 2];
-                    }
-                } else {
-                    for (const entry of masks) {
-                        for (const line of entry.lines) eraseGlyphs(image, line, entry.mask);
+                        eraseGlyphs(image, line, entry.mask, allow);
                     }
                 }
 
                 context.putImageData(image, 0, 0);
                 erasedUrl = canvas.toDataURL('image/webp', 0.9);
 
-                // A black and white copy of the mask, so the erase can be judged
-                // without guessing which stage went wrong.
-                const debugCanvas = document.createElement('canvas');
-                debugCanvas.width = canvas.width;
-                debugCanvas.height = canvas.height;
-                const debugContext = debugCanvas.getContext('2d');
-                if (debugContext) {
-                    const debugImage = debugContext.createImageData(canvas.width, canvas.height);
-                    for (let index = 0; index < refined.length; index += 1) {
-                        const value = refined[index] === 1 ? 255 : 0;
-                        const offset = index * 4;
-                        debugImage.data[offset] = value;
-                        debugImage.data[offset + 1] = value;
-                        debugImage.data[offset + 2] = value;
-                        debugImage.data[offset + 3] = 255;
-                    }
-                    debugContext.putImageData(debugImage, 0, 0);
-                    maskUrl = debugCanvas.toDataURL('image/png');
-                }
             }
         }
 
