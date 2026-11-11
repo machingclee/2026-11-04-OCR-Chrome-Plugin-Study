@@ -16,16 +16,19 @@ export function angleOf(box: Box): number {
     return box.angle ?? 0;
 }
 
-/** Size of the upright crop: length along the text by thickness across it. */
+/** Size of the upright crop, keeping the orientation the page already had. */
 export function cropSize(box: Box): { width: number; height: number } {
     const angle = angleOf(box);
     if (Math.abs(angle) < 0.01) {
         return { width: Math.max(1, Math.round(box.width)), height: Math.max(1, Math.round(box.height)) };
     }
-    return {
-        width: Math.max(1, Math.round(box.lineLength ?? box.width)),
-        height: Math.max(1, Math.round(box.lineThickness ?? box.height)),
-    };
+
+    const length = box.lineLength ?? box.width;
+    const thickness = box.lineThickness ?? box.height;
+    const tall = box.height >= box.width;
+    return tall
+        ? { width: Math.max(1, Math.round(thickness)), height: Math.max(1, Math.round(length)) }
+        : { width: Math.max(1, Math.round(length)), height: Math.max(1, Math.round(thickness)) };
 }
 
 export function uprightFrame(box: Box): LineUpright {

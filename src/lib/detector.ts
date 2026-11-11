@@ -178,7 +178,12 @@ function toDetBoxes(map: Float32Array, prepared: Prepared): Box[] {
         if (right - left < 4 || bottom - top < 4) continue;
 
         const rect = minAreaRect(points);
-        const angle = rect ? foldAngle(rect.angle) : 0;
+        // The angle is stored as a deviation from the nearer page axis. A column
+        // therefore gets an angle near zero, and the recogniser's own quarter
+        // turn is not applied twice.
+        let angle = rect ? foldAngle(rect.angle) : 0;
+        if (angle > Math.PI / 4) angle -= Math.PI / 2;
+        else if (angle <= -Math.PI / 4) angle += Math.PI / 2;
 
         boxes.push({
             x: left,
