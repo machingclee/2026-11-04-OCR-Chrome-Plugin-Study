@@ -166,6 +166,9 @@ function toDetBoxes(map: Float32Array, prepared: Prepared): Box[] {
         const score = sum / count;
         if (score < DETECTOR_MIN_MEAN_SCORE) continue;
 
+        const fill = count / ((maxX - minX + 1) * (maxY - minY + 1));
+        if (fill < DETECTOR_MIN_FILL) continue;
+
         const x = (minX - prepared.padX) / prepared.scale;
         const y = (minY - prepared.padY) / prepared.scale;
         const width = (maxX - minX + 1) / prepared.scale;
@@ -202,6 +205,12 @@ function toDetBoxes(map: Float32Array, prepared: Prepared): Box[] {
     return lines;
 }
 
+/**
+ * A line of text fills most of its box in the det map, because the map marks a
+ * solid core. A panel border is a thin ring, so it fills almost none of the box
+ * it produces and this drops it.
+ */
+const DETECTOR_MIN_FILL = 0.35;
 const BLOCK_SCORE = 0.35;
 const BLOCK_NMS = 0.4;
 
