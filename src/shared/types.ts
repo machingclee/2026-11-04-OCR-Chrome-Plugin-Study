@@ -93,6 +93,7 @@ export type DetectResponse =
           imageHeight: number;
           groupedLines: number;
           groups: GroupData[];
+          erasedUrl: string | null;
           bubbles: BubbleData[];
       }
     | { ok: false; error: string };

@@ -52,6 +52,7 @@ type LastResult = {
     previews?: string[];
     bubbles?: BubbleStroke[];
     groups?: GroupStroke[];
+    erasedUrl?: string | null;
     ms: number;
 };
 
@@ -88,6 +89,7 @@ export default function App() {
     const [leading, setLeading] = useState(1.15);
     const [weight, setWeight] = useState<'normal' | 'bold'>('normal');
     const [wrote, setWrote] = useState(false);
+    const [erasedUrl, setErasedUrl] = useState<string | null>(null);
 
     useEffect(() => {
         if (!translated) return;
@@ -134,6 +136,7 @@ export default function App() {
                     setPreviews(Array.isArray(lastResult.previews) ? lastResult.previews : []);
                     setBubbles(Array.isArray(lastResult.bubbles) ? lastResult.bubbles : []);
                     setGroups(Array.isArray(lastResult.groups) ? lastResult.groups : []);
+                    setErasedUrl(typeof lastResult.erasedUrl === 'string' ? lastResult.erasedUrl : null);
                     setStatus(`Restored ${lastResult.boxes.length} boxes from ${lastResult.ms} ms.`);
                     return;
                 }
@@ -162,7 +165,11 @@ export default function App() {
 
         // The page image comes from another origin, so drawing the <img> would
         // taint the canvas. Fetching the bytes gives us a clean source instead.
-        const response = await fetch(imageUrl, { credentials: 'include' });
+        const source = erasedUrl ?? imageUrl;
+        let response = await fetch(source, { credentials: 'include' });
+        if (!response.ok && erasedUrl) {
+            response = await fetch(imageUrl, { credentials: 'include' });
+        }
         if (!response.ok) throw new Error(`Image fetch failed with ${response.status}.`);
         const bitmap = await createImageBitmap(await response.blob());
 
@@ -195,6 +202,7 @@ export default function App() {
                 minSize: 8,
                 maxSize: 96,
             },
+            erasedUrl !== null,
         );
 
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -205,7 +213,7 @@ export default function App() {
             dataUrl,
         });
         bitmap.close();
-    }, [boxes, bubbles, font, imageUrl, leading, weight]);
+    }, [boxes, bubbles, erasedUrl, font, imageUrl, leading, weight]);
 
     const handleUndo = useCallback(async () => {
         try {
@@ -252,6 +260,7 @@ export default function App() {
             setPreviews(response.previews);
             setBubbles(response.bubbles ?? []);
             setGroups(response.groups ?? []);
+            setErasedUrl(response.erasedUrl ?? null);
             setTranslated(null);
             const vertical = response.boxes.filter((box) => box.direction === 'vertical').length;
             const ruby = response.boxes.reduce((sum, box) => sum + box.ruby.length, 0);

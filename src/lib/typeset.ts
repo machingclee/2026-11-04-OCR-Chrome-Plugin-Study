@@ -168,6 +168,7 @@ export function renderTypeset(
     groups: Paragraph[],
     ruby: { x: number; y: number; width: number; height: number }[] = [],
     options: TypesetOptions = DEFAULT_OPTIONS,
+    clean = false,
 ): string {
     const canvas = document.createElement('canvas');
     canvas.width = width;
@@ -181,6 +182,7 @@ export function renderTypeset(
 
     // Grow each fill the way the target dilates its mask, so the small kana
     // sitting beside a column are cleared with the column itself.
+    if (!clean) {
     for (const group of groups) {
         const margin = Math.max(2, Math.min(group.box.width, group.box.height) * 0.06);
         context.save();
@@ -197,6 +199,7 @@ export function renderTypeset(
     // Ruby that was pulled off a line keeps its own box, and it is still ink.
     for (const box of ruby) {
         context.fillRect(box.x - 1, box.y - 1, box.width + 2, box.height + 2);
+    }
     }
 
     context.fillStyle = '#111111';

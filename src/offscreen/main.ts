@@ -1,6 +1,7 @@
 import { detectBoxes, isSessionReady } from '../lib/detector';
 import { detectBubbles } from '../lib/bubble';
 import { cropPreviews } from '../lib/regions';
+import { eraseGlyphs } from '../lib/erase';
 import { expandToInk } from '../lib/expand';
 import { offsetBox, splitPages } from '../lib/pages';
 import { groupByRegion, toOrderedTextLines } from '../lib/readingOrder';
@@ -14,6 +15,7 @@ import type {
     IncomingMessage,
     OffscreenDetectRequest,
 } from '../shared/types';
+import type { Box, TextMask } from '../lib/types';
 import serviceWorkerResponseFactory from '../shared/factories/serviceWorkerResponseFactory';
 
 /** Each crop is a data url in storage, so the strip stops at this many. */
@@ -44,6 +46,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         const balloons: BubbleData[] = [];
         let dropped = 0;
         const groups: GroupData[] = [];
+        const masks: { mask: TextMask; lines: Box[] }[] = [];
 
         for (const page of pages) {
             const slice = pages.length === 1
@@ -86,6 +89,18 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
                 });
             }
 
+            if (detected.mask) {
+                masks.push({
+                    mask: {
+                        data: detected.mask.data,
+                        scale: detected.mask.scale,
+                        padX: detected.mask.padX + page.x * detected.mask.scale,
+                        padY: detected.mask.padY + page.y * detected.mask.scale,
+                    },
+                    lines,
+                });
+            }
+
             const perGroup: string[][] = groupBoxes.map(() => []);
             for (const line of lines) {
                 const recognised = await recognizeLine(bitmap, line, line.direction === 'vertical')
@@ -125,6 +140,25 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
 
         }
 
+        // Erase at stroke level instead of filling a white box, so the artwork
+        // behind the text survives.
+        let erasedUrl: string | null = null;
+        if (masks.length > 0) {
+            const canvas = document.createElement('canvas');
+            canvas.width = bitmap.width;
+            canvas.height = bitmap.height;
+            const context = canvas.getContext('2d', { willReadFrequently: true });
+            if (context) {
+                context.drawImage(bitmap, 0, 0);
+                const image = context.getImageData(0, 0, canvas.width, canvas.height);
+                for (const entry of masks) {
+                    for (const line of entry.lines) eraseGlyphs(image, line, entry.mask);
+                }
+                context.putImageData(image, 0, 0);
+                erasedUrl = canvas.toDataURL('image/webp', 0.9);
+            }
+        }
+
         const previews = cropPreviews(bitmap, collected.slice(0, MAX_PREVIEWS));
         return {
             ok: true,
@@ -134,6 +168,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             imageHeight: bitmap.height,
             groupedLines: collected.length - dropped,
             groups,
+            erasedUrl,
             bubbles: balloons,
             ms: Math.round(performance.now() - started),
             warm
