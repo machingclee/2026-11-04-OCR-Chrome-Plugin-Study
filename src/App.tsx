@@ -127,33 +127,29 @@ export default function App() {
         }
     }, []);
 
-    const handleWriteBack = useCallback(async () => {
-        if (!translated || groups.length === 0 || !imageUrl) return;
+    /** Paint the finished page and put it in place of the picked image. */
+    const applyToPage = useCallback(async (texts: string[]): Promise<void> => {
         const source = document.querySelector<HTMLImageElement>('.stage img');
-        if (!source) return;
+        if (!source || !imageUrl) throw new Error('The picked image is not on screen.');
 
-        try {
-            const dataUrl = renderTypeset(
-                source,
-                source.naturalWidth,
-                source.naturalHeight,
-                groups.map((group, index) => ({
-                    box: group,
-                    text: translated[index] ?? group.lines.join(''),
-                })),
-            );
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            if (!tab?.id) throw new Error('There is no active tab.');
-            await chrome.tabs.sendMessage(tab.id, {
-                type: REPLACE_IMAGE_MESSAGE,
-                url: imageUrl,
-                dataUrl,
-            });
-            setStatus('Wrote the translation back to the page.');
-        } catch (cause) {
-            setError(cause instanceof Error ? cause.message : String(cause));
-        }
-    }, [groups, imageUrl, translated]);
+        const dataUrl = renderTypeset(
+            source,
+            source.naturalWidth,
+            source.naturalHeight,
+            groups.map((group, index) => ({
+                box: group,
+                text: texts[index] ?? group.lines.join(''),
+            })),
+        );
+
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab?.id) throw new Error('There is no active tab.');
+        await chrome.tabs.sendMessage(tab.id, {
+            type: REPLACE_IMAGE_MESSAGE,
+            url: imageUrl,
+            dataUrl,
+        });
+    }, [groups, imageUrl]);
 
     const handleSaveSettings = useCallback(async () => {
         await chrome.storage.local.set({
@@ -195,13 +191,14 @@ export default function App() {
                 return;
             }
             setTranslated(out);
-            setStatus(`Translated ${out.length} groups.`);
+            await applyToPage(out);
+            setStatus(`Translated ${out.length} groups and wrote them to the page.`);
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));
         } finally {
             setTranslating(false);
         }
-    }, [deepSeekKey, geminiKey, groups, translator]);
+    }, [applyToPage, deepSeekKey, geminiKey, groups, translator]);
 
     const handleDetect = useCallback(async () => {
         if (!imageUrl) return;
@@ -297,11 +294,9 @@ export default function App() {
                     disabled={boxes.length === 0 || translating}
                     title={canTranslate() ? undefined : 'This browser ships no translator.'}
                 >
-                    {translating ? 'Translating' : 'Translate'}
+                    {translating ? 'Translating' : 'Translate the page'}
                 </button>
-                <button type="button" onClick={handleWriteBack} disabled={!translated}>
-                    Write back to the page
-                </button>
+
             </div>
 
             <div className="keys">
