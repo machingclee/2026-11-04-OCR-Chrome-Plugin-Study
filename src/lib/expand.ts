@@ -2,7 +2,7 @@ import type { Box, TextMask } from './types';
 
 const MODEL_SIZE = 1024;
 const STEP = 3;
-const INK = 0.1;
+const INK = 0.08;
 
 function inkAt(mask: TextMask, pageX: number, pageY: number): number {
     const x = Math.round(pageX * mask.scale + mask.padX);
@@ -38,8 +38,8 @@ function bandInk(mask: TextMask, box: Box, offset: number, side: 'start' | 'end'
  */
 function grow(box: Box, mask: TextMask, side: 'start' | 'end', vertical: boolean): number {
     const thickness = vertical ? box.width : box.height;
-    const maxExtra = Math.round(thickness * 2.2);
-    const gapBudget = Math.round(thickness * 0.55);
+    const maxExtra = Math.round(thickness * 3);
+    const gapBudget = Math.round(thickness * 0.8);
 
     let lastInk = 0;
     for (let offset = STEP; offset <= maxExtra; offset += STEP) {
