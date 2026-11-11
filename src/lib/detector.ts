@@ -32,7 +32,9 @@ export function loadDetector(): Promise<ort.InferenceSession> {
     return sessionPromise;
 }
 
-async function prepareInput(bitmap: ImageBitmap): Promise<Prepared> {
+type PixelSource = ImageBitmap | HTMLCanvasElement;
+
+async function prepareInput(bitmap: PixelSource): Promise<Prepared> {
     const scale = Math.min(DETECTOR_INPUT_SIZE / bitmap.width, DETECTOR_INPUT_SIZE / bitmap.height);
     const drawWidth = Math.max(1, Math.round(bitmap.width * scale));
     const drawHeight = Math.max(1, Math.round(bitmap.height * scale));
@@ -390,12 +392,29 @@ function pickSegMask(outputs: Record<string, ort.Tensor>): Float32Array | null {
     return null;
 }
 
-export async function detectBoxes(bitmap: ImageBitmap): Promise<DetectionResult> {
+type Pass = {
+    boxes: Box[];
+    blocks: TextBlock[];
+    mask: { data: Float32Array; scale: number; padX: number; padY: number } | null;
+};
+
+/** Sample one tile of the page, so small strokes still reach the model. */
+function tileOf(bitmap: ImageBitmap, x: number, y: number, width: number, height: number): HTMLCanvasElement {
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(width));
+    canvas.height = Math.max(1, Math.round(height));
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('The browser refused a 2D context for a tile.');
+    context.drawImage(bitmap, x, y, width, height, 0, 0, canvas.width, canvas.height);
+    return canvas;
+}
+
+async function runPass(source: PixelSource): Promise<Pass> {
     const session = await loadDetector();
     const inputName = session.inputNames[0];
     if (!inputName) throw new Error('The detector exposes no input.');
 
-    const prepared = await prepareInput(bitmap);
+    const prepared = await prepareInput(source);
     const outputs = await session.run({ [inputName]: prepared.tensor });
     const typed = outputs as Record<string, ort.Tensor>;
     const map = pickTextMap(typed);
@@ -404,8 +423,59 @@ export async function detectBoxes(bitmap: ImageBitmap): Promise<DetectionResult>
     const blockTensor = pickBlockTensor(typed);
     const seg = pickSegMask(typed);
     return {
-        detBoxes: toDetBoxes(map, prepared),
-        blkBoxes: blockTensor ? toBlkBoxes(blockTensor, prepared) : [],
+        boxes: toDetBoxes(map, prepared),
+        blocks: blockTensor ? toBlkBoxes(blockTensor, prepared) : [],
         mask: seg ? { data: seg, scale: prepared.scale, padX: prepared.padX, padY: prepared.padY } : null,
     };
+}
+
+function overlapRatio(a: Box, b: Box): number {
+    const left = Math.max(a.x, b.x);
+    const top = Math.max(a.y, b.y);
+    const right = Math.min(a.x + a.width, b.x + b.width);
+    const bottom = Math.min(a.y + a.height, b.y + b.height);
+    if (right <= left || bottom <= top) return 0;
+    const shared = (right - left) * (bottom - top);
+    return shared / Math.min(a.width * a.height, b.width * b.height);
+}
+
+/**
+ * A full page shrinks every stroke when it is letterboxed to 1024, and a thin
+ * column can fall below what the model sees. Splitting the page into overlapping
+ * tiles gives each part its own 1024, which is what a small line needs.
+ */
+export async function detectBoxes(bitmap: ImageBitmap, tiles = 1): Promise<DetectionResult> {
+    if (tiles <= 1) {
+        const single = await runPass(bitmap);
+        return { detBoxes: single.boxes, blkBoxes: single.blocks, mask: single.mask };
+    }
+
+    const overlap = 0.12;
+    const step = 1 / tiles;
+    const kept: Box[] = [];
+    const blocks: TextBlock[] = [];
+
+    for (let row = 0; row < tiles; row += 1) {
+        for (let column = 0; column < tiles; column += 1) {
+            const width = step * (1 + overlap);
+            const height = step * (1 + overlap);
+            const x = Math.max(0, (column * step - overlap / 2) * bitmap.width);
+            const y = Math.max(0, (row * step - overlap / 2) * bitmap.height);
+            const w = Math.min(bitmap.width - x, width * bitmap.width);
+            const h = Math.min(bitmap.height - y, height * bitmap.height);
+
+            const pass = await runPass(tileOf(bitmap, x, y, w, h));
+            for (const box of pass.boxes) {
+                const shifted = { ...box, x: box.x + x, y: box.y + y };
+                if (kept.some((other) => overlapRatio(shifted, other) > 0.5)) continue;
+                kept.push(shifted);
+            }
+            for (const block of pass.blocks) {
+                blocks.push({ ...block, x: block.x + x, y: block.y + y });
+            }
+        }
+    }
+
+    const first = await runPass(bitmap);
+    return { detBoxes: kept.length > 0 ? kept : first.boxes, blkBoxes: blocks, mask: first.mask };
 }

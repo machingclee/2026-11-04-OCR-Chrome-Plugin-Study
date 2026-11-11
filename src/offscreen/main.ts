@@ -27,7 +27,9 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         }
 
         const bitmap = await createImageBitmap(await response.blob());
-        const detected = await detectBoxes(bitmap);
+        // A page taller than this loses too much detail in one 1024 square pass.
+        const tiles = Math.max(bitmap.width, bitmap.height) > 1200 ? 2 : 1;
+        const detected = await detectBoxes(bitmap, tiles);
         // The block gate runs later, against the balloon masks, which are the
         // better evidence for "is this line inside a balloon".
         const ordered = toOrderedTextLines(detected.detBoxes, [], true);
