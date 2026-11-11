@@ -205,21 +205,28 @@ export function groupByRegion(
     blocks: TextBlock[],
     strict: boolean,
 ): { lines: TextLine[]; grouped: number; dropped: number; regions: number; boxes: Box[] } {
-    // The target project prefers the block head and falls back to the balloons,
-    // so the two never argue about which region a line belongs to.
-    const regions: Region[] = blocks.length > 0
-        ? blocks.map(regionOfBlock)
-        : bubbles.map(regionOfBalloon);
+    // A balloon is one speaker and one sentence, so it wins over the block that
+    // surrounds it. A block is the fallback for text with no balloon at all.
+    const balloons = bubbles.map(regionOfBalloon);
+    const regions: Region[] = balloons.length > 0
+        ? [...balloons, ...blocks.map(regionOfBlock)]
+        : blocks.map(regionOfBlock);
 
     const groups = new Map<string, TextLine[]>();
     const loose: TextLine[] = [];
 
     for (const line of lines) {
         let best: Region | null = null;
+        let fallback: Region | null = null;
         for (const region of regions) {
             if (!region.cover(line)) continue;
-            if (!best || region.width * region.height < best.width * best.height) best = region;
+            if (region.id.startsWith('balloon-')) {
+                if (!best || region.width * region.height < best.width * best.height) best = region;
+            } else if (!fallback || region.width * region.height < fallback.width * fallback.height) {
+                fallback = region;
+            }
         }
+        if (!best) best = fallback;
         if (!best) {
             loose.push(line);
             continue;

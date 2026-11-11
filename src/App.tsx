@@ -140,11 +140,19 @@ export default function App() {
             bitmap,
             bitmap.width,
             bitmap.height,
-            list.map((group, index) => ({
-                box: group,
-                text: answers[index]?.text ?? group.lines.join(''),
-                columns: answers[index]?.columns,
-            })),
+            list.map((group, index) => {
+                const holder = bubbles.find((bubble) =>
+                    group.x + group.width / 2 >= bubble.x
+                    && group.x + group.width / 2 <= bubble.x + bubble.width
+                    && group.y + group.height / 2 >= bubble.y
+                    && group.y + group.height / 2 <= bubble.y + bubble.height);
+                return {
+                    box: group,
+                    text: answers[index]?.text ?? group.lines.join(''),
+                    columns: answers[index]?.columns,
+                    outline: holder?.outline,
+                };
+            }),
             ruby,
         );
 
@@ -156,7 +164,7 @@ export default function App() {
             dataUrl,
         });
         bitmap.close();
-    }, [boxes, imageUrl]);
+    }, [boxes, bubbles, imageUrl]);
 
     const handleSaveSettings = useCallback(async () => {
         await chrome.storage.local.set({

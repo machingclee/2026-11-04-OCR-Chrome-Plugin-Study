@@ -1,9 +1,27 @@
 import type { GroupData } from '../shared/types';
 
-type Paragraph = { box: GroupData; text: string; columns?: string[] };
+type Paragraph = { box: GroupData; text: string; columns?: string[]; outline?: { x: number; y: number }[] };
 
 function isVertical(box: { width: number; height: number }): boolean {
     return box.height > box.width * 1.3;
+}
+
+/** Keep the paint inside the balloon, so nothing spills over the artwork. */
+function clipTo(context: CanvasRenderingContext2D, group: Paragraph): void {
+    const outline = group.outline;
+    if (!outline || outline.length < 3) {
+        context.beginPath();
+        context.rect(group.box.x, group.box.y, group.box.width, group.box.height);
+        context.clip();
+        return;
+    }
+    context.beginPath();
+    outline.forEach((point, index) => {
+        if (index === 0) context.moveTo(point.x, point.y);
+        else context.lineTo(point.x, point.y);
+    });
+    context.closePath();
+    context.clip();
 }
 
 /** Break a string into lines that fit the width of the box. */
@@ -105,13 +123,16 @@ export function renderTypeset(
     // Grow each fill the way the target dilates its mask, so the small kana
     // sitting beside a column are cleared with the column itself.
     for (const group of groups) {
-        const margin = Math.max(2, Math.min(group.box.width, group.box.height) * 0.12);
+        const margin = Math.max(2, Math.min(group.box.width, group.box.height) * 0.06);
+        context.save();
+        clipTo(context, group);
         context.fillRect(
             group.box.x - margin,
             group.box.y - margin,
             group.box.width + margin * 2,
             group.box.height + margin * 2,
         );
+        context.restore();
     }
 
     // Ruby that was pulled off a line keeps its own box, and it is still ink.
@@ -122,8 +143,11 @@ export function renderTypeset(
     context.fillStyle = '#111111';
     context.textAlign = 'left';
     for (const group of groups) {
+        context.save();
+        clipTo(context, group);
         if (isVertical(group.box)) drawVertical(context, group.box, group.text, group.columns);
         else drawHorizontal(context, group.box, group.text);
+        context.restore();
     }
 
     return canvas.toDataURL('image/png');
