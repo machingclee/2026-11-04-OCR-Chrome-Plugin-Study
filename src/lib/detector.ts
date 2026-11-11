@@ -106,6 +106,11 @@ function unclip(box: Box): Box {
         width: box.width + distance * 2,
         height: box.height + distance * 2,
         score: box.score,
+        angle: box.angle,
+        // The rotated box has to grow with the axis aligned one, or the drawn
+        // box and the crop disagree about how thick the line is.
+        lineLength: box.lineLength === undefined ? undefined : box.lineLength + distance * 2,
+        lineThickness: box.lineThickness === undefined ? undefined : box.lineThickness + distance * 2,
     };
 }
 
