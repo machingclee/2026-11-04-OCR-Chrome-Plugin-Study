@@ -459,6 +459,20 @@ export default function App() {
                 </div>
             ) : null}
 
+            {groups.length > 0 ? (
+                <section className="groups">
+                    <h2>Reading groups</h2>
+                    <ol>
+                        {groups.map((group, index) => (
+                            <li key={`${group.x}-${group.y}`}>
+                                <p className="source">{group.lines.join('') || 'no text'}</p>
+                                {translated ? <p className="target">{translated[index]?.text ?? ''}</p> : null}
+                            </li>
+                        ))}
+                    </ol>
+                </section>
+            ) : null}
+
             {previews.length > 0 ? (
                 <section className="regions">
                     <h2>Text regions</h2>

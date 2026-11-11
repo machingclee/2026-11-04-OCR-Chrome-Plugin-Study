@@ -148,3 +148,19 @@ button[data-busy='true'] {
 .keys .save {
   justify-self: start;
 }
+
+.groups ol {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.groups .source {
+  margin: 0;
+  color: #6a6a6a;
+}
+
+.groups .target {
+  margin: 0 0 6px;
+}
