@@ -24,7 +24,6 @@ export const LAST_RESULT_KEY = 'lastDetection';
 
 
 /** When true, a line outside every block is still kept. */
-export const KEEP_OUTSIDE_KEY = 'keepOutside';
 /** Stored in the browser only, and sent to DeepSeek by the extension itself. */
 export const DEEPSEEK_KEY = 'deepseekKey';
 /** The popup asks the page to show its finished image. */

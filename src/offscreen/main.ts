@@ -66,7 +66,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
                 ordered,
                 bubbles ? bubbles.bubbles : [],
                 detected.blkBoxes,
-                request.keepOutside !== true,
+                false,
             );
             dropped += grouped.dropped;
             const groupBoxes = grouped.boxes.map((box) => offsetBox(box, page));
