@@ -1,7 +1,6 @@
 import { detectBoxes, isSessionReady } from '../lib/detector';
 import { detectBubbles } from '../lib/bubble';
 import { cropPreviews } from '../lib/regions';
-import { eraseGlyphs } from '../lib/erase';
 import { expandToInk } from '../lib/expand';
 import { groupByRegion, toOrderedTextLines } from '../lib/readingOrder';
 import { recognizeLine } from '../lib/ocr/recognize';
@@ -61,36 +60,36 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             ...expandToInk(line, detected.mask),
         }));
 
-        // Erase in the space the mask was measured in, which is this same page.
+        // The boxes are good, so the erase is simply a white fill of each one.
+        // Balloon interiors are paper, so this is what a letterer would do: lift
+        // the old text off the page, then set the new text in the same place.
         let erasedUrl: string | null = null;
-        if (detected.mask) {
+        {
             const canvas = document.createElement('canvas');
             canvas.width = bitmap.width;
             canvas.height = bitmap.height;
-            const context = canvas.getContext('2d', { willReadFrequently: true });
+            const context = canvas.getContext('2d');
             if (context) {
                 context.drawImage(bitmap, 0, 0);
-                const image = context.getImageData(0, 0, canvas.width, canvas.height);
-
+                context.fillStyle = '#ffffff';
+                const pad = 2;
                 for (const line of lines) {
-                    const centreX = line.x + line.width / 2;
-                    const centreY = line.y + line.height / 2;
-                    const balloon = balloonList.find((item) =>
-                        centreX >= item.x && centreX <= item.x + item.width
-                        && centreY >= item.y && centreY <= item.y + item.height);
-                    const allow = balloon
-                        ? (pageX: number, pageY: number) => {
-                            const x = Math.round(pageX * balloon.shapeScale + balloon.shapePadX);
-                            const y = Math.round(pageY * balloon.shapeScale + balloon.shapePadY);
-                            if (x < 0 || y < 0 || x >= balloon.shapeSize || y >= balloon.shapeSize) return false;
-                            return balloon.shape[y * balloon.shapeSize + x] > 0.4;
-                        }
-                        : undefined;
-                    eraseGlyphs(image, line, detected.mask, allow);
+                    context.fillRect(
+                        line.x - pad,
+                        line.y - pad,
+                        line.width + pad * 2,
+                        line.height + pad * 2,
+                    );
+                    for (const ruby of line.ruby) {
+                        context.fillRect(
+                            ruby.x - pad,
+                            ruby.y - pad,
+                            ruby.width + pad * 2,
+                            ruby.height + pad * 2,
+                        );
+                    }
                 }
-
-                context.putImageData(image, 0, 0);
-                erasedUrl = canvas.toDataURL('image/webp', 0.9);
+                erasedUrl = canvas.toDataURL('image/webp', 0.92);
             }
         }
 
