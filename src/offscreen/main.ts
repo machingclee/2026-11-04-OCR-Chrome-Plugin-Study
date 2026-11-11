@@ -38,6 +38,8 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             ok: true,
             boxes,
             previews,
+            imageWidth: bitmap.width,
+            imageHeight: bitmap.height,
             ms: Math.round(performance.now() - started),
             warm
         };
