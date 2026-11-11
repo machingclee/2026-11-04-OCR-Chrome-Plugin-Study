@@ -133,6 +133,10 @@ export default function App() {
                 out = translator === 'gemini'
                     ? await translateWithGemini(joined, key)
                     : await translateWithDeepSeek(joined, key);
+            } else if (canTranslate()) {
+                // No key yet, so fall back to the translator the browser ships.
+                out = await translateAll(joined, 'ja', 'zh-Hant');
+                setStatus('No key, so the browser translator did the work.');
             }
 
             if (!out) {
