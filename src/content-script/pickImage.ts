@@ -1,4 +1,4 @@
-import { PICKED_IMAGE_URL_KEY, REPLACE_IMAGE_MESSAGE } from '../shared/constants';
+import { PICKED_IMAGE_URL_KEY, REPLACE_IMAGE_MESSAGE, UNDO_IMAGE_MESSAGE } from '../shared/constants';
 import { HIGHLIGHT_ID, IMAGE_URL_PATTERN, SHIELD_ID, TOAST_ID } from './constants';
 
 
@@ -258,6 +258,9 @@ function start(): void {
 
 type ReplaceMessage = { type?: string; url?: string; dataUrl?: string };
 
+/** The page image we swapped, so it can be put back. */
+let replacedImage: { element: HTMLImageElement; src: string; srcset: string | null } | null = null;
+
 /** Put the finished image in place of the one the page shows. */
 chrome.runtime.onMessage.addListener((message: ReplaceMessage) => {
     if (!message || message.type !== REPLACE_IMAGE_MESSAGE) return false;
@@ -273,10 +276,30 @@ chrome.runtime.onMessage.addListener((message: ReplaceMessage) => {
         return false;
     }
 
+    replacedImage = {
+        element: target,
+        src: target.src,
+        srcset: target.getAttribute('srcset'),
+    };
     target.removeAttribute('srcset');
     target.removeAttribute('sizes');
     target.src = dataUrl;
     showToast('Replaced the page image with the translation.');
+    return false;
+});
+
+/** Put the page image back the way it was before the translation. */
+chrome.runtime.onMessage.addListener((message: ReplaceMessage) => {
+    if (!message || message.type !== UNDO_IMAGE_MESSAGE) return false;
+    if (!replacedImage) {
+        showToast('There is nothing to undo.');
+        return false;
+    }
+    const { element, src, srcset } = replacedImage;
+    element.src = src;
+    if (srcset) element.setAttribute('srcset', srcset);
+    replacedImage = null;
+    showToast('Put the original image back.');
     return false;
 });
 

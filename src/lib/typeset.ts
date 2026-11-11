@@ -3,6 +3,18 @@ import { canStartLine, safeBreak, squeeze, toVertical } from './punct';
 
 type Paragraph = { box: GroupData; text: string; columns?: string[]; outline?: { x: number; y: number }[] };
 
+export type TypesetOptions = {
+    /** The font family the page is lettered in. */
+    family: string;
+    /** Multiplier for the gap between lines, 1 is tight and 1.4 is airy. */
+    leading: number;
+};
+
+const DEFAULT_OPTIONS: TypesetOptions = {
+    family: 'system-ui, "PingFang TC", sans-serif',
+    leading: 1.15,
+};
+
 function isVertical(box: { width: number; height: number }): boolean {
     return box.height > box.width * 1.3;
 }
@@ -57,30 +69,39 @@ function inner(box: GroupData): { x: number; y: number; width: number; height: n
     };
 }
 
-function drawHorizontal(context: CanvasRenderingContext2D, box: GroupData, text: string): void {
+function drawHorizontal(context: CanvasRenderingContext2D, box: GroupData, text: string, options: TypesetOptions): void {
     const area = inner(box);
     // Start small enough that a short line cannot turn into a headline.
-    let size = Math.max(8, Math.min(area.width, area.height) / 4);
-    let lines: string[] = [];
-
-    while (size > 7) {
-        context.font = `${size}px system-ui, sans-serif`;
-        lines = wrap(context, text, area.width);
-        if (lines.length * size * 1.2 <= area.height) break;
-        size -= 1;
+    // Binary search the largest size that still fits, so short lines grow.
+    let low = 7;
+    let high = Math.max(8, Math.min(area.width, area.height));
+    let best = 7;
+    let bestLines: string[] = [];
+    while (low <= high) {
+        const size = Math.floor((low + high) / 2);
+        context.font = `${size}px ${options.family}`;
+        const lines = wrap(context, text, area.width);
+        if (lines.length * size * options.leading <= area.height) {
+            best = size;
+            bestLines = lines;
+            low = size + 1;
+        } else {
+            high = size - 1;
+        }
     }
 
-    context.font = `${size}px system-ui, sans-serif`;
-    const total = lines.length * size * 1.2;
-    let y = area.y + (area.height - total) / 2 + size;
+    context.font = `${best}px ${options.family}`;
+    const lines = bestLines.length > 0 ? bestLines : wrap(context, text, area.width);
+    const total = lines.length * best * options.leading;
+    let y = area.y + (area.height - total) / 2 + best;
     for (const line of lines) {
         const width = context.measureText(line).width;
         context.fillText(line, area.x + (area.width - width) / 2, y);
-        y += size * 1.2;
+        y += best * options.leading;
     }
 }
 
-function drawVertical(context: CanvasRenderingContext2D, box: GroupData, text: string, given?: string[]): void {
+function drawVertical(context: CanvasRenderingContext2D, box: GroupData, text: string, options: TypesetOptions, given?: string[]): void {
     const area = inner(box);
     // Vertical punctuation has its own glyphs, and a mark may not lead a column.
     const characters = [...toVertical(text)].flatMap((character) => [character]);
@@ -88,7 +109,7 @@ function drawVertical(context: CanvasRenderingContext2D, box: GroupData, text: s
     let columns: string[][] = [];
 
     while (size > 7) {
-        context.font = `${size}px system-ui, sans-serif`;
+        context.font = `${size}px ${options.family}`;
         const perColumn = Math.max(1, Math.floor(area.height / (size * 1.1)));
         columns = [];
         let cursor = 0;
@@ -105,7 +126,7 @@ function drawVertical(context: CanvasRenderingContext2D, box: GroupData, text: s
         size -= 1;
     }
 
-    context.font = `${size}px system-ui, sans-serif`;
+    context.font = `${size}px ${options.family}`;
     const total = columns.length * size * 1.1;
     let x = area.x + area.width - (area.width - total) / 2 - size / 2;
     for (const column of columns) {
@@ -128,6 +149,7 @@ export function renderTypeset(
     height: number,
     groups: Paragraph[],
     ruby: { x: number; y: number; width: number; height: number }[] = [],
+    options: TypesetOptions = DEFAULT_OPTIONS,
 ): string {
     const canvas = document.createElement('canvas');
     canvas.width = width;
@@ -164,8 +186,8 @@ export function renderTypeset(
     for (const group of groups) {
         context.save();
         clipTo(context, group);
-        if (isVertical(group.box)) drawVertical(context, group.box, group.text, group.columns);
-        else drawHorizontal(context, group.box, group.text);
+        if (isVertical(group.box)) drawVertical(context, group.box, group.text, options, group.columns);
+        else drawHorizontal(context, group.box, group.text, options);
         context.restore();
     }
 

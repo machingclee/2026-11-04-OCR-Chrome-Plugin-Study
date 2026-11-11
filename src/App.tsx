@@ -3,7 +3,10 @@ import {
     CONTENT_SCRIPT_FILE,
     DEEPSEEK_KEY,
     GEMINI_KEY,
+    FONT_KEY,
     REPLACE_IMAGE_MESSAGE,
+    UNDO_IMAGE_MESSAGE,
+    type FontChoice,
     TRANSLATOR_KEY,
     type TranslatorChoice,
     LAST_RESULT_KEY,
@@ -77,6 +80,8 @@ export default function App() {
     const [geminiKey, setGeminiKey] = useState('');
     const [translator, setTranslator] = useState<TranslatorChoice>('gemini');
     const [dirty, setDirty] = useState(false);
+    const [font, setFont] = useState<FontChoice>('sans');
+    const [wrote, setWrote] = useState(false);
 
     useEffect(() => {
         if (!translated) return;
@@ -98,6 +103,8 @@ export default function App() {
                 if (typeof storedDeepSeek === 'string') setDeepSeekKey(storedDeepSeek);
                 const storedGemini = local[GEMINI_KEY];
                 if (typeof storedGemini === 'string') setGeminiKey(storedGemini);
+                const storedFont = local[FONT_KEY];
+                if (storedFont === 'sans' || storedFont === 'serif') setFont(storedFont);
                 const storedChoice = local[TRANSLATOR_KEY];
                 if (storedChoice === 'gemini' || storedChoice === 'deepseek' || storedChoice === 'builtin') {
                     setTranslator(storedChoice);
@@ -169,6 +176,12 @@ export default function App() {
                 };
             }),
             ruby,
+            {
+                family: font === 'serif'
+                    ? '"Songti TC", "Noto Serif CJK TC", serif'
+                    : 'system-ui, "PingFang TC", sans-serif',
+                leading: 1.15,
+            },
         );
 
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -179,17 +192,30 @@ export default function App() {
             dataUrl,
         });
         bitmap.close();
-    }, [boxes, bubbles, imageUrl]);
+    }, [boxes, bubbles, font, imageUrl]);
+
+    const handleUndo = useCallback(async () => {
+        try {
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (!tab?.id) throw new Error('There is no active tab.');
+            await chrome.tabs.sendMessage(tab.id, { type: UNDO_IMAGE_MESSAGE });
+            setWrote(false);
+            setStatus('Put the original image back.');
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : String(cause));
+        }
+    }, []);
 
     const handleSaveSettings = useCallback(async () => {
         await chrome.storage.local.set({
             [GEMINI_KEY]: geminiKey.trim(),
             [DEEPSEEK_KEY]: deepSeekKey.trim(),
             [TRANSLATOR_KEY]: translator,
+            [FONT_KEY]: font,
         });
         setDirty(false);
         setStatus('Settings saved.');
-    }, [deepSeekKey, geminiKey, translator]);
+    }, [deepSeekKey, font, geminiKey, translator]);
 
 
     const runDetect = useCallback(async (): Promise<DetectResponse | null> => {
@@ -303,6 +329,7 @@ export default function App() {
             setTranslated(out);
             await applyToPage(out, current);
             setStatus(`Translated ${out.length} groups and wrote them to the page.`);
+            setWrote(true);
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));
         } finally {
@@ -336,6 +363,9 @@ export default function App() {
                     title={canTranslate() ? undefined : 'This browser ships no translator.'}
                 >
                     {translating ? 'Translating' : 'Translate the page'}
+                </button>
+                <button type="button" onClick={handleUndo} disabled={!wrote}>
+                    Put the original back
                 </button>
 
             </div>
@@ -380,6 +410,20 @@ export default function App() {
                             setDirty(true);
                         }}
                     />
+                </label>
+
+                <label>
+                    Lettering font
+                    <select
+                        value={font}
+                        onChange={(event) => {
+                            setFont(event.target.value as FontChoice);
+                            setDirty(true);
+                        }}
+                    >
+                        <option value="sans">Sans (PingFang)</option>
+                        <option value="serif">Serif (Songti)</option>
+                    </select>
                 </label>
 
                 <span />

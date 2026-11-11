@@ -28,6 +28,11 @@ export const LAST_RESULT_KEY = 'lastDetection';
 export const DEEPSEEK_KEY = 'deepseekKey';
 /** The popup asks the page to show its finished image. */
 export const REPLACE_IMAGE_MESSAGE = 'comic-translator:replace-image';
+/** The page can put its own image back. */
+export const UNDO_IMAGE_MESSAGE = 'comic-translator:undo-image';
+export const FONT_KEY = 'typesetFont';
+export const FONT_CHOICES = ['sans', 'serif'] as const;
+export type FontChoice = (typeof FONT_CHOICES)[number];
 /** Gemini wins the tie by default: its free tier needs nothing but a key. */
 export const GEMINI_KEY = 'geminiKey';
 export const TRANSLATOR_KEY = 'translator';
