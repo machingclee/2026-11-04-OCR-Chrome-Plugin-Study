@@ -2,8 +2,12 @@ import type { Box, TextBlock, TextLine } from './types';
 
 /** A host must be at least this much thicker than the box beside it. */
 const RUBY_THICKNESS_RATIO = 1.6;
-/** Below this share of surviving lines the block gate is treated as unreliable. */
-const GATE_MIN_KEEP_RATIO = 0.5;
+/**
+ * Below this share of surviving lines the block gate is treated as unreliable.
+ * A dark page with white bubbles leaves the block head with very little, and its
+ * two or three blocks then cover almost none of the text.
+ */
+const GATE_MIN_KEEP_RATIO = 0.75;
 
 
 function contains(outer: Box, inner: Box): boolean {

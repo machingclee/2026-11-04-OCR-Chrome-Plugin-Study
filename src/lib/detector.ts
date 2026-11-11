@@ -197,8 +197,8 @@ function toDetBoxes(map: Float32Array, prepared: Prepared): Box[] {
     return lines;
 }
 
-const BLOCK_SCORE = 0.25;
-const BLOCK_NMS = 0.5;
+const BLOCK_SCORE = 0.35;
+const BLOCK_NMS = 0.4;
 
 function pickBlockTensor(outputs: Record<string, ort.Tensor>): ort.Tensor | null {
     const entries = Object.entries(outputs);
