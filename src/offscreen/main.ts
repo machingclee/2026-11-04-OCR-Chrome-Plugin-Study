@@ -29,9 +29,15 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         const bitmap = await createImageBitmap(await response.blob());
         // One 1024 square pass shrinks the page by 1024 / longest side. Tiling
         // lifts that back towards 1, so a small column keeps its strokes.
-        const longest = Math.max(bitmap.width, bitmap.height);
-        const tiles = Math.min(4, Math.max(1, Math.ceil(longest / 1024)));
-        const detected = await detectBoxes(bitmap, tiles);
+        // A page that is two pages tall needs more rows than columns, so the grid
+        // follows each side and the pass count stays under sixteen.
+        let tilesX = Math.max(1, Math.ceil(bitmap.width / 1024));
+        let tilesY = Math.max(1, Math.ceil(bitmap.height / 1024));
+        while (tilesX * tilesY > 16) {
+            if (tilesX >= tilesY) tilesX -= 1;
+            else tilesY -= 1;
+        }
+        const detected = await detectBoxes(bitmap, tilesX, tilesY);
         // The block gate runs later, against the balloon masks, which are the
         // better evidence for "is this line inside a balloon".
         const ordered = toOrderedTextLines(detected.detBoxes, [], true);

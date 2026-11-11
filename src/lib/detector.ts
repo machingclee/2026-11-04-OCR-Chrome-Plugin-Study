@@ -444,23 +444,24 @@ function overlapRatio(a: Box, b: Box): number {
  * column can fall below what the model sees. Splitting the page into overlapping
  * tiles gives each part its own 1024, which is what a small line needs.
  */
-export async function detectBoxes(bitmap: ImageBitmap, tiles = 1): Promise<DetectionResult> {
-    if (tiles <= 1) {
+export async function detectBoxes(bitmap: ImageBitmap, tilesX = 1, tilesY = 1): Promise<DetectionResult> {
+    if (tilesX <= 1 && tilesY <= 1) {
         const single = await runPass(bitmap);
         return { detBoxes: single.boxes, blkBoxes: single.blocks, mask: single.mask };
     }
 
     const overlap = 0.12;
-    const step = 1 / tiles;
+    const stepX = 1 / tilesX;
+    const stepY = 1 / tilesY;
     const kept: Box[] = [];
     const blocks: TextBlock[] = [];
 
-    for (let row = 0; row < tiles; row += 1) {
-        for (let column = 0; column < tiles; column += 1) {
-            const width = step * (1 + overlap);
-            const height = step * (1 + overlap);
-            const x = Math.max(0, (column * step - overlap / 2) * bitmap.width);
-            const y = Math.max(0, (row * step - overlap / 2) * bitmap.height);
+    for (let row = 0; row < tilesY; row += 1) {
+        for (let column = 0; column < tilesX; column += 1) {
+            const width = stepX * (1 + overlap);
+            const height = stepY * (1 + overlap);
+            const x = Math.max(0, (column * stepX - overlap / 2) * bitmap.width);
+            const y = Math.max(0, (row * stepY - overlap / 2) * bitmap.height);
             const w = Math.min(bitmap.width - x, width * bitmap.width);
             const h = Math.min(bitmap.height - y, height * bitmap.height);
 
