@@ -1,9 +1,9 @@
-import { buildUserPrompt, readRegions, SYSTEM_PROMPT, type PromptRegion } from './translatePrompt';
+import { buildUserPrompt, readRegions, SYSTEM_PROMPT, type PromptRegion, type RegionAnswer } from './translatePrompt';
 
 const ENDPOINT = 'https://api.deepseek.com/chat/completions';
 const MODEL = 'deepseek-chat';
 
-export async function translateWithDeepSeek(regions: PromptRegion[], apiKey: string): Promise<string[]> {
+export async function translateWithDeepSeek(regions: PromptRegion[], apiKey: string): Promise<RegionAnswer[]> {
     const response = await fetch(ENDPOINT, {
         method: 'POST',
         headers: {

@@ -14,6 +14,7 @@ import { BUILD_ID } from './shared/build';
 import { canTranslate, translateAll } from './lib/translate';
 import { translateWithDeepSeek } from './lib/translateDeepSeek';
 import { translateWithGemini } from './lib/translateGemini';
+import type { RegionAnswer } from './lib/translatePrompt';
 import { renderTypeset } from './lib/typeset';
 import serviceWorkerRequestFactory from './shared/factories/serviceWorkerRequestFactory';
 import { cropSize } from './lib/warp';
@@ -57,7 +58,7 @@ export default function App() {
     const [error, setError] = useState<string | null>(null);
     const [bubbles, setBubbles] = useState<BubbleStroke[]>([]);
     const [groups, setGroups] = useState<GroupStroke[]>([]);
-    const [translated, setTranslated] = useState<string[] | null>(null);
+    const [translated, setTranslated] = useState<RegionAnswer[] | null>(null);
     const [translating, setTranslating] = useState(false);
     const [deepSeekKey, setDeepSeekKey] = useState('');
     const [geminiKey, setGeminiKey] = useState('');
@@ -125,7 +126,7 @@ export default function App() {
     }, []);
 
     /** Paint the finished page and put it in place of the picked image. */
-    const applyToPage = useCallback(async (texts: string[], list: GroupStroke[]): Promise<void> => {
+    const applyToPage = useCallback(async (answers: RegionAnswer[], list: GroupStroke[]): Promise<void> => {
         const ruby = boxes.flatMap((box) => box.ruby);
         if (!imageUrl) throw new Error('No image was picked.');
 
@@ -141,7 +142,8 @@ export default function App() {
             bitmap.height,
             list.map((group, index) => ({
                 box: group,
-                text: texts[index] ?? group.lines.join(''),
+                text: answers[index]?.text ?? group.lines.join(''),
+                columns: answers[index]?.columns,
             })),
             ruby,
         );
@@ -244,22 +246,26 @@ export default function App() {
             }
             if (current.length === 0) throw new Error('No text was found on this page.');
 
-            const joined = current.map((group) => group.lines.join(''));
             const regions = current.map((group, index) => ({
                 id: `r${index + 1}`,
-                text: group.lines.join(''),
+                direction: (group.height > group.width * 1.3 ? 'v' : 'h') as 'v' | 'h',
+                lines: group.lines,
             }));
             const key = translator === 'gemini' ? geminiKey.trim() : deepSeekKey.trim();
 
-            let out: string[] | null = null;
+            let out: RegionAnswer[] | null = null;
             if (translator === 'builtin') {
-                out = canTranslate() ? await translateAll(joined, 'ja', 'zh-Hant') : null;
+                const plain = current.map((group) => group.lines.join(''));
+                out = canTranslate()
+                    ? (await translateAll(plain, 'ja', 'zh-Hant')).map((text) => ({ text }))
+                    : null;
             } else if (key.length > 0) {
                 out = translator === 'gemini'
                     ? await translateWithGemini(regions, key)
                     : await translateWithDeepSeek(regions, key);
             } else if (canTranslate()) {
-                out = await translateAll(joined, 'ja', 'zh-Hant');
+                const plain = current.map((group) => group.lines.join(''));
+                out = (await translateAll(plain, 'ja', 'zh-Hant')).map((text) => ({ text }));
                 setStatus('No key, so the browser translator did the work.');
             }
 
@@ -388,7 +394,7 @@ export default function App() {
                                   : undefined;
                               return (
                                   <span
-                                      key={`group-${group.x}-${group.y}-${(translated[index] ?? '').length}`}
+                                      key={`group-${group.x}-${group.y}-${(translated[index]?.text ?? '').length}`}
                                       className="typeset"
                                       data-vertical={vertical}
                                       data-max={Math.max(12, Math.round(Math.min(group.width, group.height)))}
@@ -400,7 +406,7 @@ export default function App() {
                                           clipPath: clip,
                                       }}
                                   >
-                                      {translated[index] ?? group.lines.join('')}
+                                      {translated[index]?.text ?? group.lines.join('')}
                                   </span>
                               );
                           })

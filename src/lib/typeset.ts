@@ -1,6 +1,6 @@
 import type { GroupData } from '../shared/types';
 
-type Paragraph = { box: GroupData; text: string };
+type Paragraph = { box: GroupData; text: string; columns?: string[] };
 
 function isVertical(box: { width: number; height: number }): boolean {
     return box.height > box.width * 1.3;
@@ -46,7 +46,7 @@ function drawHorizontal(context: CanvasRenderingContext2D, box: GroupData, text:
     }
 }
 
-function drawVertical(context: CanvasRenderingContext2D, box: GroupData, text: string): void {
+function drawVertical(context: CanvasRenderingContext2D, box: GroupData, text: string, given?: string[]): void {
     const padding = Math.max(2, Math.min(box.width, box.height) * 0.08);
     const height = box.height - padding * 2;
     let size = Math.min(box.width * 0.85, height);
@@ -59,6 +59,9 @@ function drawVertical(context: CanvasRenderingContext2D, box: GroupData, text: s
         const characters = [...text];
         for (let index = 0; index < characters.length; index += perColumn) {
             columns.push(characters.slice(index, index + perColumn));
+        }
+        if (given && given.length > 0 && given.every((column) => [...column].length <= perColumn)) {
+            columns = given.map((column) => [...column]);
         }
         if (columns.length * size * 1.1 <= box.width - padding * 2) break;
         size -= 1;
@@ -119,7 +122,7 @@ export function renderTypeset(
     context.fillStyle = '#111111';
     context.textAlign = 'left';
     for (const group of groups) {
-        if (isVertical(group.box)) drawVertical(context, group.box, group.text);
+        if (isVertical(group.box)) drawVertical(context, group.box, group.text, group.columns);
         else drawHorizontal(context, group.box, group.text);
     }
 

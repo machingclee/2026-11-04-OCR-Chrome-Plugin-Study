@@ -1,9 +1,9 @@
-import { buildUserPrompt, readRegions, SYSTEM_PROMPT, type PromptRegion } from './translatePrompt';
+import { buildUserPrompt, readRegions, SYSTEM_PROMPT, type PromptRegion, type RegionAnswer } from './translatePrompt';
 
 const MODEL = 'gemini-2.5-flash';
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 
-export async function translateWithGemini(regions: PromptRegion[], apiKey: string): Promise<string[]> {
+export async function translateWithGemini(regions: PromptRegion[], apiKey: string): Promise<RegionAnswer[]> {
     const response = await fetch(ENDPOINT, {
         method: 'POST',
         headers: {
