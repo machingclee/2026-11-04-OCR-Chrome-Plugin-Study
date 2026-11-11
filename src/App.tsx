@@ -102,6 +102,32 @@ function tightenBox(group: GroupStroke, lines: BoxData[]): GroupStroke {
     };
 }
 
+/**
+ * The balloon model returns a loose box and a tight outline. The outline is what
+ * the balloon really covers, so the text is measured inside that instead.
+ */
+function bubbleBox(bubble: BubbleStroke): GroupStroke {
+    const points = bubble.outline ?? [];
+    if (points.length < 3) return insetBubble(bubble);
+
+    const xs = points.map((point) => point.x);
+    const ys = points.map((point) => point.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const dx = (maxX - minX) * 0.07;
+    const dy = (maxY - minY) * 0.07;
+
+    return {
+        x: minX + dx,
+        y: minY + dy,
+        width: Math.max(12, maxX - minX - dx * 2),
+        height: Math.max(12, maxY - minY - dy * 2),
+        lines: [],
+    };
+}
+
 export default function App() {
     const [imageUrl, setImageUrl] = useState<string | null>(null);
     const [boxes, setBoxes] = useState<BoxData[]>([]);
@@ -219,7 +245,7 @@ export default function App() {
                 // A column box is not a container. The balloon is, so the text
                 // is laid out in its middle and clipped to its edge.
                 return {
-                    box: holder ? insetBubble(holder) : tightenBox(group, boxes),
+                    box: holder ? bubbleBox(holder) : tightenBox(group, boxes),
                     text: answers[index]?.text ?? group.lines.join(''),
                     columns: answers[index]?.columns,
                     outline: holder?.outline,
