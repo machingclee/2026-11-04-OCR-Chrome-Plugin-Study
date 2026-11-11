@@ -8,8 +8,6 @@ import {
     LEADING_MAX,
     LEADING_MIN,
     WEIGHT_KEY,
-    REPLACE_IMAGE_MESSAGE,
-    UNDO_IMAGE_MESSAGE,
     type FontChoice,
     TRANSLATOR_KEY,
     type TranslatorChoice,
@@ -158,7 +156,6 @@ export default function App() {
     const [font, setFont] = useState<FontChoice>('sans');
     const [leading, setLeading] = useState(1.15);
     const [weight, setWeight] = useState<'normal' | 'bold'>('normal');
-    const [wrote, setWrote] = useState(false);
     const [erasedUrl, setErasedUrl] = useState<string | null>(null);
     const [bubbleError, setBubbleError] = useState<string | null>(null);
     const [typesetUrl, setTypesetUrl] = useState<string | null>(null);
@@ -232,7 +229,7 @@ export default function App() {
     }, []);
 
     /** Paint the finished page and put it in place of the picked image. */
-    const applyToPage = useCallback(async (
+    const renderPage = useCallback(async (
         answers: RegionAnswer[],
         list: GroupStroke[],
         balloons: BubbleStroke[],
@@ -282,27 +279,8 @@ export default function App() {
         );
 
         setTypesetUrl(dataUrl);
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (!tab?.id) throw new Error('There is no active tab.');
-        await chrome.tabs.sendMessage(tab.id, {
-            type: REPLACE_IMAGE_MESSAGE,
-            url: imageUrl,
-            dataUrl,
-        });
         bitmap.close();
     }, [boxes, erasedUrl, font, imageUrl, leading, weight]);
-
-    const handleUndo = useCallback(async () => {
-        try {
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            if (!tab?.id) throw new Error('There is no active tab.');
-            await chrome.tabs.sendMessage(tab.id, { type: UNDO_IMAGE_MESSAGE });
-            setWrote(false);
-            setStatus('Put the original image back.');
-        } catch (cause) {
-            setError(cause instanceof Error ? cause.message : String(cause));
-        }
-    }, []);
 
     const handleSaveSettings = useCallback(async () => {
         await chrome.storage.local.set({
@@ -433,18 +411,17 @@ export default function App() {
             }
 
             setTranslated(out);
-            await applyToPage(out, current, balloons);
+            await renderPage(out, current, balloons);
             const withBalloon = countWithBalloon(current, balloons);
             setStatus(
-                `Translated ${out.length} groups, ${withBalloon} with a balloon, ${balloons.length} balloons${bubbleError ? `, balloon error: ${bubbleError}` : ''}, wrote them to the page.`,
+                `Translated ${out.length} groups, ${withBalloon} with a balloon, ${balloons.length} balloons${bubbleError ? `, balloon error: ${bubbleError}` : ''}, ready in the popup.`,
             );
-            setWrote(true);
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));
         } finally {
             setTranslating(false);
         }
-    }, [applyToPage, bubbles, deepSeekKey, geminiKey, groups, runDetect, translator]);
+    }, [bubbles, deepSeekKey, geminiKey, groups, renderPage, runDetect, translator]);
 
     return (
         <main>
@@ -472,9 +449,6 @@ export default function App() {
                     title={canTranslate() ? undefined : 'This browser ships no translator.'}
                 >
                     {translating ? 'Translating' : 'Translate the page'}
-                </button>
-                <button type="button" onClick={handleUndo} disabled={!wrote}>
-                    Put the original back
                 </button>
                 <button type="button" onClick={() => setShowDebug((value) => !value)}>
                     {showDebug ? 'Hide stages' : 'Show stages'}
@@ -674,6 +648,12 @@ export default function App() {
                 </section>
             ) : null}
 
+
+            {typesetUrl ? (
+                <a className="download" href={typesetUrl} download="translated-page.png">
+                    Save the translated page
+                </a>
+            ) : null}
 
             {showDebug ? (
                 <section className="debug">

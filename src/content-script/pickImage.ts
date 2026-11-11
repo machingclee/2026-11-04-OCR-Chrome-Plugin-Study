@@ -1,4 +1,4 @@
-import { PICKED_IMAGE_URL_KEY, REPLACE_IMAGE_MESSAGE, UNDO_IMAGE_MESSAGE } from '../shared/constants';
+import { PICKED_IMAGE_URL_KEY } from '../shared/constants';
 import { HIGHLIGHT_ID, IMAGE_URL_PATTERN, SHIELD_ID, TOAST_ID } from './constants';
 
 
@@ -255,53 +255,6 @@ function start(): void {
     window.addEventListener('keydown', onKey, true);
     showToast('Pick mode is on. Click an image, or press Escape.');
 }
-
-type ReplaceMessage = { type?: string; url?: string; dataUrl?: string };
-
-/** The page image we swapped, so it can be put back. */
-let replacedImage: { element: HTMLImageElement; src: string; srcset: string | null } | null = null;
-
-/** Put the finished image in place of the one the page shows. */
-chrome.runtime.onMessage.addListener((message: ReplaceMessage) => {
-    if (!message || message.type !== REPLACE_IMAGE_MESSAGE) return false;
-    const url = message.url ?? '';
-    const dataUrl = message.dataUrl ?? '';
-    if (dataUrl.length === 0) return false;
-
-    const target = [...document.images].find(
-        (image) => image.currentSrc === url || image.src === url,
-    );
-    if (!target) {
-        showToast('The page no longer shows that image.');
-        return false;
-    }
-
-    replacedImage = {
-        element: target,
-        src: target.src,
-        srcset: target.getAttribute('srcset'),
-    };
-    target.removeAttribute('srcset');
-    target.removeAttribute('sizes');
-    target.src = dataUrl;
-    showToast('Replaced the page image with the translation.');
-    return false;
-});
-
-/** Put the page image back the way it was before the translation. */
-chrome.runtime.onMessage.addListener((message: ReplaceMessage) => {
-    if (!message || message.type !== UNDO_IMAGE_MESSAGE) return false;
-    if (!replacedImage) {
-        showToast('There is nothing to undo.');
-        return false;
-    }
-    const { element, src, srcset } = replacedImage;
-    element.src = src;
-    if (srcset) element.setAttribute('srcset', srcset);
-    replacedImage = null;
-    showToast('Put the original image back.');
-    return false;
-});
 
 if (!window.__comicTranslatorPickerActive) {
     window.__comicTranslatorPickerActive = true;

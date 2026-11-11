@@ -193,3 +193,9 @@ button[data-busy='true'] {
   text-align: center;
   color: #555;
 }
+
+.download {
+  display: inline-block;
+  margin: 4px 0 8px;
+  font-size: 12px;
+}
