@@ -114,6 +114,116 @@ function unclip(box: Box): Box {
     };
 }
 
+type Group = { pixels: number[]; minX: number; maxX: number; minY: number; maxY: number };
+
+/** Cut a component wherever the projection drops, so touching columns split. */
+function splitByProfile(pixels: number[], alongX: boolean): Group[] {
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (let index = 0; index < pixels.length; index += 2) {
+        const x = pixels[index];
+        const y = pixels[index + 1];
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+    }
+
+    const span = alongX ? maxX - minX + 1 : maxY - minY + 1;
+    const histogram = new Int32Array(span);
+    for (let index = 0; index < pixels.length; index += 2) {
+        const position = alongX ? pixels[index] - minX : pixels[index + 1] - minY;
+        histogram[position] += 1;
+    }
+
+    let peak = 0;
+    for (const value of histogram) if (value > peak) peak = value;
+    if (peak === 0) return [{ pixels, minX, maxX, minY, maxY }];
+
+    const cuts: number[] = [];
+    let run = 0;
+    for (let position = 0; position < span; position += 1) {
+        if (histogram[position] <= peak * 0.15) {
+            run += 1;
+            continue;
+        }
+        if (run >= 2) cuts.push(position - run);
+        run = 0;
+    }
+
+    if (cuts.length === 0) return [{ pixels, minX, maxX, minY, maxY }];
+
+    const buckets = new Map<number, number[]>();
+    for (let index = 0; index < pixels.length; index += 2) {
+        const position = alongX ? pixels[index] : pixels[index + 1];
+        let bucket = 0;
+        while (bucket < cuts.length && position >= cuts[bucket]) bucket += 1;
+        const list = buckets.get(bucket);
+        if (list) list.push(pixels[index], pixels[index + 1]);
+        else buckets.set(bucket, [pixels[index], pixels[index + 1]]);
+    }
+
+    const groups: Group[] = [];
+    for (const list of buckets.values()) {
+        if (list.length < 40) continue;
+        let gMinX = Infinity;
+        let gMaxX = -Infinity;
+        let gMinY = Infinity;
+        let gMaxY = -Infinity;
+        for (let index = 0; index < list.length; index += 2) {
+            const x = list[index];
+            const y = list[index + 1];
+            if (x < gMinX) gMinX = x;
+            if (x > gMaxX) gMaxX = x;
+            if (y < gMinY) gMinY = y;
+            if (y > gMaxY) gMaxY = y;
+        }
+        groups.push({ pixels: list, minX: gMinX, maxX: gMaxX, minY: gMinY, maxY: gMaxY });
+    }
+
+    return groups.length > 0 ? groups : [{ pixels, minX, maxX, minY, maxY }];
+}
+
+/** Measure one group and push the box the rest of the pipeline expects. */
+function emitBox(group: Group, prepared: Prepared, boxes: Box[], score: number): void {
+    const x = (group.minX - prepared.padX) / prepared.scale;
+    const y = (group.minY - prepared.padY) / prepared.scale;
+    const width = (group.maxX - group.minX + 1) / prepared.scale;
+    const height = (group.maxY - group.minY + 1) / prepared.scale;
+
+    const left = Math.max(0, x);
+    const top = Math.max(0, y);
+    const right = Math.min(prepared.width, x + width);
+    const bottom = Math.min(prepared.height, y + height);
+    if (right - left < 4 || bottom - top < 4) return;
+
+    const points: { x: number; y: number }[] = [];
+    for (let index = 0; index < group.pixels.length; index += 8) {
+        points.push({
+            x: (group.pixels[index] - prepared.padX) / prepared.scale,
+            y: (group.pixels[index + 1] - prepared.padY) / prepared.scale,
+        });
+    }
+
+    const rect = minAreaRect(points);
+    let angle = rect ? foldAngle(rect.angle) : 0;
+    if (angle > Math.PI / 4) angle -= Math.PI / 2;
+    else if (angle <= -Math.PI / 4) angle += Math.PI / 2;
+
+    boxes.push({
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+        score,
+        angle,
+        lineLength: rect ? rect.length : right - left,
+        lineThickness: rect ? rect.thickness : bottom - top,
+    });
+}
+
 function toDetBoxes(map: Float32Array, prepared: Prepared): Box[] {
     const size = DETECTOR_INPUT_SIZE;
     const visited = new Uint8Array(size * size);
@@ -121,7 +231,7 @@ function toDetBoxes(map: Float32Array, prepared: Prepared): Box[] {
     const stack: number[] = [];
     // The mask is walked once and every component keeps its own points, because a
     // slanted line needs a rectangle that follows the slant, not the page axes.
-    const points: { x: number; y: number }[] = [];
+    const pixels: number[] = [];
 
     for (let start = 0; start < size * size; start += 1) {
         if (map[start] < DETECTOR_SCORE_THRESHOLD || visited[start]) continue;
@@ -134,7 +244,7 @@ function toDetBoxes(map: Float32Array, prepared: Prepared): Box[] {
         let maxY = -1;
         let count = 0;
         let sum = 0;
-        points.length = 0;
+        pixels.length = 0;
 
         while (stack.length > 0) {
             const index = stack.pop() as number;
@@ -146,12 +256,7 @@ function toDetBoxes(map: Float32Array, prepared: Prepared): Box[] {
             if (y < minY) minY = y;
             if (x > maxX) maxX = x;
             if (y > maxY) maxY = y;
-            if ((count & 3) === 0) {
-                points.push({
-                    x: (x - prepared.padX) / prepared.scale,
-                    y: (y - prepared.padY) / prepared.scale,
-                });
-            }
+            pixels.push(x, y);
 
             for (let dy = -1; dy <= 1; dy += 1) {
                 for (let dx = -1; dx <= 1; dx += 1) {
@@ -174,35 +279,11 @@ function toDetBoxes(map: Float32Array, prepared: Prepared): Box[] {
         const fill = count / ((maxX - minX + 1) * (maxY - minY + 1));
         if (fill < DETECTOR_MIN_FILL) continue;
 
-        const x = (minX - prepared.padX) / prepared.scale;
-        const y = (minY - prepared.padY) / prepared.scale;
-        const width = (maxX - minX + 1) / prepared.scale;
-        const height = (maxY - minY + 1) / prepared.scale;
-
-        const left = Math.max(0, x);
-        const top = Math.max(0, y);
-        const right = Math.min(prepared.width, x + width);
-        const bottom = Math.min(prepared.height, y + height);
-        if (right - left < 4 || bottom - top < 4) continue;
-
-        const rect = minAreaRect(points);
-        // The angle is stored as a deviation from the nearer page axis. A column
-        // therefore gets an angle near zero, and the recogniser's own quarter
-        // turn is not applied twice.
-        let angle = rect ? foldAngle(rect.angle) : 0;
-        if (angle > Math.PI / 4) angle -= Math.PI / 2;
-        else if (angle <= -Math.PI / 4) angle += Math.PI / 2;
-
-        boxes.push({
-            x: left,
-            y: top,
-            width: right - left,
-            height: bottom - top,
-            score,
-            angle,
-            lineLength: rect ? rect.length : right - left,
-            lineThickness: rect ? rect.thickness : bottom - top,
-        });
+        // Two columns of one bubble can touch inside the det map. The projection
+        // profile has a valley between them, so the component is split there and
+        // every group is measured on its own.
+        const groups = splitByProfile(pixels, maxX - minX >= maxY - minY);
+        for (const group of groups) emitBox(group, prepared, boxes, score);
     }
 
     const lines = boxes.map(unclip);
