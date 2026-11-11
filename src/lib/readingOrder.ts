@@ -3,6 +3,16 @@ import type { Box, TextBlock, TextLine } from './types';
 /** A host must be at least this much thicker than the box beside it. */
 const RUBY_THICKNESS_RATIO = 1.6;
 /**
+ * A ruby spans a glyph or two, so its length stays close to the thickness of its
+ * host. A whole column is many times longer and can never pass this test.
+ */
+const RUBY_MAX_LENGTH_RATIO = 1.6;
+/** The host has to be a long line, not a blob. */
+const RUBY_HOST_MIN_ELONGATION = 4;
+/** The reading is shorter than its host but still a run of glyphs. */
+const RUBY_GUEST_MIN_ELONGATION = 2;
+
+/**
  * Below this share of surviving lines the block gate is treated as unreliable.
  * A dark page with white bubbles leaves the block head with very little, and its
  * two or three blocks then cover almost none of the text.
@@ -103,6 +113,21 @@ function smallerSide(box: Box): number {
     return Math.min(box.width, box.height);
 }
 
+/** Length along the text direction: the long side of the box. */
+function longerSide(box: Box): number {
+    return Math.max(box.width, box.height);
+}
+
+/** How long a box is compared with how thick it is. */
+function elongation(box: Box): number {
+    return longerSide(box) / Math.max(1, smallerSide(box));
+}
+
+/** Whether two boxes run the same way, so one can annotate the other. */
+function sameOrientation(a: Box, b: Box): boolean {
+    return (a.height >= a.width) === (b.height >= b.width);
+}
+
 function gapBetween(a: Box, b: Box): { x: number; y: number } {
     return {
         x: Math.max(0, Math.max(a.x, b.x) - Math.min(a.x + a.width, b.x + b.width)),
@@ -136,6 +161,16 @@ export function separateRuby(lines: TextLine[]): TextLine[] {
             // The host has to be at least this much thicker than the candidate.
             // Vertical ruby is thin, horizontal ruby is short, so one ratio fits both.
             if (smallerSide(candidate) < thickness * RUBY_THICKNESS_RATIO) continue;
+
+            // Both boxes have to be lines. A blob over artwork is thick and short,
+            // and it must never collect real columns as if they were readings.
+            if (elongation(candidate) < RUBY_HOST_MIN_ELONGATION) continue;
+            if (elongation(line) < RUBY_GUEST_MIN_ELONGATION) continue;
+
+            // A ruby sits inside the span of its host, beside one or two glyphs.
+            // A full column is long, so length keeps real text out of the pile.
+            if (!sameOrientation(line, candidate)) continue;
+            if (longerSide(line) > smallerSide(candidate) * RUBY_MAX_LENGTH_RATIO) continue;
 
             // Ruby sits beside its host and never far away. The reach comes from
             // the host thickness, so it works above a row and right of a column.
