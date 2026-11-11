@@ -84,7 +84,7 @@ export default function App() {
             const ruby = response.boxes.reduce((sum, box) => sum + box.ruby.length, 0);
             const read = response.boxes.filter((box) => box.text.length > 0).length;
             setStatus(
-                `${response.boxes.length} lines (${vertical} vertical, ${ruby} ruby), ${read} read, ${response.ms} ms (${response.warm ? 'reused session' : 'cold session'}).`,
+                `${response.boxes.length} lines (${vertical} vertical, ${ruby} ruby), ${read} read, image ${size.width}x${size.height}, ${response.ms} ms (${response.warm ? 'reused session' : 'cold session'}).`,
             );
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));
