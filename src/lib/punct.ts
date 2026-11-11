@@ -69,3 +69,41 @@ export function bestBreak(characters: string[], limit: number): number {
     }
     return bestScore > 0 ? best : -1;
 }
+
+/** Whether a mark may lead a column at all. */
+export function canStartLine(character: string): boolean {
+    return !NO_START.has(character);
+}
+
+/**
+ * The site of a break, preferring punctuation. When the limit lands inside a
+ * mark, or right before one, it walks back until the break is legal, so "?!"
+ * and "……" always stay together.
+ */
+export function safeBreak(characters: string[], limit: number): number {
+    const preferred = bestBreak(characters, limit);
+    if (preferred > 0) return preferred;
+
+    let cut = Math.min(limit, characters.length);
+    while (cut > 1) {
+        const previous = characters[cut - 1];
+        const next = characters[cut];
+        if (!NO_END.has(previous) && !NO_START.has(next)) return cut;
+        cut -= 1;
+    }
+    return Math.max(1, cut);
+}
+
+/** Group runs of marks so a split can never fall inside "?!". */
+export function toUnits(text: string): string[] {
+    const units: string[] = [];
+    for (const character of text) {
+        const last = units[units.length - 1];
+        if (last && STRONG.has(last[0]) && (STRONG.has(character) || SOFT.has(character))) {
+            units[units.length - 1] = last + character;
+            continue;
+        }
+        units.push(character);
+    }
+    return units;
+}

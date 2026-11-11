@@ -1,5 +1,5 @@
 import type { GroupData } from '../shared/types';
-import { bestBreak, toVertical } from './punct';
+import { canStartLine, safeBreak, toVertical } from './punct';
 
 type Paragraph = { box: GroupData; text: string; columns?: string[]; outline?: { x: number; y: number }[] };
 
@@ -32,6 +32,11 @@ function wrap(context: CanvasRenderingContext2D, text: string, width: number): s
     for (const character of text) {
         const next = current + character;
         if (context.measureText(next).width > width && current.length > 0) {
+            // A closing mark stays on the line it closes, even if it spills.
+            if (!canStartLine(character)) {
+                current = next;
+                continue;
+            }
             lines.push(current);
             current = character;
         } else {
@@ -78,7 +83,7 @@ function drawHorizontal(context: CanvasRenderingContext2D, box: GroupData, text:
 function drawVertical(context: CanvasRenderingContext2D, box: GroupData, text: string, given?: string[]): void {
     const area = inner(box);
     // Vertical punctuation has its own glyphs, and a mark may not lead a column.
-    const characters = [...toVertical(text)];
+    const characters = [...toVertical(text)].flatMap((character) => [character]);
     let size = Math.max(8, Math.min(area.width, area.height) / 4);
     let columns: string[][] = [];
 
@@ -89,8 +94,7 @@ function drawVertical(context: CanvasRenderingContext2D, box: GroupData, text: s
         let cursor = 0;
         while (cursor < characters.length) {
             const limit = Math.min(cursor + perColumn, characters.length);
-            const preferred = bestBreak(characters, limit - cursor);
-            const take = preferred > 0 ? cursor + preferred : limit;
+            const take = cursor + safeBreak(characters, limit - cursor);
             columns.push(characters.slice(cursor, take));
             cursor = take;
         }
