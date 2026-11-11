@@ -3,13 +3,11 @@ import { detectBubbles } from '../lib/bubble';
 import { cropPreviews } from '../lib/regions';
 import { eraseGlyphs } from '../lib/erase';
 import { expandToInk } from '../lib/expand';
-import { offsetBox, splitPages } from '../lib/pages';
 import { groupByRegion, toOrderedTextLines } from '../lib/readingOrder';
 import { recognizeLine } from '../lib/ocr/recognize';
 import { OFFSCREEN_TARGET } from '../shared/constants';
 import type {
     BoxData,
-    BubbleData,
     DetectResponse,
     GroupData,
     IncomingMessage,
@@ -38,164 +36,113 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
 
         const bitmap = await createImageBitmap(await response.blob());
 
-        // A scan can hold two pages. Each page is measured on its own, so the
-        // reading order never mixes the right page into the left one.
-        const pages = splitPages(bitmap);
-        const collected: BoxData[] = [];
-        const balloons: BubbleData[] = [];
-        let dropped = 0;
-        let bubbleError: string | null = null;
-        const groups: GroupData[] = [];
-        const erasedCanvas = document.createElement('canvas');
-        erasedCanvas.width = bitmap.width;
-        erasedCanvas.height = bitmap.height;
-        const erasedContext = erasedCanvas.getContext('2d', { willReadFrequently: true });
-
-        for (const page of pages) {
-            const slice = pages.length === 1
-                ? bitmap
-                : await createImageBitmap(bitmap, page.x, page.y, page.width, page.height);
-
-            // One 1024 square pass shrinks the page by 1024 / longest side. Tiling
-            // lifts that back towards 1, so a small column keeps its strokes.
-            let tilesX = Math.max(1, Math.ceil(slice.width / 1024));
-            let tilesY = Math.max(1, Math.ceil(slice.height / 1024));
-            while (tilesX * tilesY > 16) {
-                if (tilesX >= tilesY) tilesX -= 1;
-                else tilesY -= 1;
-            }
-
-            const detected = await detectBoxes(slice, tilesX, tilesY);
-            const ordered = toOrderedTextLines(detected.detBoxes, [], true);
-            const bubbles = await detectBubbles(slice).catch((cause: unknown) => {
-                bubbleError = cause instanceof Error ? cause.message : String(cause);
-                return null;
-            });
-            const grouped = groupByRegion(
-                ordered,
-                bubbles ? bubbles.bubbles : [],
-                detected.blkBoxes,
-                false,
-            );
-            dropped += grouped.dropped;
-            const groupBoxes = grouped.boxes.map((box) => offsetBox(box, page));
-
-            const lines = grouped.lines.map((line) => offsetBox(
-                { ...line, ...expandToInk(line, detected.mask) },
-                page,
-            ));
-
-            for (const bubble of bubbles ? bubbles.bubbles : []) {
-                balloons.push({
-                    x: bubble.x + page.x,
-                    y: bubble.y + page.y,
-                    width: bubble.width,
-                    height: bubble.height,
-                    outline: bubble.outline.map((point) => ({ x: point.x + page.x, y: point.y + page.y })),
-                });
-            }
-
-            if (detected.mask && erasedContext) {
-                // Everything here stays in slice coordinates, the space the mask
-                // was measured in, so no offset conversion can go wrong.
-                const sliceCanvas = document.createElement('canvas');
-                sliceCanvas.width = page.width;
-                sliceCanvas.height = page.height;
-                const sliceContext = sliceCanvas.getContext('2d', { willReadFrequently: true });
-                if (sliceContext) {
-                    sliceContext.drawImage(
-                        pages.length === 1 ? bitmap : slice,
-                        0,
-                        0,
-                    );
-                    const sliceImage = sliceContext.getImageData(0, 0, page.width, page.height);
-                    const sliceLines = grouped.lines.map((line) => ({
-                        ...line,
-                        ...expandToInk(line, detected.mask),
-                    }));
-
-                    for (const line of sliceLines) {
-                        const centreX = line.x + line.width / 2;
-                        const centreY = line.y + line.height / 2;
-                        const balloon = (bubbles ? bubbles.bubbles : []).find((bubble) =>
-                            centreX >= bubble.x && centreX <= bubble.x + bubble.width
-                            && centreY >= bubble.y && centreY <= bubble.y + bubble.height);
-                        const allow = balloon
-                            ? (pageX: number, pageY: number) => {
-                                const x = Math.round(pageX * balloon.shapeScale + balloon.shapePadX);
-                                const y = Math.round(pageY * balloon.shapeScale + balloon.shapePadY);
-                                if (x < 0 || y < 0 || x >= balloon.shapeSize || y >= balloon.shapeSize) return false;
-                                return balloon.shape[y * balloon.shapeSize + x] > 0.4;
-                            }
-                            : undefined;
-                        eraseGlyphs(sliceImage, line, detected.mask, allow);
-                    }
-
-                    sliceContext.putImageData(sliceImage, 0, 0);
-                    erasedContext.drawImage(sliceCanvas, page.x, page.y);
-                }
-            }
-
-            const perGroup: string[][] = groupBoxes.map(() => []);
-            for (const line of lines) {
-                const recognised = await recognizeLine(bitmap, line, line.direction === 'vertical')
-                    .catch(() => ({ text: '', confidence: 0 }));
-                collected.push({ ...line, text: recognised.text, confidence: recognised.confidence });
-
-                const centreX = line.x + line.width / 2;
-                const centreY = line.y + line.height / 2;
-                for (let index = 0; index < groupBoxes.length; index += 1) {
-                    const box = groupBoxes[index];
-                    if (centreX < box.x || centreX > box.x + box.width) continue;
-                    if (centreY < box.y || centreY > box.y + box.height) continue;
-                    perGroup[index].push(recognised.text);
-                    break;
-                }
-            }
-
-            groupBoxes.forEach((box, index) => {
-                const text = perGroup[index].filter((line) => line.length > 0);
-                if (text.length === 0) return;
-                groups.push({ ...box, lines: text });
-            });
-
-            // A line outside every region still has to be translated, so it
-            // becomes a group of its own instead of being left out.
-            for (const line of collected) {
-                if (groups.some((group) => centreInsideBox(line, group))) continue;
-                if (line.text.length === 0) continue;
-                groups.push({
-                    x: line.x,
-                    y: line.y,
-                    width: line.width,
-                    height: line.height,
-                    lines: [line.text],
-                });
-            }
-
+        // The page is one image. Tiling only raises the resolution the detector
+        // sees; every box, mask and balloon still lives in this one space.
+        let tilesX = Math.max(1, Math.ceil(bitmap.width / 1024));
+        let tilesY = Math.max(1, Math.ceil(bitmap.height / 1024));
+        while (tilesX * tilesY > 16) {
+            if (tilesX >= tilesY) tilesX -= 1;
+            else tilesY -= 1;
         }
 
-        // The erased page travels to the popup, which letters it without filling
-        // anything, so the artwork keeps its strokes.
-        const erasedUrl = erasedContext && pages.length > 0
-            ? erasedCanvas.toDataURL('image/webp', 0.9)
-            : null;
+        const detected = await detectBoxes(bitmap, tilesX, tilesY);
+        const ordered = toOrderedTextLines(detected.detBoxes, [], true);
+        let bubbleError: string | null = null;
+        const bubbles = await detectBubbles(bitmap).catch((cause: unknown) => {
+            bubbleError = cause instanceof Error ? cause.message : String(cause);
+            return null;
+        });
+
+        const balloonList = bubbles ? bubbles.bubbles : [];
+        const grouped = groupByRegion(ordered, balloonList, detected.blkBoxes, false);
+
+        const lines = grouped.lines.map((line) => ({
+            ...line,
+            ...expandToInk(line, detected.mask),
+        }));
+
+        // Erase in the space the mask was measured in, which is this same page.
+        let erasedUrl: string | null = null;
+        if (detected.mask) {
+            const canvas = document.createElement('canvas');
+            canvas.width = bitmap.width;
+            canvas.height = bitmap.height;
+            const context = canvas.getContext('2d', { willReadFrequently: true });
+            if (context) {
+                context.drawImage(bitmap, 0, 0);
+                const image = context.getImageData(0, 0, canvas.width, canvas.height);
+
+                for (const line of lines) {
+                    const centreX = line.x + line.width / 2;
+                    const centreY = line.y + line.height / 2;
+                    const balloon = balloonList.find((item) =>
+                        centreX >= item.x && centreX <= item.x + item.width
+                        && centreY >= item.y && centreY <= item.y + item.height);
+                    const allow = balloon
+                        ? (pageX: number, pageY: number) => {
+                            const x = Math.round(pageX * balloon.shapeScale + balloon.shapePadX);
+                            const y = Math.round(pageY * balloon.shapeScale + balloon.shapePadY);
+                            if (x < 0 || y < 0 || x >= balloon.shapeSize || y >= balloon.shapeSize) return false;
+                            return balloon.shape[y * balloon.shapeSize + x] > 0.4;
+                        }
+                        : undefined;
+                    eraseGlyphs(image, line, detected.mask, allow);
+                }
+
+                context.putImageData(image, 0, 0);
+                erasedUrl = canvas.toDataURL('image/webp', 0.9);
+            }
+        }
+
+        const collected: BoxData[] = [];
+        for (const line of lines) {
+            const recognised = await recognizeLine(bitmap, line, line.direction === 'vertical').catch(
+                () => ({ text: '', confidence: 0 }),
+            );
+            collected.push({ ...line, text: recognised.text, confidence: recognised.confidence });
+        }
+
+        const groups: GroupData[] = [];
+        const perGroup: string[][] = grouped.boxes.map(() => []);
+        for (const line of collected) {
+            for (let index = 0; index < grouped.boxes.length; index += 1) {
+                if (!centreInsideBox(line, grouped.boxes[index])) continue;
+                perGroup[index].push(line.text);
+                break;
+            }
+        }
+        grouped.boxes.forEach((box, index) => {
+            const text = perGroup[index].filter((value) => value.length > 0);
+            if (text.length > 0) groups.push({ ...box, lines: text });
+        });
+        for (const line of collected) {
+            if (groups.some((group) => centreInsideBox(line, group))) continue;
+            if (line.text.length === 0) continue;
+            groups.push({ x: line.x, y: line.y, width: line.width, height: line.height, lines: [line.text] });
+        }
 
         const previews = cropPreviews(bitmap, collected.slice(0, MAX_PREVIEWS));
+
         return {
             ok: true,
             boxes: collected,
             previews,
             imageWidth: bitmap.width,
             imageHeight: bitmap.height,
-            groupedLines: collected.length - dropped,
+            groupedLines: grouped.lines.length,
             groups,
             bubbleError,
             erasedUrl,
             maskUrl: null,
-            bubbles: balloons,
+            bubbles: balloonList.map((bubble) => ({
+                x: bubble.x,
+                y: bubble.y,
+                width: bubble.width,
+                height: bubble.height,
+                outline: bubble.outline,
+            })),
             ms: Math.round(performance.now() - started),
-            warm
+            warm,
         };
     } catch (cause) {
         return { ok: false, error: cause instanceof Error ? cause.message : String(cause) };
