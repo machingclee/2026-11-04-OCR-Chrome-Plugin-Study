@@ -230,7 +230,11 @@ export default function App() {
     }, []);
 
     /** Paint the finished page and put it in place of the picked image. */
-    const applyToPage = useCallback(async (answers: RegionAnswer[], list: GroupStroke[]): Promise<void> => {
+    const applyToPage = useCallback(async (
+        answers: RegionAnswer[],
+        list: GroupStroke[],
+        balloons: BubbleStroke[],
+    ): Promise<void> => {
         const ruby = boxes.flatMap((box) => box.ruby);
         if (!imageUrl) throw new Error('No image was picked.');
 
@@ -249,7 +253,7 @@ export default function App() {
             bitmap.width,
             bitmap.height,
             list.map((group, index) => {
-                const holder = bubbles.find((bubble) =>
+                const holder = balloons.find((bubble) =>
                     group.x + group.width / 2 >= bubble.x
                     && group.x + group.width / 2 <= bubble.x + bubble.width
                     && group.y + group.height / 2 >= bubble.y
@@ -284,7 +288,7 @@ export default function App() {
             dataUrl,
         });
         bitmap.close();
-    }, [boxes, bubbles, erasedUrl, font, imageUrl, leading, weight]);
+    }, [boxes, erasedUrl, font, imageUrl, leading, weight]);
 
     const handleUndo = useCallback(async () => {
         try {
@@ -384,10 +388,14 @@ export default function App() {
             // One press does the whole job: measure the page when it has not been
             // measured yet, translate every group, then paint the answer back.
             let current = groups;
+            // A detection run updates the state asynchronously, so the balloons
+            // for this pass must come from the answer, not from the state.
+            let balloons = bubbles;
             if (current.length === 0) {
                 const detected = await runDetect();
                 if (!detected || !detected.ok) throw new Error('The detection pass failed.');
                 current = detected.groups ?? [];
+                balloons = detected.bubbles ?? [];
             }
             if (current.length === 0) throw new Error('No text was found on this page.');
 
@@ -423,10 +431,10 @@ export default function App() {
             }
 
             setTranslated(out);
-            await applyToPage(out, current);
-            const withBalloon = countWithBalloon(current, bubbles);
+            await applyToPage(out, current, balloons);
+            const withBalloon = countWithBalloon(current, balloons);
             setStatus(
-                `Translated ${out.length} groups, ${withBalloon} with a balloon, ${bubbles.length} balloons${bubbleError ? `, balloon error: ${bubbleError}` : ''}, wrote them to the page.`,
+                `Translated ${out.length} groups, ${withBalloon} with a balloon, ${balloons.length} balloons${bubbleError ? `, balloon error: ${bubbleError}` : ''}, wrote them to the page.`,
             );
             setWrote(true);
         } catch (cause) {
@@ -577,7 +585,7 @@ export default function App() {
                     />
                     {translated
                         ? groups.map((group, index) => {
-                              const holder = bubbles.find((bubble) =>
+                              const holder = balloons.find((bubble) =>
                                   group.x + group.width / 2 >= bubble.x
                                   && group.x + group.width / 2 <= bubble.x + bubble.width
                                   && group.y + group.height / 2 >= bubble.y
