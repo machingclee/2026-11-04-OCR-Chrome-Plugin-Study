@@ -243,7 +243,7 @@ export default function App() {
                                   : undefined;
                               return (
                                   <span
-                                      key={`group-${group.x}-${group.y}`}
+                                      key={`group-${group.x}-${group.y}-${(translated[index] ?? '').length}`}
                                       className="typeset"
                                       data-vertical={vertical}
                                       ref={fitText}
