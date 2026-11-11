@@ -29,10 +29,6 @@ const MODEL_SHA256 = '1a86ace74961413cbd650002e7bb4dcec4980ffa21b2f19b8693337207
 
 const releaseZip =
     'https://github.com/DonutShinobu/ShinobuTranslator/releases/download/v0.8.7/ShinobuTranslator-chrome-v0.8.7.zip';
-const inpaintTarget = join(root, 'public', 'models', 'aot_inpaint_512.onnx');
-const INPAINT_SIZE = 22_749_561;
-const INPAINT_SHA256 = 'acdddccfdc32780c8947946814e9eea6a8b0d5b1880fb46f3be8389510f11689';
-
 const bubbleTarget = join(root, 'public', 'models', 'bubble.onnx');
 const BUBBLE_SIZE = 11_626_988;
 const BUBBLE_SHA256 = '3da3317f6dffe27cf5c9396dc95d5324fb647e22adeb7bf304edbe921789f0a0';
@@ -236,6 +232,5 @@ async function ensureFromRelease(target: string, entryName: string, size: number
 }
 
 await ensureFromRelease(bubbleTarget, 'models/bubble.onnx', BUBBLE_SIZE, BUBBLE_SHA256, 'bubble model');
-await ensureFromRelease(inpaintTarget, 'models/aot_inpaint_512.onnx', INPAINT_SIZE, INPAINT_SHA256, 'inpaint model');
 await ensureFile(ocrTarget, OCR_MODEL_URL, OCR_MODEL_SIZE, OCR_MODEL_SHA256, 'recogniser model');
 await ensureCharset();
