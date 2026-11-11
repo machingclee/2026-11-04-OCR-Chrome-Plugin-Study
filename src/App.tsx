@@ -163,6 +163,7 @@ export default function App() {
     const [bubbleError, setBubbleError] = useState<string | null>(null);
     const [maskUrl, setMaskUrl] = useState<string | null>(null);
     const [typesetUrl, setTypesetUrl] = useState<string | null>(null);
+    const [showDebug, setShowDebug] = useState(false);
 
     useEffect(() => {
         if (!translated) return;
@@ -478,6 +479,9 @@ export default function App() {
                 <button type="button" onClick={handleUndo} disabled={!wrote}>
                     Put the original back
                 </button>
+                <button type="button" onClick={() => setShowDebug((value) => !value)}>
+                    {showDebug ? 'Hide stages' : 'Show stages'}
+                </button>
 
             </div>
 
@@ -674,30 +678,24 @@ export default function App() {
             ) : null}
 
 
-            {maskUrl || erasedUrl || typesetUrl ? (
-                <details className="debug">
-                    <summary>Debug stages</summary>
+            {showDebug ? (
+                <section className="debug">
+                    <h2>Stages</h2>
                     <div className="debug-grid">
-                        {maskUrl ? (
-                            <figure>
-                                <img src={maskUrl} alt="Refined erase mask" />
-                                <figcaption>mask</figcaption>
-                            </figure>
-                        ) : null}
-                        {erasedUrl ? (
-                            <figure>
-                                <img src={erasedUrl} alt="Page after the erase" />
-                                <figcaption>erased page</figcaption>
-                            </figure>
-                        ) : null}
-                        {typesetUrl ? (
-                            <figure>
-                                <img src={typesetUrl} alt="Page after the typesetting" />
-                                <figcaption>typeset</figcaption>
-                            </figure>
-                        ) : null}
+                        <figure>
+                            {maskUrl ? <img src={maskUrl} alt="Refined erase mask" /> : <p>Press Detect boxes first.</p>}
+                            <figcaption>mask</figcaption>
+                        </figure>
+                        <figure>
+                            {erasedUrl ? <img src={erasedUrl} alt="Page after the erase" /> : <p>Press Detect boxes first.</p>}
+                            <figcaption>erased page</figcaption>
+                        </figure>
+                        <figure>
+                            {typesetUrl ? <img src={typesetUrl} alt="Page after the typesetting" /> : <p>Press Translate the page first.</p>}
+                            <figcaption>typeset</figcaption>
+                        </figure>
                     </div>
-                </details>
+                </section>
             ) : null}
 
             {previews.length > 0 ? (
