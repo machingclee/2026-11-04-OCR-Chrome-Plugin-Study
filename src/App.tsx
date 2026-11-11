@@ -69,6 +69,39 @@ function insetBubble(bubble: BubbleStroke, ratio = 0.14): GroupStroke {
     };
 }
 
+/**
+ * A group that came from a block holds a big box, and painting into it would
+ * cover the drawing. Without a balloon, the lines themselves decide the area.
+ */
+function tightenBox(group: GroupStroke, lines: BoxData[]): GroupStroke {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    for (const line of lines) {
+        const centreX = line.x + line.width / 2;
+        const centreY = line.y + line.height / 2;
+        if (centreX < group.x || centreX > group.x + group.width) continue;
+        if (centreY < group.y || centreY > group.y + group.height) continue;
+        minX = Math.min(minX, line.x);
+        minY = Math.min(minY, line.y);
+        maxX = Math.max(maxX, line.x + line.width);
+        maxY = Math.max(maxY, line.y + line.height);
+    }
+
+    if (!Number.isFinite(minX) || maxX <= minX || maxY <= minY) return group;
+
+    const pad = Math.max(3, Math.min(maxX - minX, maxY - minY) * 0.08);
+    return {
+        x: minX - pad,
+        y: minY - pad,
+        width: maxX - minX + pad * 2,
+        height: maxY - minY + pad * 2,
+        lines: group.lines,
+    };
+}
+
 export default function App() {
     const [imageUrl, setImageUrl] = useState<string | null>(null);
     const [boxes, setBoxes] = useState<BoxData[]>([]);
@@ -186,7 +219,7 @@ export default function App() {
                 // A column box is not a container. The balloon is, so the text
                 // is laid out in its middle and clipped to its edge.
                 return {
-                    box: holder ? insetBubble(holder) : group,
+                    box: holder ? insetBubble(holder) : tightenBox(group, boxes),
                     text: answers[index]?.text ?? group.lines.join(''),
                     columns: answers[index]?.columns,
                     outline: holder?.outline,
