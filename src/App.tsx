@@ -585,7 +585,7 @@ export default function App() {
                     />
                     {translated
                         ? groups.map((group, index) => {
-                              const holder = balloons.find((bubble) =>
+                              const holder = bubbles.find((bubble) =>
                                   group.x + group.width / 2 >= bubble.x
                                   && group.x + group.width / 2 <= bubble.x + bubble.width
                                   && group.y + group.height / 2 >= bubble.y
