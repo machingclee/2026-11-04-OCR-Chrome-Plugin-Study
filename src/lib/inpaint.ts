@@ -1,5 +1,5 @@
 import * as ort from 'onnxruntime-web/wasm';
-import { INPAINT_INPUT_SIZE, INPAINT_MODEL_PATH, INPAINT_OVERLAP } from '../shared/constants';
+import { INPAINT_INPUT_SIZE, INPAINT_MODEL_PATH } from '../shared/constants';
 
 if (ort.env?.wasm) ort.env.wasm.numThreads = 1;
 
@@ -15,119 +15,59 @@ function loadSession(): Promise<ort.InferenceSession> {
     return sessionPromise;
 }
 
-export function isInpaintReady(): boolean {
-    return sessionPromise !== null;
-}
-
 /**
- * Run the model over one 512 square. The image is scaled to minus one to one,
- * the hole is zeroed after that scaling, and the answer is scaled back.
+ * Inpaint the page in one pass. The page is scaled into the 512 square the model
+ * was exported at, and the answer is scaled back, which is what the target
+ * project does instead of tiling. One pass instead of twelve, at the cost of a
+ * softer result.
  */
-async function runTile(
-    source: ImageData,
-    mask: Uint8Array,
-    width: number,
-    height: number,
-): Promise<Uint8ClampedArray> {
+export async function inpaintPage(page: ImageData, mask: Uint8Array): Promise<ImageData> {
+    const size = INPAINT_INPUT_SIZE;
     const session = await loadSession();
     const inputName = session.inputNames[0];
     const maskName = session.inputNames[1] ?? session.inputNames[0];
 
-    const image = new Float32Array(3 * INPAINT_INPUT_SIZE * INPAINT_INPUT_SIZE);
-    const hole = new Float32Array(INPAINT_INPUT_SIZE * INPAINT_INPUT_SIZE);
-    const plane = INPAINT_INPUT_SIZE * INPAINT_INPUT_SIZE;
+    const plane = size * size;
+    const image = new Float32Array(3 * plane);
+    const hole = new Float32Array(plane);
 
-    for (let y = 0; y < height; y += 1) {
-        for (let x = 0; x < width; x += 1) {
-            const target = y * INPAINT_INPUT_SIZE + x;
-            const sourceIndex = (y * width + x) * 4;
-            const masked = mask[y * width + x] === 1;
-            for (let channel = 0; channel < 3; channel += 1) {
-                const value = masked ? 0 : source.data[sourceIndex + channel] / 127.5 - 1;
-                image[channel * plane + target] = value;
-            }
+    for (let y = 0; y < size; y += 1) {
+        const sourceY = Math.min(page.height - 1, Math.floor((y * page.height) / size));
+        for (let x = 0; x < size; x += 1) {
+            const sourceX = Math.min(page.width - 1, Math.floor((x * page.width) / size));
+            const source = (sourceY * page.width + sourceX) * 4;
+            const target = y * size + x;
+            const masked = mask[sourceY * page.width + sourceX] === 1;
             hole[target] = masked ? 1 : 0;
+            for (let channel = 0; channel < 3; channel += 1) {
+                image[channel * plane + target] = masked
+                    ? 0
+                    : page.data[source + channel] / 127.5 - 1;
+            }
         }
     }
 
     const outputs = await session.run({
-        [inputName]: new ort.Tensor('float32', image, [1, 3, INPAINT_INPUT_SIZE, INPAINT_INPUT_SIZE]),
-        [maskName]: new ort.Tensor('float32', hole, [1, 1, INPAINT_INPUT_SIZE, INPAINT_INPUT_SIZE]),
+        [inputName]: new ort.Tensor('float32', image, [1, 3, size, size]),
+        [maskName]: new ort.Tensor('float32', hole, [1, 1, size, size]),
     });
 
     const first = Object.values(outputs)[0] as ort.Tensor;
     const data = first.data as Float32Array;
-    const out = new Uint8ClampedArray(width * height * 4);
-    for (let y = 0; y < height; y += 1) {
-        for (let x = 0; x < width; x += 1) {
-            const target = y * INPAINT_INPUT_SIZE + x;
-            const outIndex = (y * width + x) * 4;
-            for (let channel = 0; channel < 3; channel += 1) {
-                const value = (data[channel * plane + target] + 1) * 127.5;
-                out[outIndex + channel] = Math.max(0, Math.min(255, Math.round(value)));
-            }
-            out[outIndex + 3] = 255;
-        }
-    }
-    return out;
-}
-
-/**
- * Inpaint the whole page tile by tile. Only pixels the mask marked are copied
- * back, so everything outside the text stays exactly as it was.
- */
-export async function inpaintPage(
-    page: ImageData,
-    mask: Uint8Array,
-    onProgress?: (done: number, total: number) => void,
-): Promise<ImageData> {
-    const size = INPAINT_INPUT_SIZE;
-    const stride = size - INPAINT_OVERLAP;
-    const columns = Math.max(1, Math.ceil((page.width - INPAINT_OVERLAP) / stride));
-    const rows = Math.max(1, Math.ceil((page.height - INPAINT_OVERLAP) / stride));
     const result = new Uint8ClampedArray(page.data);
-    let done = 0;
 
-    for (let row = 0; row < rows; row += 1) {
-        for (let column = 0; column < columns; column += 1) {
-            const x0 = Math.min(page.width - size, column * stride);
-            const y0 = Math.min(page.height - size, row * stride);
-            if (x0 < 0 || y0 < 0) continue;
-
-            const tile = new ImageData(size, size);
-            const tileMask = new Uint8Array(size * size);
-            let hasHole = false;
-
-            for (let y = 0; y < size; y += 1) {
-                for (let x = 0; x < size; x += 1) {
-                    const source = ((y0 + y) * page.width + (x0 + x)) * 4;
-                    const target = (y * size + x) * 4;
-                    tile.data[target] = page.data[source];
-                    tile.data[target + 1] = page.data[source + 1];
-                    tile.data[target + 2] = page.data[source + 2];
-                    tile.data[target + 3] = 255;
-                    const masked = mask[(y0 + y) * page.width + (x0 + x)] === 1;
-                    if (masked) hasHole = true;
-                    tileMask[y * size + x] = masked ? 1 : 0;
-                }
+    for (let y = 0; y < page.height; y += 1) {
+        const sourceY = Math.min(size - 1, Math.floor((y * size) / page.height));
+        for (let x = 0; x < page.width; x += 1) {
+            const index = y * page.width + x;
+            if (mask[index] !== 1) continue;
+            const sourceX = Math.min(size - 1, Math.floor((x * size) / page.width));
+            const source = sourceY * size + sourceX;
+            const target = index * 4;
+            for (let channel = 0; channel < 3; channel += 1) {
+                const value = (data[channel * plane + source] + 1) * 127.5;
+                result[target + channel] = Math.max(0, Math.min(255, Math.round(value)));
             }
-
-            if (hasHole) {
-                const painted = await runTile(tile, tileMask, size, size);
-                for (let y = 0; y < size; y += 1) {
-                    for (let x = 0; x < size; x += 1) {
-                        if (tileMask[y * size + x] === 0) continue;
-                        const target = ((y0 + y) * page.width + (x0 + x)) * 4;
-                        const source = (y * size + x) * 4;
-                        result[target] = painted[source];
-                        result[target + 1] = painted[source + 1];
-                        result[target + 2] = painted[source + 2];
-                    }
-                }
-            }
-
-            done += 1;
-            onProgress?.(done, rows * columns);
         }
     }
 
