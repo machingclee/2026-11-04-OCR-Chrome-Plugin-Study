@@ -276,10 +276,9 @@ export default function App() {
                     : 'system-ui, "PingFang TC", sans-serif',
                 leading,
                 weight,
-                minSize: 8,
-                maxSize: 96,
+                minSize: 9,
+                maxSize: 26,
             },
-            erasedUrl !== null,
         );
 
         setTypesetUrl(dataUrl);

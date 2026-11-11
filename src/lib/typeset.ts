@@ -1,18 +1,13 @@
 import type { GroupData } from '../shared/types';
-import { canStartLine, safeBreak, squeeze, toVertical } from './punct';
+import { canStartLine, squeeze, toVertical } from './punct';
 
 type Paragraph = { box: GroupData; text: string; columns?: string[]; outline?: { x: number; y: number }[] };
 
 export type TypesetOptions = {
-    /** The font family the page is lettered in. */
     family: string;
-    /** Multiplier for the gap between lines, 1 is tight and 1.6 is airy. */
     leading: number;
-    /** Base weight for ordinary dialogue. */
     weight: 'normal' | 'bold';
-    /** Smallest size the fit may fall back to. */
     minSize: number;
-    /** Largest size the fit may reach, before the balloon caps it. */
     maxSize: number;
 };
 
@@ -20,47 +15,27 @@ const DEFAULT_OPTIONS: TypesetOptions = {
     family: 'system-ui, "PingFang TC", sans-serif',
     leading: 1.15,
     weight: 'normal',
-    minSize: 8,
-    maxSize: 96,
+    minSize: 9,
+    maxSize: 26,
 };
 
-/** A short shout is set heavier, which is how a letterer marks it. */
-function weightFor(text: string, base: 'normal' | 'bold'): 'normal' | 'bold' {
-    const trimmed = text.trim();
-    if (trimmed.length <= 6 && /[!?！？]$/.test(trimmed)) return 'bold';
-    return base;
+function inner(box: GroupData): { x: number; y: number; width: number; height: number } {
+    const pad = Math.max(2, Math.min(box.width, box.height) * 0.06);
+    return {
+        x: box.x + pad,
+        y: box.y + pad,
+        width: Math.max(8, box.width - pad * 2),
+        height: Math.max(8, box.height - pad * 2),
+    };
 }
 
-function isVertical(box: { width: number; height: number }): boolean {
-    return box.height > box.width * 1.3;
-}
-
-/** Keep the paint inside the balloon, so nothing spills over the artwork. */
-function clipTo(context: CanvasRenderingContext2D, group: Paragraph): void {
-    const outline = group.outline;
-    if (!outline || outline.length < 3) {
-        context.beginPath();
-        context.rect(group.box.x, group.box.y, group.box.width, group.box.height);
-        context.clip();
-        return;
-    }
-    context.beginPath();
-    outline.forEach((point, index) => {
-        if (index === 0) context.moveTo(point.x, point.y);
-        else context.lineTo(point.x, point.y);
-    });
-    context.closePath();
-    context.clip();
-}
-
-/** Break a string into lines that fit the width of the box. */
+/** Wrap a horizontal run into lines that fit the width. */
 function wrap(context: CanvasRenderingContext2D, text: string, width: number): string[] {
     const lines: string[] = [];
     let current = '';
     for (const character of text) {
         const next = current + character;
         if (context.measureText(next).width > width && current.length > 0) {
-            // A closing mark stays on the line it closes, even if it spills.
             if (!canStartLine(character)) {
                 current = next;
                 continue;
@@ -75,112 +50,80 @@ function wrap(context: CanvasRenderingContext2D, text: string, width: number): s
     return lines;
 }
 
-function inner(box: GroupData): { x: number; y: number; width: number; height: number } {
-    const pad = Math.max(3, Math.min(box.width, box.height) * 0.14);
-    return {
-        x: box.x + pad,
-        y: box.y + pad,
-        width: Math.max(8, box.width - pad * 2),
-        height: Math.max(8, box.height - pad * 2),
-    };
+/** Pick the size that fits, but never above the cap. One pass, no search. */
+function fitSize(
+    context: CanvasRenderingContext2D,
+    text: string,
+    width: number,
+    height: number,
+    family: string,
+    max: number,
+    min: number,
+): { size: number; lines: string[] } {
+    let size = Math.min(max, Math.max(min, Math.floor(width / 6)));
+    for (; size >= min; size -= 1) {
+        context.font = `${size}px ${family}`;
+        const lines = wrap(context, text, width);
+        if (lines.length * size * 1.2 <= height) return { size, lines };
+    }
+    context.font = `${min}px ${family}`;
+    return { size: min, lines: wrap(context, text, width) };
 }
 
-function drawHorizontal(context: CanvasRenderingContext2D, box: GroupData, text: string, options: TypesetOptions): void {
-    const weight = weightFor(text, options.weight);
+function drawHorizontal(
+    context: CanvasRenderingContext2D,
+    box: GroupData,
+    text: string,
+    options: TypesetOptions,
+): void {
     const area = inner(box);
-    // Start small enough that a short line cannot turn into a headline.
-    // Binary search the largest size that still fits, so short lines grow.
-    let low = options.minSize;
-    // A glyph may not be wider than a third of the balloon, or the text reads
-    // as a poster instead of a line of dialogue.
-    let high = Math.max(options.minSize, Math.min(options.maxSize, Math.min(area.width, area.height) / 2.5));
-    let best = options.minSize;
-    let bestLines: string[] = [];
-    while (low <= high) {
-        const size = Math.floor((low + high) / 2);
-        context.font = `${weight} ${size}px ${options.family}`;
-        const lines = wrap(context, text, area.width);
-        if (lines.length * size * options.leading <= area.height) {
-            best = size;
-            bestLines = lines;
-            low = size + 1;
-        } else {
-            high = size - 1;
-        }
-    }
-
-    context.font = `${weight} ${best}px ${options.family}`;
-    const lines = bestLines.length > 0 ? bestLines : wrap(context, text, area.width);
-    const total = lines.length * best * options.leading;
-    let y = area.y + (area.height - total) / 2 + best;
+    const { size, lines } = fitSize(context, text, area.width, area.height, options.family, options.maxSize, options.minSize);
+    context.font = `${options.weight} ${size}px ${options.family}`;
+    let y = area.y + (area.height - lines.length * size * options.leading) / 2 + size;
     for (const line of lines) {
         const width = context.measureText(line).width;
         context.fillText(line, area.x + (area.width - width) / 2, y);
-        y += best * options.leading;
+        y += size * options.leading;
     }
 }
 
-function drawVertical(context: CanvasRenderingContext2D, box: GroupData, text: string, options: TypesetOptions, given?: string[]): void {
-    const weight = weightFor(text, options.weight);
+function drawVertical(
+    context: CanvasRenderingContext2D,
+    box: GroupData,
+    text: string,
+    options: TypesetOptions,
+): void {
     const area = inner(box);
-    // Vertical punctuation has its own glyphs, and a mark may not lead a column.
     const characters = [...toVertical(text)];
-
-    const columnsFor = (size: number): string[][] => {
-        const perColumn = Math.max(1, Math.floor(area.height / (size * 1.1)));
-        if (given && given.length > 0 && given.every((column) => [...column].length <= perColumn)) {
-            return given.map((column) => toVertical(column).split(''));
-        }
-        const columns: string[][] = [];
-        let cursor = 0;
-        while (cursor < characters.length) {
-            const limit = Math.min(cursor + perColumn, characters.length);
-            const take = cursor + safeBreak(characters, limit - cursor);
-            columns.push(characters.slice(cursor, take));
-            cursor = take;
-        }
-        return columns;
-    };
-
-    // Search the largest size whose columns still fit across the balloon.
-    let low = options.minSize;
-    // A glyph may not be wider than a third of the balloon, or the text reads
-    // as a poster instead of a line of dialogue.
-    let high = Math.max(options.minSize, Math.min(options.maxSize, Math.min(area.width, area.height) / 2.5));
-    let best = options.minSize;
-    let bestColumns: string[][] = [];
-    while (low <= high) {
-        const size = Math.floor((low + high) / 2);
-        const columns = columnsFor(size);
-        const widest = columns.reduce((max, column) => Math.max(max, column.length), 0) * size * 1.1;
-        const across = columns.length * size * 1.1;
-        if (widest <= area.height && across <= area.width) {
-            best = size;
-            bestColumns = columns;
-            low = size + 1;
-        } else {
-            high = size - 1;
-        }
+    let size = Math.min(options.maxSize, Math.max(options.minSize, Math.floor(area.width / 2)));
+    for (; size >= options.minSize; size -= 1) {
+        const perColumn = Math.max(1, Math.floor(area.height / (size * options.leading)));
+        const columns = Math.ceil(characters.length / perColumn);
+        if (columns * size * 1.2 <= area.width) break;
     }
-
-    const size = best;
-    const columns = bestColumns.length > 0 ? bestColumns : columnsFor(size);
-    context.font = `${weight} ${size}px ${options.family}`;
-    const total = columns.length * size * 1.1;
-    let x = area.x + area.width - (area.width - total) / 2 - size / 2;
-    for (const column of columns) {
-        const used = column.reduce((sum, character) => sum + size * squeeze(character), 0);
+    const perColumn = Math.max(1, Math.floor(area.height / (size * options.leading)));
+    const chunks: string[][] = [];
+    for (let index = 0; index < characters.length; index += perColumn) {
+        chunks.push(characters.slice(index, index + perColumn));
+    }
+    context.font = `${options.weight} ${size}px ${options.family}`;
+    let x = area.x + area.width - size / 2;
+    for (const chunk of chunks) {
+        const used = chunk.reduce((sum, character) => sum + size * squeeze(character), 0);
         let y = area.y + (area.height - used) / 2 + size;
-        for (const character of column) {
+        for (const character of chunk) {
             const width = context.measureText(character).width;
             context.fillText(character, x - width / 2, y);
             y += size * squeeze(character);
         }
-        x -= size * 1.1;
+        x -= size * 1.2;
     }
 }
 
-/** Keep the paint inside the balloon, so nothing spills over the artwork. */
+/**
+ * Paint the page: clear each group, then letter it. The size is capped, so a bad
+ * box can never turn one syllable into a headline again.
+ */
 export function renderTypeset(
     image: CanvasImageSource,
     width: number,
@@ -188,7 +131,6 @@ export function renderTypeset(
     groups: Paragraph[],
     ruby: { x: number; y: number; width: number; height: number }[] = [],
     options: TypesetOptions = DEFAULT_OPTIONS,
-    clean = false,
 ): string {
     const canvas = document.createElement('canvas');
     canvas.width = width;
@@ -197,39 +139,21 @@ export function renderTypeset(
     if (!context) throw new Error('The browser refused a 2D context for the page.');
 
     context.drawImage(image, 0, 0, width, height);
-    context.textBaseline = 'alphabetic';
     context.fillStyle = '#ffffff';
+    context.textBaseline = 'alphabetic';
+    context.textAlign = 'left';
 
-    // Grow each fill the way the target dilates its mask, so the small kana
-    // sitting beside a column are cleared with the column itself.
-    if (!clean) {
     for (const group of groups) {
-        const margin = Math.max(2, Math.min(group.box.width, group.box.height) * 0.06);
-        context.save();
-        clipTo(context, group);
-        context.fillRect(
-            group.box.x - margin,
-            group.box.y - margin,
-            group.box.width + margin * 2,
-            group.box.height + margin * 2,
-        );
-        context.restore();
+        context.fillRect(group.box.x, group.box.y, group.box.width, group.box.height);
     }
-
-    // Ruby that was pulled off a line keeps its own box, and it is still ink.
     for (const box of ruby) {
         context.fillRect(box.x - 1, box.y - 1, box.width + 2, box.height + 2);
     }
-    }
 
     context.fillStyle = '#111111';
-    context.textAlign = 'left';
     for (const group of groups) {
-        context.save();
-        clipTo(context, group);
-        if (isVertical(group.box)) drawVertical(context, group.box, group.text, options, group.columns);
+        if (group.box.height > group.box.width * 1.3) drawVertical(context, group.box, group.text, options);
         else drawHorizontal(context, group.box, group.text, options);
-        context.restore();
     }
 
     return canvas.toDataURL('image/png');
