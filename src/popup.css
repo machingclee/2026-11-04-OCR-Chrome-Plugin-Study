@@ -131,15 +131,20 @@ button[data-busy='true'] {
   text-align: start;
 }
 
-.key {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.keys {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 10px;
   font-size: 12px;
+  align-items: center;
 }
 
-.key input {
-  flex: 1;
+.keys label {
+  display: contents;
+}
+
+.keys select,
+.keys input {
   padding: 4px 6px;
   font-family: inherit;
   font-size: 12px;

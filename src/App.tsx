@@ -3,6 +3,9 @@ import {
     CONTENT_SCRIPT_FILE,
     KEEP_OUTSIDE_KEY,
     DEEPSEEK_KEY,
+    GEMINI_KEY,
+    TRANSLATOR_KEY,
+    type TranslatorChoice,
     LAST_RESULT_KEY,
     PICKED_IMAGE_URL_KEY,
 } from './shared/constants';
@@ -10,6 +13,7 @@ import type { BoxData, DetectResponse } from './shared/types';
 import { BUILD_ID } from './shared/build';
 import { canTranslate, translateAll } from './lib/translate';
 import { translateWithDeepSeek } from './lib/translateDeepSeek';
+import { translateWithGemini } from './lib/translateGemini';
 import serviceWorkerRequestFactory from './shared/factories/serviceWorkerRequestFactory';
 import { cropSize } from './lib/warp';
 
@@ -56,7 +60,9 @@ export default function App() {
     const [groups, setGroups] = useState<GroupStroke[]>([]);
     const [translated, setTranslated] = useState<string[] | null>(null);
     const [translating, setTranslating] = useState(false);
-    const [apiKey, setApiKey] = useState('');
+    const [deepSeekKey, setDeepSeekKey] = useState('');
+    const [geminiKey, setGeminiKey] = useState('');
+    const [translator, setTranslator] = useState<TranslatorChoice>('gemini');
 
     useEffect(() => {
         // start working when we open this popup again,
@@ -68,8 +74,14 @@ export default function App() {
             .then(([local, session]) => {
                 const pickedImageUrl = local[PICKED_IMAGE_URL_KEY];
                 setKeepOutside(local[KEEP_OUTSIDE_KEY] !== false);
-                const storedKey = local[DEEPSEEK_KEY];
-                if (typeof storedKey === 'string') setApiKey(storedKey);
+                const storedDeepSeek = local[DEEPSEEK_KEY];
+                if (typeof storedDeepSeek === 'string') setDeepSeekKey(storedDeepSeek);
+                const storedGemini = local[GEMINI_KEY];
+                if (typeof storedGemini === 'string') setGeminiKey(storedGemini);
+                const storedChoice = local[TRANSLATOR_KEY];
+                if (storedChoice === 'gemini' || storedChoice === 'deepseek' || storedChoice === 'builtin') {
+                    setTranslator(storedChoice);
+                }
                 const lastResult = session[LAST_RESULT_KEY] as LastResult | undefined;
 
                 if (typeof pickedImageUrl !== 'string' || pickedImageUrl.length === 0) {
@@ -112,13 +124,23 @@ export default function App() {
         setError('');
         try {
             const joined = groups.map((group) => group.lines.join(''));
-            const out = apiKey.trim().length > 0
-                ? await translateWithDeepSeek(joined, apiKey.trim())
-                : canTranslate()
-                    ? await translateAll(joined, 'ja', 'zh-Hant')
-                    : null;
+            const key = translator === 'gemini' ? geminiKey.trim() : deepSeekKey.trim();
+
+            let out: string[] | null = null;
+            if (translator === 'builtin') {
+                out = canTranslate() ? await translateAll(joined, 'ja', 'zh-Hant') : null;
+            } else if (key.length > 0) {
+                out = translator === 'gemini'
+                    ? await translateWithGemini(joined, key)
+                    : await translateWithDeepSeek(joined, key);
+            }
+
             if (!out) {
-                setError('No key and no built-in translator. Paste a DeepSeek key above.');
+                setError(
+                    translator === 'builtin'
+                        ? 'This Chrome ships no translator. Pick Gemini or DeepSeek and paste a key.'
+                        : `Paste a ${translator === 'gemini' ? 'Gemini' : 'DeepSeek'} key above.`,
+                );
                 return;
             }
             setTranslated(out);
@@ -128,7 +150,7 @@ export default function App() {
         } finally {
             setTranslating(false);
         }
-    }, [apiKey, groups]);
+    }, [deepSeekKey, geminiKey, groups, translator]);
 
     const handleDetect = useCallback(async () => {
         if (!imageUrl) return;
@@ -228,18 +250,49 @@ export default function App() {
                 </button>
             </div>
 
-            <label className="key">
-                DeepSeek API key
-                <input
-                    type="password"
-                    value={apiKey}
-                    placeholder="sk-..."
-                    onChange={(event) => {
-                        setApiKey(event.target.value);
-                        void chrome.storage.local.set({ [DEEPSEEK_KEY]: event.target.value });
-                    }}
-                />
-            </label>
+            <div className="keys">
+                <label>
+                    Translator
+                    <select
+                        value={translator}
+                        onChange={(event) => {
+                            const choice = event.target.value as TranslatorChoice;
+                            setTranslator(choice);
+                            void chrome.storage.local.set({ [TRANSLATOR_KEY]: choice });
+                        }}
+                    >
+                        <option value="gemini">Gemini (free tier)</option>
+                        <option value="deepseek">DeepSeek</option>
+                        <option value="builtin">This browser</option>
+                    </select>
+                </label>
+
+                <label>
+                    Gemini API key
+                    <input
+                        type="password"
+                        value={geminiKey}
+                        placeholder="AIza..."
+                        onChange={(event) => {
+                            setGeminiKey(event.target.value);
+                            void chrome.storage.local.set({ [GEMINI_KEY]: event.target.value });
+                        }}
+                    />
+                </label>
+
+                <label>
+                    DeepSeek API key
+                    <input
+                        type="password"
+                        value={deepSeekKey}
+                        placeholder="sk-..."
+                        onChange={(event) => {
+                            setDeepSeekKey(event.target.value);
+                            void chrome.storage.local.set({ [DEEPSEEK_KEY]: event.target.value });
+                        }}
+                    />
+                </label>
+            </div>
 
             {error ? <p role="alert">{error}</p> : null}
 
