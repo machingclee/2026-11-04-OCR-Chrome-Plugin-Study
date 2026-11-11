@@ -107,3 +107,14 @@ export function toUnits(text: string): string[] {
     }
     return units;
 }
+
+/**
+ * Marks that sit in a half cell, the way a Japanese page sets them. The glyph
+ * keeps its size, but the advance shrinks, so a run of commas does not open a
+ * gap down the column.
+ */
+const HALF_CELL = new Set(['、', '。', '，', '．', '︑', '︒', '︐', ',', '.']);
+
+export function squeeze(character: string): number {
+    return HALF_CELL.has(character) ? 0.62 : 1.1;
+}

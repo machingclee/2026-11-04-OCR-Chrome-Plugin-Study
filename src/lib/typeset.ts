@@ -1,5 +1,5 @@
 import type { GroupData } from '../shared/types';
-import { canStartLine, safeBreak, toVertical } from './punct';
+import { canStartLine, safeBreak, squeeze, toVertical } from './punct';
 
 type Paragraph = { box: GroupData; text: string; columns?: string[]; outline?: { x: number; y: number }[] };
 
@@ -109,13 +109,13 @@ function drawVertical(context: CanvasRenderingContext2D, box: GroupData, text: s
     const total = columns.length * size * 1.1;
     let x = area.x + area.width - (area.width - total) / 2 - size / 2;
     for (const column of columns) {
-        // Centre every column in the height it uses, so short columns sit evenly.
-        const used = column.length * size * 1.1;
+        // A mark takes half a cell, so the column is measured with the same rule.
+        const used = column.reduce((sum, character) => sum + size * squeeze(character), 0);
         let y = area.y + (area.height - used) / 2 + size;
         for (const character of column) {
             const width = context.measureText(character).width;
             context.fillText(character, x - width / 2, y);
-            y += size * 1.1;
+            y += size * squeeze(character);
         }
         x -= size * 1.1;
     }
