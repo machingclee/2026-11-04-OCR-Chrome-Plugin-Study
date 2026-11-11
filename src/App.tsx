@@ -579,7 +579,7 @@ export default function App() {
             {imageUrl ? (
                 <div className="stage" key={boxes?.length || 0}>
                     <img
-                        src={imageUrl}
+                        src={typesetUrl ?? erasedUrl ?? imageUrl}
                         alt="Picked from the page"
                         onLoad={(event) =>
                             setSize({
@@ -588,7 +588,7 @@ export default function App() {
                             })
                         }
                     />
-                    {translated
+                    {translated && !typesetUrl
                         ? groups.map((group, index) => {
                               const holder = bubbles.find((bubble) =>
                                   group.x + group.width / 2 >= bubble.x
