@@ -153,3 +153,85 @@ python3 scripts/probe-detector-outputs.py <image>
 1. Are the balloons acceptable, or does the balloon model need to be tuned first?
 2. Should text outside a balloon be erased at all, or left alone?
 3. Is a flat colour fill acceptable on textured paper, or is a model required?
+
+## How the target project erases, in order
+
+This is the recipe to follow. It is three stages, and the third is what makes the
+page look right.
+
+### Stage one: refine the mask
+
+`packages/image-pipeline/src/pipeline/maskRefinement/index.ts`, called from the
+orchestrator at `orchestrator.ts:1030`:
+
+```ts
+const refineResult = refineTextMask(originalCanvas, regionsWithText, detectionMaskCanvas,
+    platform, { method: "fit_text", kernelSize: 3 });
+```
+
+It takes the `seg` mask, keeps only the regions that actually hold text, filters
+the connected components, and then dilates each region by a size derived from the
+text it contains:
+
+```ts
+const baseRatio = outlineWidth > 0 ? 0.05 : 0.1;
+const baseDilateSize = Math.max(Math.floor(Math.floor(regionTextSize * baseRatio) / 2) * 2 + 1, 3);
+```
+
+The dilation is what removes furigana and the soft edge of a stroke. A pure
+`seg > threshold` mask leaves both behind.
+
+### Stage two: inpaint with a model
+
+`packages/image-pipeline/src/pipeline/inpaint.ts`, called at `orchestrator.ts:1061`:
+
+```ts
+const inpaintResult = await runInpaint(originalCanvas, refinedMaskCanvas, platform, modelRuntime);
+```
+
+The model is `aot_inpaint_512.onnx`, 22,749,561 bytes, sha256 `acdddccf…`, the
+same file this repository already downloaded once and then removed.
+
+Two settings decide whether it works:
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| `size` | 512 | the model was exported at 512, so the page is tiled |
+| `maskFill` | `zero_after_normalize` | the hole must be zero, not minus one |
+
+```ts
+const fill = maskFill === "zero_after_normalize" ? 0 : -1;
+```
+
+Getting this wrong is what produced the rainbow streaks in the earlier attempt.
+The hole was filled with minus one, which is black in a `minus_one_to_one` tensor
+and is not what the model was trained to erase.
+
+### Stage three: draw over the cleaned page
+
+`orchestrator.ts:1142`:
+
+```ts
+const typesetResult = await drawTypeset(cleanedCanvas, latestRegions, config.targetLang, {...});
+```
+
+The text is drawn on top of the inpainted page, not on a colour fill.
+
+## What this means for our code
+
+1. Our erase fills a hole with a flat colour. That is why balloons with tone or
+   hatching look wrong, and why a stroke over artwork leaves a patch.
+2. A refined mask alone would improve things even without the model, because the
+   dilation removes the leftover edges our threshold misses.
+3. The model is the only way to keep texture. Re-adding it means:
+   - restore `aot_inpaint_512.onnx` in `scripts/prepare-assets.ts` (the constants
+     were removed in `9893a2a`, recover them from that commit),
+   - tile the page at 512 with overlap,
+   - normalise to `minus_one_to_one`, then zero the hole,
+   - stitch and draw the text.
+
+## Order to try
+
+1. Refined mask with dilation, still using the colour fill. Cheap, and it fixes
+   the "ghost edge" complaint.
+2. Then the model, if the colour fill is still not enough on textured paper.
