@@ -95,6 +95,18 @@ export function minAreaRect(points: Point[]): RotatedRect | null {
     return best;
 }
 
+/**
+ * A rectangle has no direction, so every angle folds into (-pi/2, pi/2]. The
+ * guard at the end treats a near axis aligned line as exactly axis aligned.
+ */
+export function foldAngle(angle: number): number {
+    const halfTurn = Math.PI;
+    let folded = ((angle % halfTurn) + halfTurn) % halfTurn;
+    if (folded > Math.PI / 2) folded -= halfTurn;
+    if (folded <= -Math.PI / 2) folded += halfTurn;
+    return Math.abs(folded) < 0.01 ? 0 : folded;
+}
+
 /** The four corners of a rotated rect, clockwise from the top left of the text. */
 export function cornersOf(rect: RotatedRect): Point[] {
     const cos = Math.cos(rect.angle);

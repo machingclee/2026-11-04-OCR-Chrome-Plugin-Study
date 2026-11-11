@@ -21,6 +21,10 @@ export type BoxData = {
     height: number;
     score: number;
     direction: 'vertical' | 'horizontal';
+    /** Radians of the text direction, 0 when the line sits on the page axes. */
+    angle?: number;
+    lineLength?: number;
+    lineThickness?: number;
     ruby: RubyBox[];
     text: string;
     confidence: number;

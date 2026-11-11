@@ -149,19 +149,28 @@ export default function App() {
                         }
                     />
                     {size.width > 0
-                        ? boxes.map((box) => (
-                            <span
-                                key={`${box.x}-${box.y}-${box.width}-${box.height}`}
-                                className="box"
-                                data-direction={box.direction}
-                                style={{
-                                    left: `${(box.x / size.width) * 100}%`,
-                                    top: `${(box.y / size.height) * 100}%`,
-                                    width: `${(box.width / size.width) * 100}%`,
-                                    height: `${(box.height / size.height) * 100}%`,
-                                }}
-                            />
-                        ))
+                        ? boxes.map((box) => {
+                            const angle = box.angle ?? 0;
+                            const width = box.lineLength ?? box.width;
+                            const height = box.lineThickness ?? box.height;
+                            const centreX = box.x + box.width / 2;
+                            const centreY = box.y + box.height / 2;
+                            return (
+                                <span
+                                    key={`${box.x}-${box.y}-${box.width}-${box.height}-${angle}`}
+                                    className="box"
+                                    data-direction={box.direction}
+                                    style={{
+                                        left: `${((centreX - width / 2) / size.width) * 100}%`,
+                                        top: `${((centreY - height / 2) / size.height) * 100}%`,
+                                        width: `${(width / size.width) * 100}%`,
+                                        height: `${(height / size.height) * 100}%`,
+                                        transform: angle === 0 ? undefined : `rotate(${angle}rad)`,
+                                        transformOrigin: 'center',
+                                    }}
+                                />
+                            );
+                        })
                         : null}
                 </div>
             ) : null}

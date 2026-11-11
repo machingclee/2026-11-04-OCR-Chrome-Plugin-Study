@@ -10,7 +10,7 @@ import {
 
 ort.env.wasm.numThreads = 1;
 
-import { minAreaRect } from './rect';
+import { foldAngle, minAreaRect } from './rect';
 import type { Box, DetectionResult, Prepared, TextBlock } from './types';
 
 let sessionPromise: Promise<ort.InferenceSession> | null = null;
@@ -178,7 +178,7 @@ function toDetBoxes(map: Float32Array, prepared: Prepared): Box[] {
         if (right - left < 4 || bottom - top < 4) continue;
 
         const rect = minAreaRect(points);
-        const angle = rect ? (Math.abs(rect.angle) > Math.PI / 2 ? 0 : rect.angle) : 0;
+        const angle = rect ? foldAngle(rect.angle) : 0;
 
         boxes.push({
             x: left,
