@@ -71,5 +71,10 @@ export const BUBBLE_INPUT_SIZE = 640;
 export const BUBBLE_SCORE_THRESHOLD = 0.3;
 export const BUBBLE_NMS = 0.45;
 export const BUBBLE_MASK_THRESHOLD = 0.5;
+/** AOT inpainting, 512 square, minus one to one, hole zeroed after the scale. */
+export const INPAINT_MODEL_PATH = 'models/aot_inpaint_512.onnx';
+export const INPAINT_INPUT_SIZE = 512;
+export const INPAINT_OVERLAP = 64;
+export const INPAINT_MASK_GROW = 3;
 
 
