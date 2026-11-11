@@ -1,7 +1,12 @@
+/* Chrome caps an action popup at 800 by 600, so the page fills that box. */
 body {
-  width: 720px;
+  width: 784px;
+  min-height: 560px;
+  max-height: 600px;
+  overflow-y: auto;
   margin: 0;
-  padding: 16px;
+  padding: 8px;
+  box-sizing: border-box;
   font: 14px/1.5 system-ui, sans-serif;
 }
 
