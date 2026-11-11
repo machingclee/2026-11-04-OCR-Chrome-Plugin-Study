@@ -282,6 +282,7 @@ export default function App() {
             erasedUrl !== null,
         );
 
+        setTypesetUrl(dataUrl);
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (!tab?.id) throw new Error('There is no active tab.');
         await chrome.tabs.sendMessage(tab.id, {
