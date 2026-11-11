@@ -97,11 +97,6 @@ button[data-busy='true'] {
   color: #333;
 }
 
-.toggle {
-  display: block;
-  margin: 0 0 8px;
-  color: #444;
-}
 
 .bubble {
   position: absolute;

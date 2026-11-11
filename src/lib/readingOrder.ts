@@ -332,7 +332,7 @@ export function orderForReading(lines: TextLine[]): TextLine[] {
 export function toOrderedTextLines(
     detBoxes: Box[],
     blkBoxes: TextBlock[] = [],
-    keepOutside = false,
+    keepOutside = true,
 ): TextLine[] {
     const inside = keepOutside || blkBoxes.length === 0
         ? detBoxes
