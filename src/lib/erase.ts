@@ -48,7 +48,13 @@ function backgroundColour(pixels: Uint8ClampedArray, values: Float32Array): [num
  * it. A pixel counts as a glyph when its own seg value passes the threshold, and
  * the mask grows by one pixel to catch the soft edge of the stroke.
  */
-export function eraseGlyphs(image: ImageData, box: Box, mask: TextMask): void {
+export function eraseGlyphs(
+    image: ImageData,
+    box: Box,
+    mask: TextMask,
+    /** Return false to leave a page pixel untouched, which keeps a run inside its balloon. */
+    allow?: (pageX: number, pageY: number) => boolean,
+): void {
     const { width, height, data } = image;
     const values = new Float32Array(width * height);
 
@@ -75,6 +81,11 @@ export function eraseGlyphs(image: ImageData, box: Box, mask: TextMask): void {
                 }
             }
             if (!glyph) continue;
+
+            if (allow) {
+                const page = pagePointAt(uprightFrame(box), x + 0.5, y + 0.5);
+                if (!allow(page.x, page.y)) continue;
+            }
 
             const offset = (y * width + x) * 4;
             data[offset] = red;
