@@ -7,16 +7,19 @@ import {
 } from './shared/constants';
 import type { BoxData, DetectResponse } from './shared/types';
 import { BUILD_ID } from './shared/build';
+import { canTranslate, translateAll } from './lib/translate';
 import serviceWorkerRequestFactory from './shared/factories/serviceWorkerRequestFactory';
 import { cropSize } from './lib/warp';
 
 type BubbleStroke = { x: number; y: number; width: number; height: number };
+type GroupStroke = { x: number; y: number; width: number; height: number; lines: string[] };
 type LastResult = {
     version?: string;
     imageUrl: string;
     boxes: BoxData[];
     previews?: string[];
     bubbles?: BubbleStroke[];
+    groups?: GroupStroke[];
     ms: number;
 };
 
@@ -30,6 +33,9 @@ export default function App() {
     const [error, setError] = useState<string | null>(null);
     const [keepOutside, setKeepOutside] = useState(true);
     const [bubbles, setBubbles] = useState<BubbleStroke[]>([]);
+    const [groups, setGroups] = useState<GroupStroke[]>([]);
+    const [translated, setTranslated] = useState<string[] | null>(null);
+    const [translating, setTranslating] = useState(false);
 
     useEffect(() => {
         // start working when we open this popup again,
@@ -55,6 +61,7 @@ export default function App() {
                     setBoxes(lastResult.boxes);
                     setPreviews(Array.isArray(lastResult.previews) ? lastResult.previews : []);
                     setBubbles(Array.isArray(lastResult.bubbles) ? lastResult.bubbles : []);
+                    setGroups(Array.isArray(lastResult.groups) ? lastResult.groups : []);
                     setStatus(`Restored ${lastResult.boxes.length} boxes from ${lastResult.ms} ms.`);
                     return;
                 }
@@ -76,6 +83,21 @@ export default function App() {
         }
     }, []);
 
+    const handleTranslate = useCallback(async () => {
+        if (groups.length === 0) return;
+        setTranslating(true);
+        try {
+            const joined = groups.map((group) => group.lines.join(''));
+            const out = await translateAll(joined, 'ja', 'zh-Hant');
+            setTranslated(out);
+            setStatus(`Translated ${out.length} groups.`);
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : String(cause));
+        } finally {
+            setTranslating(false);
+        }
+    }, [groups]);
+
     const handleDetect = useCallback(async () => {
         if (!imageUrl) return;
         setBusy(true);
@@ -94,6 +116,8 @@ export default function App() {
             setBoxes(response.boxes);
             setPreviews(response.previews);
             setBubbles(response.bubbles ?? []);
+            setGroups(response.groups ?? []);
+            setTranslated(null);
             const vertical = response.boxes.filter((box) => box.direction === 'vertical').length;
             const ruby = response.boxes.reduce((sum, box) => sum + box.ruby.length, 0);
             const read = response.boxes.filter((box) => box.text.length > 0).length;
@@ -162,6 +186,14 @@ export default function App() {
                 >
                     {busy ? 'Working' : 'Detect boxes'}
                 </button>
+                <button
+                    type="button"
+                    onClick={handleTranslate}
+                    disabled={groups.length === 0 || translating}
+                    title={canTranslate() ? undefined : 'This browser ships no translator.'}
+                >
+                    {translating ? 'Translating' : 'Translate'}
+                </button>
             </div>
 
             {error ? <p role="alert">{error}</p> : null}
@@ -178,6 +210,23 @@ export default function App() {
                             })
                         }
                     />
+                    {translated
+                        ? groups.map((group, index) => (
+                              <span
+                                  key={`group-${group.x}-${group.y}`}
+                                  className="typeset"
+                                  style={{
+                                      left: `${(group.x / size.width) * 100}%`,
+                                      top: `${(group.y / size.height) * 100}%`,
+                                      width: `${(group.width / size.width) * 100}%`,
+                                      height: `${(group.height / size.height) * 100}%`,
+                                      fontSize: `${Math.max(9, Math.min(18, group.width / 6))}px`,
+                                  }}
+                              >
+                                  {translated[index] ?? group.lines.join('')}
+                              </span>
+                          ))
+                        : null}
                     {bubbles.map((bubble) => (
                         <span
                             key={`bubble-${bubble.x}-${bubble.y}`}
