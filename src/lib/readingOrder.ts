@@ -2,6 +2,9 @@ import type { Box, TextBlock, TextLine } from './types';
 
 /** A host must be at least this much thicker than the box beside it. */
 const RUBY_THICKNESS_RATIO = 1.6;
+/** Below this share of surviving lines the block gate is treated as unreliable. */
+const GATE_MIN_KEEP_RATIO = 0.5;
+
 
 function contains(outer: Box, inner: Box): boolean {
     const inside =
@@ -171,9 +174,14 @@ export function orderForReading(lines: TextLine[]): TextLine[] {
 
 /** One call for the offscreen document: detector boxes in, ordered lines out. */
 export function toOrderedTextLines(detBoxes: Box[], blkBoxes: TextBlock[] = []): TextLine[] {
-    const kept = blkBoxes.length === 0
+    const inside = blkBoxes.length === 0
         ? detBoxes
         : detBoxes.filter((box) => blkBoxes.some((block) => centreInside(box, block)));
+
+    // A dark page gives the block head very little to work with. When the gate
+    // would throw away most of the page, its evidence is weaker than the lines.
+    const gateIsUseful = inside.length >= detBoxes.length * GATE_MIN_KEEP_RATIO;
+    const kept = gateIsUseful ? inside : detBoxes;
     const merged = mergeAligned(dropNoise(kept));
     return orderForReading(separateRuby(toTextLines(merged)));
 }
