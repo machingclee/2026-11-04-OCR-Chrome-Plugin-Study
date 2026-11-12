@@ -416,31 +416,31 @@ export default function App() {
     }, [recording]);
 
     return (
-        <main className="mx-auto flex w-[720px] flex-col gap-4 rounded-2xl bg-[#f4f1ec] p-4 text-slate-900">
-            <div className="flex self-start rounded-xl bg-[#e9e3da] p-1">
+        <main className="mx-auto flex w-[720px] flex-col gap-4 rounded-md bg-[#f4f1ec] p-4 text-slate-900">
+            <div className="flex self-start rounded-md bg-[#e9e3da] p-1">
                 <button
                     type="button"
                     onClick={() => setView('production')}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${view === 'production' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                    className={`rounded px-3 py-1.5 text-xs font-medium transition ${view === 'production' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
                 >
                     Production
                 </button>
                 <button
                     type="button"
                     onClick={() => setView('debug')}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${view === 'debug' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                    className={`rounded px-3 py-1.5 text-xs font-medium transition ${view === 'debug' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
                 >
                     Debug
                 </button>
             </div>
 
-            <header className="rounded-2xl border border-[#e7dfd4] bg-white p-4 shadow-sm">
+            <header className="rounded-md border border-[#e7dfd4] bg-white p-4 shadow-sm">
                 <div className="flex items-start justify-between gap-4">
                     <div>
                         <h1 className="text-lg font-semibold tracking-tight">Comic Translator</h1>
                         <p className="mt-1 text-sm leading-5 text-slate-600">{status}</p>
                     </div>
-                    <span className="rounded-full bg-[#ece4d9] px-2.5 py-1 text-xs font-medium text-[#7a5c43]">v1.0.5</span>
+                    <span className="rounded bg-[#ece4d9] px-2.5 py-1 text-xs font-medium text-[#7a5c43]">v1.0.5</span>
                 </div>
 
                 {view === 'debug' ? (
@@ -448,7 +448,7 @@ export default function App() {
                         <button
                             type="button"
                             onClick={handlePick}
-                            className="rounded-lg bg-[#b3815c] px-3 py-2 text-sm font-medium text-white transition hover:bg-[#a5724f] disabled:cursor-not-allowed disabled:opacity-50"
+                            className="rounded bg-[#b3815c] px-3 py-2 text-sm font-medium text-white transition hover:bg-[#a5724f] disabled:cursor-not-allowed disabled:opacity-50"
                         >
                             Pick an image
                         </button>
@@ -458,7 +458,7 @@ export default function App() {
                             disabled={!imageUrl || busy}
                             data-busy={busy}
                             title={imageUrl ? undefined : 'Pick an image on the page first.'}
-                            className="rounded-lg border border-[#ded2c4] bg-white px-3 py-2 text-sm font-medium text-orange-800 transition hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="rounded border border-[#ded2c4] bg-white px-3 py-2 text-sm font-medium text-orange-800 transition hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                             {busy ? 'Detecting...' : 'Detect boxes'}
                         </button>
@@ -467,7 +467,7 @@ export default function App() {
                             onClick={handleTranslate}
                             disabled={translating || !imageUrl}
                             title="Translation runs in the background worker."
-                            className="rounded-lg bg-[#bd9a6d] px-3 py-2 text-sm font-medium text-white transition hover:bg-[#b08d60] disabled:cursor-not-allowed disabled:opacity-50"
+                            className="rounded bg-[#bd9a6d] px-3 py-2 text-sm font-medium text-white transition hover:bg-[#b08d60] disabled:cursor-not-allowed disabled:opacity-50"
                         >
                             {translating ? 'Translating...' : 'Translate page'}
                         </button>
@@ -475,28 +475,28 @@ export default function App() {
                             type="button"
                             onClick={handleClearOverlay}
                             disabled={!imageUrl}
-                            className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                             Clear overlay
                         </button>
                     </div>
                 ) : (
-                    <div className="mt-4 rounded-xl border border-[#ded2c4] bg-orange-50 px-4 py-3 text-sm text-orange-900">
+                    <div className="mt-4 rounded-md border border-[#ded2c4] bg-orange-50 px-4 py-3 text-sm text-orange-900">
                         Press <kbd className="rounded border border-[#ded2c4] bg-white px-1.5 py-0.5 font-mono text-xs">⌥Q</kbd> on macOS or <kbd className="rounded border border-[#ded2c4] bg-white px-1.5 py-0.5 font-mono text-xs">Alt+Q</kbd> on Windows, select an image, then click the check mark.
                     </div>
                 )}
             </header>
 
             {error ? (
-                <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+                <div role="alert" className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
                     {error}
                 </div>
             ) : null}
 
-            <section className="rounded-2xl border border-[#e7dfd4] bg-white p-4 shadow-sm">
+            <section className="rounded-md border border-[#e7dfd4] bg-white p-4 shadow-sm">
                 <div className="flex items-center justify-between gap-3">
                     <h2 className="text-sm font-semibold">Translation settings</h2>
-                    <div className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${dirty ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                    <div className={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium ${dirty ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
                         <span className={`h-1.5 w-1.5 rounded-full ${dirty ? 'bg-amber-500' : 'bg-emerald-500'}`} />
                         {dirty ? 'Unsaved' : 'Saved'}
                     </div>
@@ -513,7 +513,7 @@ export default function App() {
                                 setDirty(true);
                                 void chrome.storage.local.set({ [TRANSLATOR_KEY]: choice });
                             }}
-                            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-[#b08a68] focus:ring-2 focus:ring-[#eadfd2]"
+                            className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-[#b08a68] focus:ring-2 focus:ring-[#eadfd2]"
                         >
                             <option value="gemini">Gemini (free tier)</option>
                             <option value="deepseek">DeepSeek</option>
@@ -526,7 +526,7 @@ export default function App() {
                         <button
                             type="button"
                             onClick={() => setRecording(true)}
-                            className={`rounded-lg border px-3 py-2 text-left text-sm transition ${recording ? 'border-[#b08a68] bg-[#f3eee8] text-[#6d523b]' : 'border-slate-300 bg-white text-slate-900 hover:bg-orange-50'}`}
+                            className={`rounded border px-3 py-2 text-left text-sm transition ${recording ? 'border-[#b08a68] bg-[#f3eee8] text-[#6d523b]' : 'border-slate-300 bg-white text-slate-900 hover:bg-orange-50'}`}
                         >
                             {recording ? 'Press a shortcut...' : shortcut || 'Not set'}
                         </button>
@@ -545,7 +545,7 @@ export default function App() {
                                 setGeminiKey(event.target.value);
                                 setDirty(true);
                             }}
-                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#b08a68] focus:ring-2 focus:ring-[#eadfd2]"
+                            className="rounded border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#b08a68] focus:ring-2 focus:ring-[#eadfd2]"
                         />
                         <span className="text-[11px] font-normal leading-4 text-slate-500">
                             Used for the vision SFX check when Gemini is selected. DeepSeek uses its own vision model.
@@ -562,14 +562,14 @@ export default function App() {
                                 setDeepSeekKey(event.target.value);
                                 setDirty(true);
                             }}
-                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#b08a68] focus:ring-2 focus:ring-[#eadfd2]"
+                            className="rounded border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#b08a68] focus:ring-2 focus:ring-[#eadfd2]"
                         />
                     </label>
                 </div>
             </section>
 
             {imageUrl ? (
-                <section className={`rounded-2xl border border-[#e7dfd4] bg-white p-3 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
+                <section className={`rounded-md border border-[#e7dfd4] bg-white p-3 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
                     <div className="mb-2 flex items-center justify-between">
                         <h2 className="text-sm font-semibold">Page preview</h2>
                         <span className="text-xs text-slate-500">{boxes.length} boxes</span>
@@ -626,11 +626,11 @@ export default function App() {
             ) : null}
 
             {groups.length > 0 ? (
-                <section className={`rounded-2xl border border-[#e7dfd4] bg-white p-4 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
+                <section className={`rounded-md border border-[#e7dfd4] bg-white p-4 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
                     <h2 className="text-sm font-semibold">Reading groups</h2>
                     <ol className="mt-2 space-y-2">
                         {groups.map((group, index) => (
-                            <li key={`${group.x}-${group.y}`} className="rounded-xl border border-[#e7dfd4] bg-[#f2ede7] p-3">
+                            <li key={`${group.x}-${group.y}`} className="rounded-md border border-[#e7dfd4] bg-[#f2ede7] p-3">
                                 <p className="text-sm font-medium text-slate-800">{group.lines.join('') || 'no text'}</p>
                                 {translated ? (
                                     <p className="mt-1 text-sm text-slate-600">
@@ -646,13 +646,13 @@ export default function App() {
             ) : null}
 
             {previews.length > 0 ? (
-                <section className={`rounded-2xl border border-[#e7dfd4] bg-white p-4 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
+                <section className={`rounded-md border border-[#e7dfd4] bg-white p-4 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
                     <h2 className="text-sm font-semibold">Text regions</h2>
                     <ol className="mt-2 flex gap-3 overflow-x-auto pb-1">
                         {boxes.map((box, index) => (
                             <li key={index} className="w-40 shrink-0">
                                 {previews[index] ? (
-                                    <img src={previews[index]} alt={`Text region ${index + 1}`} className="max-h-28 w-full rounded-lg border border-[#e7dfd4] bg-white object-contain" />
+                                    <img src={previews[index]} alt={`Text region ${index + 1}`} className="max-h-28 w-full rounded border border-[#e7dfd4] bg-white object-contain" />
                                 ) : null}
                                 <p className="mt-1 text-xs leading-4 text-slate-600">{box.text || 'no text'}</p>
                                 <span className="ocr-score">{ocrScore(box.confidence)}</span>

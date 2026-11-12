@@ -300,7 +300,7 @@ function start(): void {
                 button.style.top = `${top}px`;
                 button.style.width = `${size}px`;
                 button.style.height = `${size}px`;
-                button.style.borderRadius = '9999px';
+                button.style.borderRadius = '8px';
                 button.style.border = '1px solid rgba(255,255,255,0.8)';
                 button.style.background = '#2563eb';
                 button.style.color = '#fff';

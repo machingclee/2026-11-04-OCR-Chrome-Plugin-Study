@@ -14,7 +14,7 @@ body {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
-  border-radius: 14px;
+  border-radius: 8px;
   overflow-x: hidden;
   background: #f4f1ec;
   font-family: ui-sans-serif, system-ui, sans-serif;
@@ -23,7 +23,7 @@ body {
 .stage {
   position: relative;
   overflow: hidden;
-  border-radius: 12px;
+  border-radius: 6px;
   border: 1px solid #e2e8f0;
   background: #fff;
 }
