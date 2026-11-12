@@ -194,6 +194,27 @@ function findAt(doc: Document, x: number, y: number, offsetX: number, offsetY: n
     return null;
 }
 
+const PAGE_EVENTS = ['mousedown', 'auxclick', 'contextmenu', 'dragstart'] as const;
+
+// Installed at document_start by the manifest before the page registers its
+// own mousedown handlers. Rawkuma opens an ad from a window capture handler.
+const PICKING_ATTR = 'data-comic-translator-picking';
+const guardScope = window as unknown as { __comicTranslatorMousedownGuard?: boolean };
+if (!guardScope.__comicTranslatorMousedownGuard) {
+    guardScope.__comicTranslatorMousedownGuard = true;
+    window.addEventListener('mousedown', (event) => {
+        if (!document.documentElement.hasAttribute(PICKING_ATTR)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+    }, true);
+}
+
+function swallowPageEvent(event: Event): void {
+    if ((event.target as Element | null)?.closest('#comic-translator-pick-confirm')) return;
+    event.preventDefault();
+    event.stopPropagation();
+}
+
 function start(): void {
     // A new pick replaces the previous translation overlay.
     clearAll();
@@ -245,9 +266,11 @@ function start(): void {
         window.removeEventListener('click', onClick, true);
         window.removeEventListener('mousemove', onMove, true);
         window.removeEventListener('keydown', onKey, true);
+        for (const type of PAGE_EVENTS) window.removeEventListener(type, swallowPageEvent, true);
         shield.remove();
         box.remove();
         window.__comicTranslatorPickerActive = false;
+        document.documentElement.removeAttribute(PICKING_ATTR);
     };
 
     function onMove(event: MouseEvent): void {
@@ -300,8 +323,19 @@ function start(): void {
                 button.textContent = '✓';
                 const size = 44;
                 const margin = 8;
-                const left = Math.min(window.innerWidth - size - margin, Math.max(margin, picked.rect.right - size - margin));
-                const top = Math.min(window.innerHeight - size - margin, Math.max(margin, picked.rect.bottom - size - margin));
+                const gap = 8;
+                let left = picked.rect.right + gap;
+                if (left + size > window.innerWidth - margin) {
+                    left = picked.rect.left - size - gap;
+                }
+                if (left < margin) {
+                    left = Math.min(window.innerWidth - size - margin, Math.max(margin, picked.rect.right - size - gap));
+                }
+                let top = Math.min(window.innerHeight - size - margin, Math.max(margin, picked.rect.bottom - size - gap));
+                if (left + size > window.innerWidth - margin) {
+                    left = Math.min(window.innerWidth - size - margin, Math.max(margin, picked.rect.right - size - gap));
+                    top = Math.min(window.innerHeight - size - margin, Math.max(margin, picked.rect.bottom + gap));
+                }
                 button.style.position = 'fixed';
                 button.style.left = `${left}px`;
                 button.style.top = `${top}px`;
@@ -421,6 +455,7 @@ function start(): void {
     window.addEventListener('click', onClick, true);
     window.addEventListener('mousemove', onMove, true);
     window.addEventListener('keydown', onKey, true);
+    for (const type of PAGE_EVENTS) window.addEventListener(type, swallowPageEvent, true);
     showToast('Pick mode is on. Click an image, or press Escape.');
 }
 
@@ -435,6 +470,7 @@ type BatchSelection = {
 function startBatchSelection(): void {
     if (window.__comicTranslatorPickerActive) return;
     window.__comicTranslatorPickerActive = true;
+    document.documentElement.setAttribute(PICKING_ATTR, 'true');
 
     const selection: BatchSelection[] = [];
     let stopped = false;
@@ -598,6 +634,7 @@ function startBatchSelection(): void {
         window.removeEventListener('keydown', onKey, true);
         window.removeEventListener('scroll', redrawMarks, true);
         window.removeEventListener('resize', redrawMarks);
+        for (const type of PAGE_EVENTS) window.removeEventListener(type, swallowPageEvent, true);
         shield.remove();
         hover.remove();
         bar?.remove();
@@ -605,6 +642,7 @@ function startBatchSelection(): void {
         bar = null;
         marks = null;
         window.__comicTranslatorPickerActive = false;
+        document.documentElement.removeAttribute(PICKING_ATTR);
         if (!keepTokens) {
             for (const item of selection) item.element.removeAttribute(OVERLAY_TARGET_ATTRIBUTE);
             selection.length = 0;
@@ -686,6 +724,7 @@ function startBatchSelection(): void {
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('scroll', redrawMarks, true);
     window.addEventListener('resize', redrawMarks);
+    for (const type of PAGE_EVENTS) window.addEventListener(type, swallowPageEvent, true);
     makeBar();
     redrawMarks();
     showToast('Selection mode: click images to select, then use the tick bar. Escape cancels.');
@@ -700,6 +739,7 @@ pickerScope.__comicTranslatorPicker = {
     start: () => {
         if (window.__comicTranslatorPickerActive) return;
         window.__comicTranslatorPickerActive = true;
+        document.documentElement.setAttribute(PICKING_ATTR, 'true');
         start();
     },
     startSelection: () => {
