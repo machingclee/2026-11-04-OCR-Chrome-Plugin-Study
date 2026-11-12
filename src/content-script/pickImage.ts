@@ -194,7 +194,7 @@ function findAt(doc: Document, x: number, y: number, offsetX: number, offsetY: n
     return null;
 }
 
-const PAGE_EVENTS = ['mousedown', 'auxclick', 'contextmenu', 'dragstart'] as const;
+const PAGE_EVENTS = ['mousedown', 'auxclick', 'dragstart'] as const;
 
 // Installed at document_start by the manifest before the page registers its
 // own mousedown handlers. Rawkuma opens an ad from a window capture handler.
@@ -204,6 +204,7 @@ if (!guardScope.__comicTranslatorMousedownGuard) {
     guardScope.__comicTranslatorMousedownGuard = true;
     window.addEventListener('mousedown', (event) => {
         if (!document.documentElement.hasAttribute(PICKING_ATTR)) return;
+        if (event.type === 'contextmenu') return;
         const target = event.target as Element | null;
         if (target?.closest('#comic-translator-pick-confirm, #comic-translator-batch-bar, [data-comic-translator-mark]')) return;
         event.preventDefault();
@@ -569,13 +570,11 @@ function startBatchSelection(): void {
             badge.style.textAlign = 'center';
             badge.style.pointerEvents = 'auto';
             badge.style.cursor = 'pointer';
+            badge.title = selection.length > 1 ? 'Translate all' : 'Translate this image';
             badge.addEventListener('click', (event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                item.element.removeAttribute(OVERLAY_TARGET_ATTRIBUTE);
-                const at = selection.indexOf(item);
-                if (at >= 0) selection.splice(at, 1);
-                redrawMarks();
+                void confirmSelection();
             });
             outline.append(badge);
             marks?.append(outline);
@@ -647,6 +646,7 @@ function startBatchSelection(): void {
 
         bar.append(count, translate, cancel);
         bar.addEventListener('click', (event) => event.stopPropagation());
+        bar.style.display = 'none';
         document.documentElement.append(bar);
     };
 
