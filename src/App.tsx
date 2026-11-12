@@ -404,7 +404,10 @@ export default function App() {
             const combo = [...parts, key.length === 1 ? key.toUpperCase() : key].join('+');
             setRecording(false);
             setShortcut(combo);
-            void chrome.commands.update({ name: 'pick-image', shortcut: combo })
+            const commandsApi = chrome.commands as unknown as {
+                update: (change: { name: string; shortcut: string }) => Promise<void>;
+            };
+            void commandsApi.update({ name: 'pick-image', shortcut: combo })
                 .then(() => setStatus(`Shortcut set to ${combo}.`))
                 .catch((cause: unknown) => setError(`Could not set shortcut: ${cause instanceof Error ? cause.message : String(cause)}`));
         };
