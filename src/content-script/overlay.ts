@@ -218,69 +218,6 @@ function clearTarget(target: HTMLElement): void {
     }
 }
 
-/** Let the reader move a label away from the artwork it is covering. */
-function enableDrag(box: HTMLElement): void {
-    box.style.pointerEvents = 'auto';
-    box.style.cursor = 'grab';
-    box.style.userSelect = 'none';
-    box.style.touchAction = 'none';
-    box.title = 'Drag to move';
-
-    box.addEventListener('pointerdown', (event) => {
-        if (event.button !== 0) return;
-        const layer = box.parentElement;
-        if (!layer) return;
-        event.preventDefault();
-        event.stopPropagation();
-
-        const startX = event.clientX;
-        const startY = event.clientY;
-        const grouped = box.hasAttribute('data-comic-translator-group-container');
-        const startLeft = Number.parseFloat(box.style.left) || 0;
-        const startTop = Number.parseFloat(box.style.top) || 0;
-        const startXOffset = Number.parseFloat(box.dataset.dragX ?? '0') || 0;
-        const startYOffset = Number.parseFloat(box.dataset.dragY ?? '0') || 0;
-        const width = Number.parseFloat(box.style.width) || 100;
-        const height = Number.parseFloat(box.style.height) || 100;
-        box.style.cursor = 'grabbing';
-
-        const move = (moveEvent: PointerEvent): void => {
-            const rect = layer.getBoundingClientRect();
-            if (rect.width === 0 || rect.height === 0) return;
-            if (grouped) {
-                const dx = moveEvent.clientX - startX + startXOffset;
-                const dy = moveEvent.clientY - startY + startYOffset;
-                box.dataset.dragX = String(dx);
-                box.dataset.dragY = String(dy);
-                box.style.transform = `translate(${dx}px, ${dy}px)`;
-                return;
-            }
-            const dx = ((moveEvent.clientX - startX) / rect.width) * 100;
-            const dy = ((moveEvent.clientY - startY) / rect.height) * 100;
-            const left = Math.min(Math.max(0, startLeft + dx), Math.max(0, 100 - width));
-            const top = Math.min(Math.max(0, startTop + dy), Math.max(0, 100 - height));
-            box.style.left = `${left}%`;
-            box.style.top = `${top}%`;
-        };
-        const end = (): void => {
-            document.removeEventListener('pointermove', move);
-            document.removeEventListener('pointerup', end);
-            document.removeEventListener('pointercancel', end);
-            box.style.cursor = 'grab';
-        };
-
-        document.addEventListener('pointermove', move);
-        document.addEventListener('pointerup', end);
-        document.addEventListener('pointercancel', end);
-    });
-
-    // A click after a drag must not follow a link under the label.
-    box.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-    });
-}
-
 function makePatch(
     item: OverlayItem,
     request: OverlayRequest,
@@ -420,7 +357,6 @@ function makeBox(
     const size = Math.max(7, sourceSize > 0 ? sourceSize : fallback);
     box.style.fontSize = `${size}px`;
     box.dataset.comicTranslatorSourceSize = String(size);
-    enableDrag(box);
     return box;
 }
 
@@ -576,7 +512,6 @@ function apply(request: OverlayRequest): OverlayResponse {
             group.appendChild(box);
             count += 1;
         }
-        enableDrag(group);
     }
 
     fitBoxes(layer, 1);
