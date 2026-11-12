@@ -138,6 +138,7 @@ export default function App() {
         ms: number;
         timings?: DetectTimings;
         reused: boolean;
+        warm?: boolean;
     } | null>(null);
     const [translated, setTranslated] = useState<RegionAnswer[] | null>(null);
     const [translating, setTranslating] = useState(false);
@@ -162,16 +163,16 @@ export default function App() {
                 PICKED_IMAGE_URL_KEY,
                 PICKED_IMAGE_TARGET_KEY,
                 DEEPSEEK_KEY,
-    DETECTION_CACHE_VERSION,
+                DETECTION_CACHE_VERSION,
                 GEMINI_KEY,
                 TRANSLATOR_KEY,
                 FONT_KEY,
                 LEADING_KEY,
                 WEIGHT_KEY,
+                LAST_RESULT_KEY,
             ]),
-            chrome.storage.session.get(LAST_RESULT_KEY),
         ])
-            .then(([local, session]) => {
+            .then(([local]) => {
                 const pickedImageUrl = local[PICKED_IMAGE_URL_KEY];
                 const storedTarget = local[PICKED_IMAGE_TARGET_KEY];
                 if (typeof storedTarget === 'string') setTargetToken(storedTarget);
@@ -201,7 +202,7 @@ export default function App() {
                     void chrome.storage.local.set({ [TRANSLATOR_KEY]: choice });
                 }
                 settingsLoaded.current = true;
-                const lastResult = session[LAST_RESULT_KEY] as LastResult | undefined;
+                const lastResult = local[LAST_RESULT_KEY] as LastResult | undefined;
 
                 if (typeof pickedImageUrl !== 'string' || pickedImageUrl.length === 0) {
                     return;
@@ -220,6 +221,7 @@ export default function App() {
                         ms: lastResult.ms,
                         timings: lastResult.timings,
                         reused: true,
+                        warm: lastResult.warm,
                     });
                     const previousRun = lastResult.warm === undefined
                         ? 'previous run'
@@ -346,7 +348,7 @@ export default function App() {
             const vertical = response.boxes.filter((box) => box.direction === 'vertical').length;
             const ruby = response.boxes.reduce((sum, box) => sum + box.ruby.length, 0);
             const read = response.boxes.filter((box) => box.text.length > 0).length;
-            setDetection({ ms: response.ms, timings: response.timings, reused: false });
+            setDetection({ ms: response.ms, timings: response.timings, reused: false, warm: response.warm });
             setStatus(
                 `${response.boxes.length} lines (${vertical} vertical, ${ruby} ruby), ${read} read, ${response.bubbles?.length ?? 0} balloons, ${response.groupedLines} grouped, image ${response.imageWidth}x${response.imageHeight}, ${seconds(response.ms)} (${response.warm ? 'reused session' : 'cold session'}${stageSummary(response.timings)}).`,
             );
@@ -415,6 +417,7 @@ export default function App() {
                     ms: detected.ms,
                     timings: detected.timings,
                     reused: false,
+                    warm: detected.warm,
                 };
             }
             if (current.length === 0) throw new Error('No text was found on this page.');
@@ -556,8 +559,11 @@ export default function App() {
             }
 
             const withBalloon = countWithBalloon(current, balloons);
+            const session = detectionInfo?.warm === undefined
+                ? ''
+                : detectionInfo.warm ? 'warm session; ' : 'cold session; ';
             const detectionStatus = detectionInfo
-                ? `; ${detectionInfo.reused ? 'previous detection' : 'detection'} ${seconds(detectionInfo.ms)}${detectionInfo.timings ? ` (${stageBreakdown(detectionInfo.timings)})` : ''}`
+                ? `; ${detectionInfo.reused ? 'previous detection' : 'detection'} ${seconds(detectionInfo.ms)}${detectionInfo.timings ? ` (${session}${stageBreakdown(detectionInfo.timings)})` : ''}`
                 : '';
             setStatus(
                 `Overlaid ${placed.count} translated boxes with ${used} on the page (${balloons.length} balloons, ${withBalloon} groups inside one)${detectionStatus}${skipped ? `; left ${skipped} UI/name/SFX regions untouched` : ''}${bubbleError ? `; balloon error: ${bubbleError}` : ''}.`,

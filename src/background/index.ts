@@ -66,17 +66,17 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
                 timings: response.timings,
             };
 
-            // Session storage holds 10 MB. The crops are the only large part, so
+            // Local storage holds 10 MB. The crops are the only large part, so
             // they are the first thing to drop when a page has many lines.
             const tooBig = JSON.stringify(payload).length > 5_000_000;
             const stored = tooBig ? { ...payload, previews: [] } : payload;
             try {
-                await chrome.storage.session.set({ [LAST_RESULT_KEY]: stored });
+                await chrome.storage.local.set({ [LAST_RESULT_KEY]: stored });
             } catch (cause) {
                 console.warn('The last result did not fit in session storage.', cause);
                 if (!tooBig) {
                     // Keep the boxes and groups; only the crops are expendable.
-                    await chrome.storage.session
+                    await chrome.storage.local
                         .set({ [LAST_RESULT_KEY]: { ...payload, previews: [] } })
                         .catch(() => undefined);
                 }
