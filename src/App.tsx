@@ -106,6 +106,8 @@ export default function App() {
 
     useEffect(() => {
         document.body.style.width = view === 'debug' ? '720px' : '480px';
+        document.body.style.maxHeight = view === 'debug' ? '600px' : 'none';
+        document.body.style.overflowY = view === 'debug' ? 'auto' : 'visible';
     }, [view]);
     const [targetToken, setTargetToken] = useState<string | undefined>();
     const settingsLoaded = useRef(false);
@@ -557,7 +559,7 @@ export default function App() {
                         </span>
                     </label>
 
-                    <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                    <label className={`col-span-2 flex flex-col gap-1 text-xs font-medium text-slate-600 ${translator === 'gemini' ? '' : 'hidden'}`}>
                         Gemini API key
                         <input
                             type="password"
@@ -574,7 +576,7 @@ export default function App() {
                         </span>
                     </label>
 
-                    <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                    <label className={`col-span-2 flex flex-col gap-1 text-xs font-medium text-slate-600 ${translator === 'deepseek' ? '' : 'hidden'}`}>
                         DeepSeek API key
                         <input
                             type="password"
