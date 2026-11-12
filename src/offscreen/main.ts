@@ -266,6 +266,26 @@ async function recognizeLines(
     return collected;
 }
 
+/** Small surrounding crop for the optional Gemini real-text/SFX check. */
+function visionCrop(bitmap: ImageBitmap, group: GroupData): string {
+    const padX = group.width * 0.25;
+    const padY = group.height * 0.25;
+    const x = Math.max(0, group.x - padX);
+    const y = Math.max(0, group.y - padY);
+    const right = Math.min(bitmap.width, group.x + group.width + padX);
+    const bottom = Math.min(bitmap.height, group.y + group.height + padY);
+    const width = Math.max(1, right - x);
+    const height = Math.max(1, bottom - y);
+    const scale = Math.min(1, 384 / Math.max(width, height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) return '';
+    context.drawImage(bitmap, x, y, width, height, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.65);
+}
+
 async function runDetection(request: OffscreenDetectRequest): Promise<DetectResponse> {
     const started = performance.now();
     const warm = isSessionReady();
@@ -388,6 +408,20 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         }
 
         paintGroupColours(bitmap, splitGroups, usable, detected.mask);
+
+        const fontSizes = splitGroups
+            .map((group) => group.fontSize ?? 0)
+            .filter((size) => size > 0)
+            .sort((left, right) => left - right);
+        const medianFont = fontSizes.length > 0 ? fontSizes[fontSizes.length >> 1] : 0;
+        const pageArea = bitmap.width * bitmap.height;
+        for (const group of splitGroups) {
+            const outside = !group.balloon;
+            const huge = (group.fontSize ?? 0) > medianFont * 1.5;
+            const large = group.width * group.height > pageArea * 0.015;
+            if (!outside && !huge && !large) continue;
+            group.visionCrop = visionCrop(bitmap, group);
+        }
 
         const previews = cropPreviews(bitmap, collected.slice(0, MAX_PREVIEWS));
 

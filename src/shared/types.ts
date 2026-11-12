@@ -70,6 +70,8 @@ export type GroupData = {
     vertical?: boolean;
     /** True when the group came from a balloon rather than a block. */
     balloon?: boolean;
+    /** Small JPEG data URL for the optional Gemini region classifier. */
+    visionCrop?: string;
 };
 
 /** One absolutely positioned translation, in the image's own pixels. */

@@ -25,6 +25,7 @@ import type {
     OverlayResponse,
 } from './shared/types';
 import { canTranslate, translateAll } from './lib/translate';
+import { classifyVisionCandidates } from './lib/visionClassify';
 import { toHorizontal, toVertical } from './lib/punct';
 import { translateWithDeepSeek } from './lib/translateDeepSeek';
 import { translateWithGemini } from './lib/translateGemini';
@@ -53,6 +54,7 @@ type GroupStroke = {
     fontSize?: number;
     vertical?: boolean;
     balloon?: boolean;
+    visionCrop?: string;
 };
 function seconds(ms: number): string {
     return `${(ms / 1000).toFixed(1)} s`;
@@ -421,6 +423,29 @@ export default function App() {
                     warm: detected.warm,
                 };
             }
+            let visionSkipped = 0;
+            if (current.length > 0 && geminiKey.trim().length > 0) {
+                const candidates = current
+                    .map((group, index) => ({
+                        index,
+                        crop: group.visionCrop ?? '',
+                        text: group.lines.join(''),
+                    }))
+                    .filter((candidate) => candidate.crop.length > 0);
+                if (candidates.length > 0) {
+                    const verdicts = await classifyVisionCandidates(candidates, geminiKey.trim());
+                    const removed = new Set<number>();
+                    for (const candidate of candidates) {
+                        const verdict = verdicts.get(candidate.index);
+                        if (verdict === 'sfx' || verdict === 'false_positive') removed.add(candidate.index);
+                    }
+                    if (removed.size > 0) {
+                        visionSkipped = removed.size;
+                        current = current.filter((_, index) => !removed.has(index));
+                    }
+                }
+            }
+
             if (current.length === 0) throw new Error('No text was found on this page.');
             if (pageWidth <= 0 || pageHeight <= 0) {
                 pageWidth = Math.max(...currentBoxes.map((box) => box.x + box.width), 1);
@@ -481,7 +506,7 @@ export default function App() {
                 tight: GroupStroke;
                 balloon?: BubbleStroke;
             }> = [];
-            let skipped = 0;
+            let skipped = visionSkipped;
             current.forEach((group, index) => {
                 const answer = out[index];
                 if (answer?.skip || answer?.type === 'sfx') {
