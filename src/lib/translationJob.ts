@@ -234,7 +234,7 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         const push = (line: { x: number; y: number; width: number; height: number }, content: string) => {
             items.push({
                 x: line.x,
-                y: line.y,
+                y: columnTop,
                 width: line.width,
                 height: line.height,
                 text: vertical ? toVertical(content) : toHorizontal(content),
@@ -245,7 +245,7 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
                 maskUrl: group.maskUrl,
                 maskBox: group.maskBox,
                 rectangle: group.rectangle,
-                fontSize: font,
+                fontSize: fittedFont,
                 patch: balloon && !input.inpainted ? {
                     x: line.x,
                     y: line.y,
@@ -255,16 +255,13 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
             });
         };
 
-        // Align tops only within the same detected text band. Two lobes can
-        // have very different tops, so one shared top for the whole group would
-        // move one lobe's columns into the other.
-        const tops = new Map<typeof sortedLines[number], number>();
-        const byTop = [...sortedLines].sort((left, right) => left.y - right.y);
-        let bandTop = byTop[0]?.y ?? 0;
-        for (const line of byTop) {
-            if (line.y - bandTop > Math.max(8, font * 2.5)) bandTop = line.y;
-            tops.set(line, bandTop);
-        }
+        const columnTop = Math.min(...sortedLines.map((line) => line.y));
+        const fitSizes = columns.slice(0, sortedLines.length).map((column, index) => {
+            const line = sortedLines[index];
+            const glyphs = Math.max(1, [...column].length);
+            return (vertical ? line.height : line.width) / glyphs;
+        });
+        const fittedFont = Math.max(6, Math.round(Math.min(font, ...fitSizes)));
 
         if (columns.length > 1 && columns.length <= sortedLines.length) {
             sortedLines.slice(0, columns.length).forEach((line, columnIndex) => {
