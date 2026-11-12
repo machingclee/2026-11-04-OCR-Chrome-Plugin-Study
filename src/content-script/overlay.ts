@@ -427,7 +427,7 @@ function ensureBoxStyle(): void {
     if (document.getElementById('comic-translator-box-style')) return;
     const style = document.createElement('style');
     style.id = 'comic-translator-box-style';
-    style.textContent = `span[${BOX_ATTR}="true"] { overflow: visible !important; height: unset !important; padding-top: 10px !important; }`;
+    style.textContent = `span[${BOX_ATTR}="true"] { overflow: visible !important; height: unset !important; padding-top: 0px !important; }`;
     document.head.appendChild(style);
 }
 
