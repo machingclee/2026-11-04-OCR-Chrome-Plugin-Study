@@ -308,7 +308,8 @@ function makeBox(
         // leave a short column at the left edge. A grid centres the text on both
         // axes, so a lone vertical ellipsis sits in the middle of its balloon.
         style.writingMode = 'vertical-rl';
-        style.textOrientation = 'mixed';
+        // mixed rotates the vertical ellipsis back into horizontal dots.
+        style.textOrientation = 'upright';
         style.display = 'grid';
         style.placeItems = 'center';
         style.textAlign = 'center';
