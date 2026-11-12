@@ -467,7 +467,7 @@ export default function App() {
                             disabled={!imageUrl || busy}
                             data-busy={busy}
                             title={imageUrl ? undefined : 'Pick an image on the page first.'}
-                            className="rounded border border-[#ded2c4] bg-white px-3 py-2 text-sm font-medium text-orange-800 transition hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="rounded bg-[#b3815c] px-3 py-2 text-sm font-medium text-white transition hover:bg-[#a5724f] disabled:cursor-not-allowed disabled:opacity-50"
                         >
                             {busy ? 'Detecting...' : 'Detect boxes'}
                         </button>
@@ -476,7 +476,7 @@ export default function App() {
                             onClick={handleTranslate}
                             disabled={translating || !imageUrl}
                             title="Translation runs in the background worker."
-                            className="rounded bg-[#bd9a6d] px-3 py-2 text-sm font-medium text-white transition hover:bg-[#b08d60] disabled:cursor-not-allowed disabled:opacity-50"
+                            className="rounded bg-[#b3815c] px-3 py-2 text-sm font-medium text-white transition hover:bg-[#a5724f] disabled:cursor-not-allowed disabled:opacity-50"
                         >
                             {translating ? 'Translating...' : 'Translate page'}
                         </button>
@@ -484,7 +484,7 @@ export default function App() {
                             type="button"
                             onClick={handleClearOverlay}
                             disabled={!imageUrl}
-                            className="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="rounded bg-[#b3815c] px-3 py-2 text-sm font-medium text-white transition hover:bg-[#a5724f] disabled:cursor-not-allowed disabled:opacity-50"
                         >
                             Clear overlay
                         </button>
