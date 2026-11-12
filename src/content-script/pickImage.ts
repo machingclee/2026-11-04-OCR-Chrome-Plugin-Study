@@ -256,9 +256,12 @@ function start(): void {
     let statusTimer: number | undefined;
     let progressListener: ((message: unknown) => void) | undefined;
     let keepStatus = false;
+    let followCleanup: (() => void) | null = null;
     const stop = (): void => {
         confirmButton?.remove();
         confirmButton = null;
+        followCleanup?.();
+        followCleanup = null;
         if (!keepStatus) statusBox?.remove();
         if (statusTimer !== undefined) window.clearInterval(statusTimer);
         if (progressListener) chrome.runtime.onMessage.removeListener(progressListener);
@@ -324,21 +327,30 @@ function start(): void {
                 const size = 44;
                 const margin = 8;
                 const gap = 8;
-                let left = picked.rect.right + gap;
-                if (left + size > window.innerWidth - margin) {
-                    left = picked.rect.left - size - gap;
-                }
-                if (left < margin) {
-                    left = Math.min(window.innerWidth - size - margin, Math.max(margin, picked.rect.right - size - gap));
-                }
-                let top = Math.min(window.innerHeight - size - margin, Math.max(margin, picked.rect.bottom - size - gap));
-                if (left + size > window.innerWidth - margin) {
-                    left = Math.min(window.innerWidth - size - margin, Math.max(margin, picked.rect.right - size - gap));
-                    top = Math.min(window.innerHeight - size - margin, Math.max(margin, picked.rect.bottom + gap));
-                }
+                const placeConfirm = (): void => {
+                    if (!button.isConnected) return;
+                    const rect = picked.element.getBoundingClientRect();
+                    let left = rect.right + gap;
+                    if (left + size > window.innerWidth - margin) left = rect.left - size - gap;
+                    if (left < margin) {
+                        left = Math.min(window.innerWidth - size - margin, Math.max(margin, rect.right - size - gap));
+                    }
+                    let top = Math.min(window.innerHeight - size - margin, Math.max(margin, rect.bottom - size - gap));
+                    if (left + size > window.innerWidth - margin) {
+                        left = Math.min(window.innerWidth - size - margin, Math.max(margin, rect.right - size - gap));
+                        top = Math.min(window.innerHeight - size - margin, Math.max(margin, rect.bottom + gap));
+                    }
+                    button.style.left = `${left}px`;
+                    button.style.top = `${top}px`;
+                };
+                placeConfirm();
+                window.addEventListener('scroll', placeConfirm, true);
+                window.addEventListener('resize', placeConfirm);
+                followCleanup = () => {
+                    window.removeEventListener('scroll', placeConfirm, true);
+                    window.removeEventListener('resize', placeConfirm);
+                };
                 button.style.position = 'fixed';
-                button.style.left = `${left}px`;
-                button.style.top = `${top}px`;
                 button.style.width = `${size}px`;
                 button.style.height = `${size}px`;
                 button.style.borderRadius = '50%';
@@ -352,6 +364,8 @@ function start(): void {
                 button.addEventListener('click', (clickEvent) => {
                     clickEvent.preventDefault();
                     clickEvent.stopPropagation();
+                    followCleanup?.();
+                    followCleanup = null;
                     button.remove();
                     confirmButton = null;
 
