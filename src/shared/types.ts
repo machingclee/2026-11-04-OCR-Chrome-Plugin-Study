@@ -84,8 +84,6 @@ export type OverlayItem = {
     vertical: boolean;
     /** All spans from one bubble share this id for group fitting. */
     groupId?: number;
-    /** Rotation of the minimum-area box, in radians. */
-    angle?: number;
     /** Label colour sampled from the paper; defaults to white. */
     background?: string;
     color?: string;

@@ -287,10 +287,6 @@ function makePatch(
     style.width = `${(area.width / width) * 100}%`;
     style.height = `${(area.height / height) * 100}%`;
     style.boxSizing = 'border-box';
-    if (item.angle) {
-        style.transform = `rotate(${item.angle}rad)`;
-        style.transformOrigin = 'center center';
-    }
     style.pointerEvents = 'none';
     style.zIndex = '1';
     if (item.clip && item.clip.length >= 3) {
@@ -338,10 +334,6 @@ function makeBox(
     style.width = `${(item.width / width) * 100}%`;
     style.height = `${(item.height / height) * 100}%`;
     style.boxSizing = 'border-box';
-    if (item.angle) {
-        style.transform = `rotate(${item.angle}rad)`;
-        style.transformOrigin = 'center center';
-    }
     style.display = 'flex';
     style.alignItems = 'center';
     style.justifyContent = 'center';

@@ -33,50 +33,6 @@ export type TranslationJobResult = {
     withBalloon: number;
 };
 
-function minAreaBox(points: Array<{ x: number; y: number }>): { x: number; y: number; width: number; height: number; angle: number } | null {
-    if (points.length < 3) return null;
-    const sorted = [...points].sort((a, b) => a.x - b.x || a.y - b.y);
-    const cross = (o: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }) =>
-        (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-    const lower: Array<{ x: number; y: number }> = [];
-    for (const point of sorted) {
-        while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) lower.pop();
-        lower.push(point);
-    }
-    const upper: Array<{ x: number; y: number }> = [];
-    for (const point of [...sorted].reverse()) {
-        while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) upper.pop();
-        upper.push(point);
-    }
-    const hull = [...lower.slice(0, -1), ...upper.slice(0, -1)];
-    let best: { x: number; y: number; width: number; height: number; angle: number; area: number } | null = null;
-    for (let index = 0; index < hull.length; index += 1) {
-        const a = hull[index];
-        const b = hull[(index + 1) % hull.length];
-        const edge = Math.atan2(b.y - a.y, b.x - a.x);
-        const cos = Math.cos(-edge);
-        const sin = Math.sin(-edge);
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (const point of hull) {
-            const x = point.x * cos - point.y * sin;
-            const y = point.x * sin + point.y * cos;
-            minX = Math.min(minX, x); maxX = Math.max(maxX, x);
-            minY = Math.min(minY, y); maxY = Math.max(maxY, y);
-        }
-        const width = maxX - minX;
-        const height = maxY - minY;
-        const area = width * height;
-        if (width > 0 && height > 0 && (!best || area < best.area)) {
-            const cx = (minX + maxX) / 2;
-            const cy = (minY + maxY) / 2;
-            const x = cx * Math.cos(edge) - cy * Math.sin(edge);
-            const y = cx * Math.sin(edge) + cy * Math.cos(edge);
-            best = { x: x - width / 2, y: y - height / 2, width, height, angle: edge, area };
-        }
-    }
-    return best;
-}
-
 function countWithBalloon(list: GroupData[], balloons: BubbleData[]): number {
     return list.filter((group) => {
         const centreX = group.x + group.width / 2;
@@ -218,15 +174,20 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         // vertical writing mode so a wide balloon cannot flip it horizontal.
         const vertical = true;
 
-        const corners = linesInGroup.flatMap((line) => [
-            { x: line.x, y: line.y },
-            { x: line.x + line.width, y: line.y },
-            { x: line.x, y: line.y + line.height },
-            { x: line.x + line.width, y: line.y + line.height },
-        ]);
-        const box = minAreaBox(corners) ?? {
-            x: group.x, y: group.y, width: group.width, height: group.height, angle: 0,
-        };
+        let minX = Number.POSITIVE_INFINITY;
+        let minY = Number.POSITIVE_INFINITY;
+        let maxX = Number.NEGATIVE_INFINITY;
+        let maxY = Number.NEGATIVE_INFINITY;
+        for (const line of linesInGroup) {
+            minX = Math.min(minX, line.x);
+            minY = Math.min(minY, line.y);
+            maxX = Math.max(maxX, line.x + line.width);
+            maxY = Math.max(maxY, line.y + line.height);
+        }
+        const tight = Number.isFinite(minX) && maxX > minX && maxY > minY
+            ? { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+            : { x: group.x, y: group.y, width: group.width, height: group.height };
+
         const glyphSizes = linesInGroup
             .map((line) => vertical ? line.width : line.height)
             .filter((value) => Number.isFinite(value) && value >= 4);
@@ -236,11 +197,10 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         const font = glyph > 0 ? Math.max(6, Math.round(glyph)) : group.fontSize;
 
         items.push({
-            x: box.x,
-            y: box.y,
-            width: box.width,
-            height: box.height,
-            angle: box.angle,
+            x: tight.x,
+            y: tight.y,
+            width: tight.width,
+            height: tight.height,
             text: vertical ? toVertical(text) : toHorizontal(text),
             vertical,
             groupId: index,
@@ -251,10 +211,10 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
             rectangle: group.rectangle,
             fontSize: font,
             patch: balloon && !input.inpainted ? {
-                x: group.x,
-                y: group.y,
-                width: group.width,
-                height: group.height,
+                x: tight.x,
+                y: tight.y,
+                width: tight.width,
+                height: tight.height,
             } : undefined,
         });
     });
