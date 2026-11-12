@@ -444,8 +444,16 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             if (context) {
                 context.drawImage(bitmap, 0, 0);
                 const image = context.getImageData(0, 0, canvas.width, canvas.height);
-                const mask = refineMask(usable, detected.mask, canvas.width, canvas.height);
-                const painted = await inpaintPage(image, mask).catch(() => null);
+                let mask = refineMask(usable, detected.mask, canvas.width, canvas.height);
+                let maskPixels = 0;
+                for (const value of mask) if (value === 1) maskPixels += 1;
+                if (maskPixels === 0) {
+                    mask = refineMask(detected.detBoxes, detected.mask, canvas.width, canvas.height);
+                    for (const value of mask) if (value === 1) maskPixels += 1;
+                }
+                const painted = maskPixels > 0
+                    ? await inpaintPage(image, mask).catch(() => null)
+                    : null;
                 if (painted) {
                     for (let index = 0; index < mask.length; index += 1) {
                         if (mask[index] !== 1) continue;
