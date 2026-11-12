@@ -7,6 +7,8 @@ const BOX_ATTR = 'data-comic-translator-box';
 const IMAGE_STYLE_ATTR = 'data-comic-translator-image-style';
 const POSITION_ATTR = 'data-comic-translator-position';
 
+let stopWatching: (() => void) | null = null;
+
 type ImageStyle = {
     display: string;
     width: string;
@@ -142,6 +144,45 @@ function attachLayer(element: HTMLElement): HTMLElement {
     const layer = createLayer();
     element.appendChild(layer);
     return layer;
+}
+
+/**
+ * A reader can reuse the same <img> node for the next page. The old labels then
+ * sit over the new image because the wrapper and layer belong to the node, not
+ * to the page that was translated. Watch the picked node and remove the overlay
+ * as soon as the node changes, disappears or gets a different source.
+ */
+function watchTarget(target: HTMLElement): void {
+    stopWatching?.();
+
+    if (target instanceof HTMLImageElement) {
+        const src = target.getAttribute('src');
+        const srcset = target.getAttribute('srcset');
+        const changed = (): void => {
+            if (!target.isConnected || target.getAttribute('src') !== src || target.getAttribute('srcset') !== srcset) {
+                clearAll();
+            }
+        };
+        const observer = new MutationObserver(changed);
+        observer.observe(target, { attributes: true, attributeFilter: ['src', 'srcset'] });
+        if (target.parentElement) observer.observe(target.parentElement, { childList: true });
+        stopWatching = () => {
+            observer.disconnect();
+            stopWatching = null;
+        };
+        return;
+    }
+
+    const background = backgroundUrl(target);
+    const changed = (): void => {
+        if (!target.isConnected || backgroundUrl(target) !== background) clearAll();
+    };
+    const observer = new MutationObserver(changed);
+    observer.observe(target, { attributes: true, attributeFilter: ['style', 'class'] });
+    stopWatching = () => {
+        observer.disconnect();
+        stopWatching = null;
+    };
 }
 
 /** Let the reader move a label away from the artwork it is covering. */
@@ -304,6 +345,7 @@ function apply(request: OverlayRequest): OverlayResponse {
         count += 1;
     }
     fitBoxes(layer);
+    watchTarget(target);
 
     return { ok: true, count };
 }
@@ -313,6 +355,8 @@ function apply(request: OverlayRequest): OverlayResponse {
  * overlays left by an earlier injection of this script.
  */
 function clearAll(): void {
+    stopWatching?.();
+
     for (const wrapper of document.querySelectorAll<HTMLElement>(`[${WRAPPER_ATTR}]`)) {
         const parent = wrapper.parentNode;
         for (const child of [...wrapper.children]) {

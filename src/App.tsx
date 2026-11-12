@@ -238,6 +238,18 @@ export default function App() {
         try {
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
             if (!tab?.id) throw new Error('There is no active tab.');
+            // The previous overlay may live in a frame that the picker itself
+            // cannot reach. Clear every frame before the new pick starts.
+            await chrome.scripting.executeScript({
+                target: { tabId: tab.id, allFrames: true },
+                world: 'ISOLATED',
+                func: () => {
+                    const api = (globalThis as unknown as {
+                        __comicTranslatorOverlay?: { clear: () => void };
+                    }).__comicTranslatorOverlay;
+                    if (api) api.clear();
+                },
+            }).catch(() => undefined);
             await chrome.scripting.executeScript({
                 target: { tabId: tab.id },
                 files: [CONTENT_SCRIPT_FILE],
