@@ -5,7 +5,7 @@ import { canTranslate, translateAll } from './translate';
 import { translateWithDeepSeek } from './translateDeepSeek';
 import { translateWithGemini } from './translateGemini';
 import { classifyVisionCandidates, type VisionProvider } from './visionClassify';
-import { toHorizontal, toVertical } from './punct';
+import { safeBreak, toHorizontal, toUnits, toVertical } from './punct';
 
 export type TranslationSettings = {
     translator: TranslatorChoice;
@@ -32,35 +32,6 @@ export type TranslationJobResult = {
     skipped: number;
     withBalloon: number;
 };
-
-function tightenBox(group: GroupData, lines: BoxData[]): GroupData {
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-
-    for (const line of lines) {
-        const centreX = line.x + line.width / 2;
-        const centreY = line.y + line.height / 2;
-        if (centreX < group.x || centreX > group.x + group.width) continue;
-        if (centreY < group.y || centreY > group.y + group.height) continue;
-        minX = Math.min(minX, line.x);
-        minY = Math.min(minY, line.y);
-        maxX = Math.max(maxX, line.x + line.width);
-        maxY = Math.max(maxY, line.y + line.height);
-    }
-
-    if (!Number.isFinite(minX) || maxX <= minX || maxY <= minY) return group;
-
-    const pad = Math.max(3, Math.min(maxX - minX, maxY - minY) * 0.08);
-    return {
-        ...group,
-        x: minX - pad,
-        y: minY - pad,
-        width: maxX - minX + pad * 2,
-        height: maxY - minY + pad * 2,
-    };
-}
 
 function countWithBalloon(list: GroupData[], balloons: BubbleData[]): number {
     return list.filter((group) => {
@@ -170,14 +141,25 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         );
     }
 
-    const placements: Array<{
-        group: GroupData;
-        text: string;
-        vertical: boolean;
-        layout: GroupData;
-        tight: GroupData;
-        balloon?: BubbleData;
-    }> = [];
+    function splitColumns(text: string, count: number): string[] {
+        if (count <= 1) return [text];
+        let rest = toUnits(text);
+        const chunks: string[] = [];
+        for (let index = 0; index < count; index += 1) {
+            const remaining = count - index;
+            if (remaining <= 1) {
+                chunks.push(rest.join(''));
+                break;
+            }
+            const target = Math.max(1, Math.ceil(rest.length / remaining));
+            const cut = safeBreak(rest, target);
+            chunks.push(rest.slice(0, cut).join(''));
+            rest = rest.slice(cut);
+        }
+        return chunks;
+    }
+
+    const items: OverlayItem[] = [];
     let skipped = visionSkipped;
 
     current.forEach((group, index) => {
@@ -192,7 +174,6 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
             return;
         }
 
-        const tight = tightenBox(group, boxes);
         const centreX = group.x + group.width / 2;
         const centreY = group.y + group.height / 2;
         const balloon = group.balloon
@@ -203,46 +184,64 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         const vertical = balloon
             ? balloon.height > balloon.width * 1.15 || group.vertical === true
             : group.vertical ?? group.height > group.width * 1.3;
-        const layout = tight;
-        placements.push({ group, text, vertical, layout, tight, balloon });
+
+        const lineBoxes = boxes
+            .filter((line) => {
+                const x = line.x + line.width / 2;
+                const y = line.y + line.height / 2;
+                return line.text.trim().length > 0
+                    && x >= group.x && x <= group.x + group.width
+                    && y >= group.y && y <= group.y + group.height;
+            })
+            .sort((left, right) => vertical
+                ? (right.x + right.width / 2) - (left.x + left.width / 2)
+                : (left.y + left.height / 2) - (right.y + right.height / 2));
+
+        const detected = lineBoxes.length > 0 ? lineBoxes : [{
+            x: group.x,
+            y: group.y,
+            width: group.width,
+            height: group.height,
+            direction: vertical ? 'vertical' as const : 'horizontal' as const,
+            score: 1,
+            ruby: [],
+            text,
+            confidence: 1,
+        }];
+        const modelColumns = answer?.columns?.filter((value) => value.trim().length > 0) ?? [];
+        const chunks = modelColumns.length === detected.length
+            ? modelColumns
+            : splitColumns(text, detected.length);
+
+        detected.forEach((line, columnIndex) => {
+            const part = chunks[columnIndex]?.trim();
+            if (!part) return;
+            const glyph = vertical ? line.width : line.height;
+            const font = glyph >= 4 ? Math.max(6, Math.round(glyph * 0.9)) : group.fontSize;
+            const tight = { x: line.x, y: line.y, width: line.width, height: line.height };
+            items.push({
+                x: tight.x,
+                y: tight.y,
+                width: tight.width,
+                height: tight.height,
+                text: vertical ? toVertical(part) : toHorizontal(part),
+                vertical,
+                background: group.background,
+                color: group.color,
+                maskUrl: group.maskUrl,
+                maskBox: group.maskBox,
+                rectangle: group.rectangle,
+                fontSize: font,
+                patch: balloon && !input.inpainted ? {
+                    x: tight.x,
+                    y: tight.y,
+                    width: tight.width,
+                    height: tight.height,
+                } : undefined,
+            });
+        });
     });
 
-    for (let left = 0; left < placements.length; left += 1) {
-        for (let right = left + 1; right < placements.length; right += 1) {
-            const a = placements[left].layout;
-            const b = placements[right].layout;
-            const overlapWidth = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
-            const overlapHeight = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
-            if (overlapWidth <= 0 || overlapHeight <= 0) continue;
-            const shared = overlapWidth * overlapHeight;
-            const smaller = Math.min(a.width * a.height, b.width * b.height);
-            if (shared <= smaller * 0.1) continue;
-            if (placements[left].group.balloon) placements[left].layout = placements[left].tight;
-            if (placements[right].group.balloon) placements[right].layout = placements[right].tight;
-        }
-    }
-
-    const items: OverlayItem[] = placements.map(({ group, text, vertical, layout, tight, balloon }) => ({
-        x: layout.x,
-        y: layout.y,
-        width: layout.width,
-        height: layout.height,
-        text: vertical ? toVertical(text) : toHorizontal(text),
-        vertical,
-        background: group.background,
-        color: group.color,
-        maskUrl: group.maskUrl,
-        maskBox: group.maskBox,
-        rectangle: group.rectangle,
-        fontSize: group.fontSize,
-        clip: balloon?.outline,
-        patch: balloon && !input.inpainted ? {
-            x: tight.x,
-            y: tight.y,
-            width: tight.width,
-            height: tight.height,
-        } : undefined,
-    }));
     if (items.length === 0) throw new Error('The translation returned no dialogue to place.');
 
     return {
