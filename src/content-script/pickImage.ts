@@ -735,11 +735,26 @@ function startBatchSelection(): void {
         redrawMarks();
     }
 
-    function selectAllVisible(): void {
-        for (const image of document.images) {
+    function selectAllVisible(anchor: HTMLElement): void {
+        let container = anchor.parentElement;
+        let images: HTMLImageElement[] = [];
+        while (container && container !== document.body) {
+            const found = [...container.querySelectorAll('img')];
+            if (found.length > 1) {
+                images = found;
+                break;
+            }
+            container = container.parentElement;
+        }
+        if (images.length === 0) {
+            images = [...document.images].filter((image) => {
+                const rect = image.getBoundingClientRect();
+                return rect.width >= 200 && rect.height >= 200;
+            });
+        }
+        for (const image of images) {
             const rect = image.getBoundingClientRect();
-            if (rect.width < 200 || rect.height < 200) continue;
-            if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
+            if (rect.width < 32 || rect.height < 32) continue;
             const url = imageUrl(image);
             if (!url || url.startsWith('blob:')) continue;
             if (selection.some((item) => item.element === image || item.url === url)) continue;
@@ -796,7 +811,7 @@ function startBatchSelection(): void {
             menu.append(item);
         };
         addItem(selected ? 'Unselect this image' : 'Select this image', () => toggleHit(hit));
-        addItem('Select all visible images', selectAllVisible);
+        addItem('Select all visible images', () => selectAllVisible(hit.element));
         addItem('Translate all', () => { void confirmSelection(); });
         menu.addEventListener('contextmenu', (event) => event.preventDefault());
         document.documentElement.append(menu);
