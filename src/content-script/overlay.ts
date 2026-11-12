@@ -463,7 +463,9 @@ function fitBoxes(layer: HTMLElement, leading: number): void {
 
     for (const boxes of groups.values()) {
         const source = Number.parseFloat(boxes[0].style.fontSize) || 12;
-        const floor = Math.max(8, Math.round(source * 0.7));
+        // Keep the source glyph size. A long translation clips at the
+        // detected box rather than shrinking below the comic's lettering.
+        const floor = source;
         let size = source;
         while (size > floor && boxes.some((box) => !textFits(box) || !estimatedFits(box, size, leading))) {
             size -= 1;
