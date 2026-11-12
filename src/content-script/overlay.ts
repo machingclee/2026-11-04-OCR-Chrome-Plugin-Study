@@ -465,6 +465,23 @@ function apply(request: OverlayRequest): OverlayResponse {
     const renderedWidth = host?.getBoundingClientRect().width ?? width;
     const scale = renderedWidth / width;
 
+    if (request.erasedUrl) {
+        const erased = document.createElement('img');
+        erased.src = request.erasedUrl;
+        erased.alt = '';
+        erased.style.position = 'absolute';
+        erased.style.inset = '0';
+        erased.style.width = '100%';
+        erased.style.height = '100%';
+        erased.style.objectFit = 'fill';
+        erased.style.pointerEvents = 'none';
+        erased.style.background = 'transparent';
+        erased.style.mixBlendMode = 'normal';
+        erased.style.zIndex = '1';
+        erased.setAttribute('data-comic-translator-erased', 'true');
+        layer.appendChild(erased);
+    }
+
     let count = 0;
     const grouped = new Map<number, typeof request.items>();
     request.items.forEach((item, index) => {
@@ -488,21 +505,6 @@ function apply(request: OverlayRequest): OverlayResponse {
         group.style.cursor = 'grab';
         group.style.touchAction = 'none';
         group.style.zIndex = '1';
-        if (request.erasedUrl) {
-            const cutout = document.createElement('div');
-            cutout.style.position = 'absolute';
-            cutout.style.left = `${(minX / width) * 100}%`;
-            cutout.style.top = `${(minY / height) * 100}%`;
-            cutout.style.width = `${((maxX - minX) / width) * 100}%`;
-            cutout.style.height = `${((maxY - minY) / height) * 100}%`;
-            cutout.style.overflow = 'hidden';
-            cutout.style.pointerEvents = 'none';
-            cutout.style.backgroundImage = `url("${request.erasedUrl}")`;
-            cutout.style.backgroundRepeat = 'no-repeat';
-            cutout.style.backgroundSize = `${width * scale}px ${height * scale}px`;
-            cutout.style.backgroundPosition = `${-minX * scale}px ${-minY * scale}px`;
-            group.appendChild(cutout);
-        }
         layer.appendChild(group);
         for (const item of items) {
             const patch = makePatch(item, request, width, height, scale);
