@@ -122,14 +122,18 @@ function groupVertical(lines: BoxData[], group: { x: number; y: number; width: n
 
 /** Original glyph thickness, not the size of the whole group box. */
 function groupFontSize(lines: BoxData[], group: { x: number; y: number; width: number; height: number }): number {
+    const inside = lines.filter((line) => centreInsideBox(line, group));
+    if (inside.length === 0) return 0;
+    const vertical = inside.filter((line) => line.direction === 'vertical').length >= inside.length / 2;
     const sizes: number[] = [];
-    for (const line of lines) {
-        if (!centreInsideBox(line, group)) continue;
-        const shortSide = Math.min(line.width, line.height);
-        const thickness = line.lineThickness && line.lineThickness > 0 && line.lineThickness <= shortSide * 1.25
-            ? line.lineThickness
-            : shortSide;
-        if (thickness >= 4) sizes.push(thickness);
+    for (const line of inside) {
+        // A vertical column's width and a horizontal row's height are the
+        // glyph em box. lineThickness is a fallback for angled lines.
+        const side = vertical ? line.width : line.height;
+        const thickness = side >= 4
+            ? side
+            : line.lineThickness && line.lineThickness >= 4 ? line.lineThickness : 0;
+        if (thickness > 0) sizes.push(thickness);
     }
     if (sizes.length === 0) return 0;
     sizes.sort((left, right) => left - right);
