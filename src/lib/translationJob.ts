@@ -231,6 +231,15 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
             carry = chars.slice(cut).join('');
         }
 
+        if (sortedLines.length > 0 && columns.length > 0 && columns.length !== sortedLines.length) {
+            const chars = [...columns.join('')];
+            const per = Math.max(1, Math.ceil(chars.length / sortedLines.length));
+            columns.length = 0;
+            for (let index = 0; index < sortedLines.length; index += 1) {
+                columns.push(chars.slice(index * per, (index + 1) * per).join(''));
+            }
+        }
+
         const push = (line: { x: number; y: number; width: number; height: number }, content: string) => {
             items.push({
                 x: line.x,
