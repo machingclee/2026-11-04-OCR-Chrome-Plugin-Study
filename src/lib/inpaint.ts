@@ -1,17 +1,35 @@
-import * as ort from 'onnxruntime-web/wasm';
+import * as ort from 'onnxruntime-web/webgpu';
 import { INPAINT_INPUT_SIZE, INPAINT_MODEL_PATH } from '../shared/constants';
 
 if (ort.env?.wasm) ort.env.wasm.numThreads = 1;
+
+const webgpu = typeof navigator !== 'undefined' && 'gpu' in navigator;
 
 let sessionPromise: Promise<ort.InferenceSession> | null = null;
 
 function loadSession(): Promise<ort.InferenceSession> {
     if (!sessionPromise) {
         sessionPromise = ort.InferenceSession.create(chrome.runtime.getURL(INPAINT_MODEL_PATH), {
-            executionProviders: ['wasm'],
+            executionProviders: webgpu ? ['webgpu', 'wasm'] : ['wasm'],
             graphOptimizationLevel: 'all',
+        }).catch(async (cause: unknown) => {
+            if (!webgpu) {
+                sessionPromise = null;
+                throw cause;
+            }
+            console.warn('WebGPU inpaint failed, using WASM.', cause);
+            try {
+                return await ort.InferenceSession.create(chrome.runtime.getURL(INPAINT_MODEL_PATH), {
+                    executionProviders: ['wasm'],
+                    graphOptimizationLevel: 'all',
+                });
+            } catch (fallbackCause) {
+                sessionPromise = null;
+                throw fallbackCause;
+            }
         });
     }
+    void sessionPromise.then(() => console.info(`Inpaint provider: ${webgpu ? 'webgpu preferred' : 'wasm'}`));
     return sessionPromise;
 }
 
