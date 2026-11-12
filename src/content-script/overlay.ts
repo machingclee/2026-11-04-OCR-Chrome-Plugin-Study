@@ -476,7 +476,16 @@ function fitBoxes(layer: HTMLElement, leading: number): void {
     }
 }
 
+function ensureBoxStyle(): void {
+    if (document.getElementById('comic-translator-box-style')) return;
+    const style = document.createElement('style');
+    style.id = 'comic-translator-box-style';
+    style.textContent = `[${BOX_ATTR}="true"] { height: unset !important; padding-top: 10px !important; }`;
+    document.head.appendChild(style);
+}
+
 function apply(request: OverlayRequest): OverlayResponse {
+    ensureBoxStyle();
     const target = findTarget(request);
     if (!target) {
         return { ok: false, error: 'The picked image is no longer on this page.' };
