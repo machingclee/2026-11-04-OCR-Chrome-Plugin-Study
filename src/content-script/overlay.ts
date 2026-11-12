@@ -313,6 +313,9 @@ function makeBox(
         style.display = 'grid';
         style.placeItems = 'center';
         style.textAlign = 'center';
+        // A trailing ellipsis must not start a second column. Let the fit loop
+        // shrink instead of wrapping it to the left of the text.
+        style.whiteSpace = 'nowrap';
     }
 
     const boxWidth = Math.max(1, item.width * scale);
