@@ -201,7 +201,7 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         const glyph = glyphSizes.length > 0
             ? glyphSizes.reduce((sum, value) => sum + value, 0) / glyphSizes.length
             : 0;
-        const font = glyph > 0 ? Math.max(6, Math.round(glyph)) : (group.fontSize ?? 12);
+        const font = glyph > 0 ? Math.max(6, Math.round(glyph * 1.1)) : (group.fontSize ?? 12);
 
         const sourceColumns = group.lines.map((line) => line.trim()).filter(Boolean);
         const sourceLengths = sourceColumns.map((line) => [...line].length);
