@@ -206,10 +206,18 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         const modelColumns = answer?.columns?.filter((value) => value.trim().length > 0) ?? [];
         const fullText = modelColumns.length > 0 ? modelColumns.join('') : text;
         const characters = [...fullText];
-        const perColumn = Math.max(1, Math.ceil(characters.length / Math.max(1, sortedLines.length)));
-        const evenColumns: string[] = [];
+        const capacities = sortedLines.map((line) =>
+            Math.max(1, Math.floor((vertical ? line.height : line.width) / Math.max(1, font))));
+        const columns: string[] = [];
+        let offset = 0;
         for (let index = 0; index < sortedLines.length; index += 1) {
-            evenColumns.push(characters.slice(index * perColumn, (index + 1) * perColumn).join(''));
+            if (offset >= characters.length) break;
+            const remaining = sortedLines.length - index - 1;
+            const take = remaining === 0
+                ? characters.length - offset
+                : Math.min(capacities[index], characters.length - offset);
+            columns.push(characters.slice(offset, offset + take).join(''));
+            offset += take;
         }
 
         const push = (line: { x: number; y: number; width: number; height: number }, content: string) => {
@@ -238,7 +246,7 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
 
         if (sortedLines.length > 1) {
             sortedLines.forEach((line, columnIndex) => {
-                const part = evenColumns[columnIndex]?.trim();
+                const part = columns[columnIndex]?.trim();
                 if (part) push(line, part);
             });
         } else {
