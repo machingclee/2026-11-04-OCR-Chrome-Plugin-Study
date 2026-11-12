@@ -5,7 +5,7 @@ import {
 } from '../shared/constants';
 import { clearAll } from './overlay';
 import serviceWorkerRequestFactory from '../shared/factories/serviceWorkerRequestFactory';
-import type { BatchProgressMessage, TranslateBatchResponse } from '../shared/types';
+import type { BatchProgressMessage, BatchState, TranslateBatchResponse } from '../shared/types';
 import {
     BATCH_BAR_ID,
     BATCH_MARK_ATTR,
@@ -581,30 +581,88 @@ pickerScope.__comicTranslatorPicker = {
     },
 };
 
+type BatchProgressUi = {
+    element: HTMLElement;
+    text: HTMLElement;
+    cancel: HTMLButtonElement;
+    hideTimer?: number;
+};
+
+let batchProgressUi: BatchProgressUi | null = null;
+
+function updateBatchProgress(state: BatchState): void {
+    if (!batchProgressUi) {
+        const element = document.createElement('div');
+        element.setAttribute('data-comic-translator-batch-progress', 'true');
+        element.style.position = 'fixed';
+        element.style.right = '18px';
+        element.style.bottom = '18px';
+        element.style.zIndex = '2147483647';
+        element.style.display = 'flex';
+        element.style.alignItems = 'center';
+        element.style.gap = '10px';
+        element.style.padding = '9px 11px';
+        element.style.borderRadius = '8px';
+        element.style.background = 'rgba(17, 17, 17, 0.95)';
+        element.style.color = '#fff';
+        element.style.font = '12px/1.35 system-ui, sans-serif';
+        element.style.boxShadow = '0 5px 18px rgba(0, 0, 0, 0.25)';
+        element.style.pointerEvents = 'auto';
+        const text = document.createElement('span');
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.textContent = 'Cancel';
+        cancel.style.border = '1px solid rgba(255,255,255,0.35)';
+        cancel.style.borderRadius = '5px';
+        cancel.style.padding = '4px 7px';
+        cancel.style.background = 'transparent';
+        cancel.style.color = '#fff';
+        cancel.style.cursor = 'pointer';
+        cancel.style.font = 'inherit';
+        element.append(text, cancel);
+        document.documentElement.append(element);
+        batchProgressUi = { element, text, cancel };
+    }
+    const ui = batchProgressUi;
+    const total = state.items.length;
+    const done = state.items.filter((item) => item.status === 'done').length;
+    const failed = state.items.filter((item) => item.status === 'error').length;
+    const running = state.items.findIndex((item) => item.status === 'running');
+    if (state.status === 'done') {
+        ui.text.textContent = `Batch done: ${done}/${total}${failed ? `, ${failed} failed` : ''}`;
+        ui.cancel.style.display = 'none';
+        window.clearTimeout(ui.hideTimer);
+        ui.hideTimer = window.setTimeout(() => {
+            ui.element.remove();
+            batchProgressUi = null;
+        }, 6000);
+    } else if (state.status === 'cancelled') {
+        ui.text.textContent = `Batch cancelled: ${done}/${total}`;
+        ui.cancel.style.display = 'none';
+        window.clearTimeout(ui.hideTimer);
+        ui.hideTimer = window.setTimeout(() => {
+            ui.element.remove();
+            batchProgressUi = null;
+        }, 4000);
+    } else {
+        ui.cancel.style.display = '';
+        ui.text.textContent = running >= 0
+            ? `Translating ${running + 1}/${total}...`
+            : `Queued ${total} images...`;
+        ui.cancel.onclick = () => {
+            ui.cancel.disabled = true;
+            void chrome.runtime.sendMessage(serviceWorkerRequestFactory.ofCancel(state.id)).catch(() => undefined);
+        };
+    }
+}
+
 const batchWindow = window as unknown as { __comicTranslatorBatchListener?: boolean };
 if (!batchWindow.__comicTranslatorBatchListener) {
     batchWindow.__comicTranslatorBatchListener = true;
     chrome.runtime.onMessage.addListener((message: unknown) => {
         const progress = message as BatchProgressMessage | undefined;
         if (!progress || progress.type !== 'batch-progress') return false;
-        const state = progress.state;
-        const total = state.items.length;
-        const done = state.items.filter((item) => item.status === 'done').length;
-        if (state.status === 'cancelled') {
-            showToast('Batch cancelled.');
-            return false;
-        }
-        if (state.status === 'done') {
-            showToast(`Batch done: ${done} of ${total} images.`);
-            return false;
-        }
-        const running = state.items.findIndex((item) => item.status === 'running');
-        const failed = state.items.find((item) => item.status === 'error');
-        if (running >= 0) {
-            showToast(`Translating ${running + 1} of ${total}...`);
-        } else if (failed) {
-            showToast(`Image failed: ${failed.error ?? 'unknown error'}`);
-        }
+        updateBatchProgress(progress.state);
         return false;
     });
 }

@@ -1,5 +1,5 @@
 import { SERVICE_WORKER_TARGET } from '../constants';
-import type { BatchItem, DetectRequest, TranslateBatchRequest, TranslateRequest, TranslateSettings } from '../types';
+import type { BatchItem, CancelBatchRequest, DetectRequest, TranslateBatchRequest, TranslateRequest, TranslateSettings } from '../types';
 
 /** Messages addressed to the service worker. */
 function ofDetection(imageUrl: string, tabPageUrl?: string): DetectRequest {
@@ -20,6 +20,10 @@ function ofBatch(items: BatchItem[], settings?: TranslateSettings): TranslateBat
     return { target: SERVICE_WORKER_TARGET, type: 'translate-batch', items, settings };
 }
 
-const serviceWorkerRequestFactory = { ofDetection, ofTranslation, ofBatch };
+function ofCancel(batchId: string): CancelBatchRequest {
+    return { target: SERVICE_WORKER_TARGET, type: 'cancel-batch', batchId };
+}
+
+const serviceWorkerRequestFactory = { ofDetection, ofTranslation, ofBatch, ofCancel };
 
 export default serviceWorkerRequestFactory;
