@@ -1,6 +1,6 @@
 # Comic Translator Extension
 
-All technical details are documented in the full walkthrough: [漫畫翻譯擴充的完整拆解：從文字檢測、OCR 到 DeepSeek 翻譯與自動嵌字](https://www.machingclee.com/blog/article/%E6%BC%AB%E7%95%AB%E7%BF%BB%E8%AD%AF%E6%93%B4%E5%85%85%E7%9A%84%E5%AE%8C%E6%95%B4%E6%8B%86%E8%A7%A3-%E5%BE%9E%E6%96%87%E5%AD%97%E6%AA%A2%E6%B8%AC-OCR-%E5%88%B0-DeepSeek-%E7%BF%BB%E8%AD%AF%E8%88%87%E8%87%AA%E5%8B%95%E5%B5%8C%E5%AD%97).
+All technical details are documented in the full walkthrough: [Build a Chrome Extension From Scratch: From an Empty Folder to a Page Translated In Place](https://www.machingclee.com/blog/article/Build-a-Chrome-Extension-From-Scratch-From-an-Empty-Folder-to-a-Page-Translated-In-Place)
 
 https://github.com/user-attachments/assets/b65dc644-a995-433a-92fa-c67d39a59693
 
