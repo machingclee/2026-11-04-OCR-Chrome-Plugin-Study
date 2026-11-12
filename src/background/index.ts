@@ -1,5 +1,5 @@
 import offscreenRequestFactory from '../shared/factories/offscreenRequestFactory';
-import { BUILD_ID } from '../shared/build';
+import { DETECTION_CACHE_VERSION } from '../shared/constants';
 import {
     LAST_RESULT_KEY,
     OFFSCREEN_HTML,
@@ -55,7 +55,7 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
 
         if (response.ok) {
             const payload = {
-                version: BUILD_ID,
+                version: DETECTION_CACHE_VERSION,
                 imageUrl: request.imageUrl,
                 boxes: response.boxes,
                 previews: response.previews,

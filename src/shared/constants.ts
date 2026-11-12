@@ -26,6 +26,9 @@ export const OVERLAY_TARGET_ATTRIBUTE = 'data-comic-translator-target';
 
 export const LAST_RESULT_KEY = 'lastDetection';
 
+/** Bump only when the stored detection shape changes, not on every build. */
+export const DETECTION_CACHE_VERSION = 'detection-v2';
+
 
 /** When true, a line outside every block is still kept. */
 /** Stored in the browser only, and sent to DeepSeek by the extension itself. */

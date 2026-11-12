@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     CONTENT_SCRIPT_FILE,
     DEEPSEEK_KEY,
+    DETECTION_CACHE_VERSION,
     GEMINI_KEY,
     FONT_KEY,
     LEADING_KEY,
@@ -23,7 +24,6 @@ import type {
     OverlayRequest,
     OverlayResponse,
 } from './shared/types';
-import { BUILD_ID } from './shared/build';
 import { canTranslate, translateAll } from './lib/translate';
 import { translateWithDeepSeek } from './lib/translateDeepSeek';
 import { translateWithGemini } from './lib/translateGemini';
@@ -162,6 +162,7 @@ export default function App() {
                 PICKED_IMAGE_URL_KEY,
                 PICKED_IMAGE_TARGET_KEY,
                 DEEPSEEK_KEY,
+    DETECTION_CACHE_VERSION,
                 GEMINI_KEY,
                 TRANSLATOR_KEY,
                 FONT_KEY,
@@ -209,7 +210,7 @@ export default function App() {
                 setImageUrl(pickedImageUrl);
 
                 // don't do it again if we pick the same image
-                const fresh = lastResult?.version === BUILD_ID;
+                const fresh = lastResult?.version === DETECTION_CACHE_VERSION;
                 if (fresh && lastResult.imageUrl === pickedImageUrl && Array.isArray(lastResult.boxes)) {
                     setBoxes(lastResult.boxes);
                     setPreviews(Array.isArray(lastResult.previews) ? lastResult.previews : []);
