@@ -557,7 +557,7 @@ function startBatchSelection(): void {
             badge.textContent = `✓ ${index + 1}`;
             badge.style.position = 'absolute';
             badge.style.right = '-10px';
-            badge.style.top = '-10px';
+            badge.style.top = '8px';
             badge.style.width = '38px';
             badge.style.height = '22px';
             badge.style.borderRadius = '11px';
