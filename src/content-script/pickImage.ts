@@ -323,8 +323,19 @@ function start(): void {
                 button.textContent = '✓';
                 const size = 44;
                 const margin = 8;
-                const left = Math.min(window.innerWidth - size - margin, Math.max(margin, picked.rect.right - size - margin));
-                const top = Math.min(window.innerHeight - size - margin, Math.max(margin, picked.rect.bottom - size - margin));
+                const gap = 8;
+                let left = picked.rect.right + gap;
+                if (left + size > window.innerWidth - margin) {
+                    left = picked.rect.left - size - gap;
+                }
+                if (left < margin) {
+                    left = Math.min(window.innerWidth - size - margin, Math.max(margin, picked.rect.right - size - gap));
+                }
+                let top = Math.min(window.innerHeight - size - margin, Math.max(margin, picked.rect.bottom - size - gap));
+                if (left + size > window.innerWidth - margin) {
+                    left = Math.min(window.innerWidth - size - margin, Math.max(margin, picked.rect.right - size - gap));
+                    top = Math.min(window.innerHeight - size - margin, Math.max(margin, picked.rect.bottom + gap));
+                }
                 button.style.position = 'fixed';
                 button.style.left = `${left}px`;
                 button.style.top = `${top}px`;
