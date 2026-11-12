@@ -147,6 +147,7 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
                 bubbles: response.bubbles,
                 groups: response.groups,
                 erasedUrl: response.erasedUrl,
+                originalUrl: response.originalUrl,
                 ms: response.ms,
                 warm: response.warm,
                 timings: response.timings,
@@ -364,6 +365,7 @@ async function runTranslation(request: TranslateRequest, sender: chrome.runtime.
         const overlay: OverlayRequest = {
             token: request.token,
             imageUrl: request.imageUrl,
+            originalUrl: detection.originalUrl,
             erasedUrl: detection.erasedUrl,
             width: detection.imageWidth,
             height: detection.imageHeight,

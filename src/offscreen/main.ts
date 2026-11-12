@@ -438,6 +438,13 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
 
         const previews = cropPreviews(bitmap, collected.slice(0, MAX_PREVIEWS));
 
+        const originalCanvas = document.createElement('canvas');
+        originalCanvas.width = bitmap.width;
+        originalCanvas.height = bitmap.height;
+        const originalContext = originalCanvas.getContext('2d');
+        originalContext?.drawImage(bitmap, 0, 0);
+        const originalUrl = originalContext ? originalCanvas.toDataURL('image/webp', 0.95) : null;
+
         let erasedUrl: string | null = null;
         if (detected.mask && usable.length > 0) {
             const inpaintStarted = performance.now();
@@ -488,6 +495,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             boxes: collected,
             previews,
             erasedUrl,
+            originalUrl,
             imageWidth: bitmap.width,
             imageHeight: bitmap.height,
             groupedLines: grouped.lines.length,

@@ -489,6 +489,28 @@ function apply(request: OverlayRequest): OverlayResponse {
     const renderedWidth = host?.getBoundingClientRect().width ?? width;
     const scale = renderedWidth / width;
 
+    if (request.originalUrl) {
+        // nhentai can hide or filter its own image node. Render the original
+        // bitmap as an opaque base layer so the page cannot turn black behind
+        // the transparent cutout.
+        const base = document.createElement('img');
+        base.src = request.originalUrl;
+        base.alt = '';
+        base.style.position = 'absolute';
+        base.style.inset = '0';
+        base.style.width = '100%';
+        base.style.height = '100%';
+        base.style.objectFit = 'fill';
+        base.style.pointerEvents = 'none';
+        base.style.opacity = '1';
+        base.style.visibility = 'visible';
+        base.style.filter = 'none';
+        base.style.mixBlendMode = 'normal';
+        base.style.zIndex = '0';
+        base.setAttribute('data-comic-translator-base', 'true');
+        layer.appendChild(base);
+    }
+
     if (request.erasedUrl) {
         // Keep the original image node. The erased image is a layer inside the
         // same wrapper, so Clear overlay restores the page without a reload.
