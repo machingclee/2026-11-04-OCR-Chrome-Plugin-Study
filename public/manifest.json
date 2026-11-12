@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Comic Translator",
+  "version": "0.5.0",
+  "description": "A React and TypeScript extension that detects text boxes with an on-device ONNX model.",
+  "permissions": [
+    "storage",
+    "scripting",
+    "activeTab",
+    "declarativeNetRequest",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "commands": {
+    "pick-image": {
+      "suggested_key": {
+        "default": "Alt+T",
+        "mac": "Alt+T"
+      },
+      "description": "Pick one comic image to translate"
+    }
+  },
+  "action": {
+    "default_title": "Comic Translator",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "minimum_chrome_version": "116"
+}

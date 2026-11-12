@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  background: transparent;
+}
+
+body {
+  width: 720px;
+  max-height: 600px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  border-radius: 8px;
+  overflow-x: hidden;
+  transition: width 200ms ease;
+  background: #f4f1ec;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+.stage {
+  position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+}
+
+.stage img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid #ff4d6d;
+  background: rgba(255, 77, 109, 0.12);
+}
+
+.box[data-direction='horizontal'] {
+  border-color: #2f7bd8;
+  background: rgba(47, 123, 216, 0.12);
+}
+
+.bubble {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px dashed #2f7bd8;
+  pointer-events: none;
+}
+
+.ocr-score {
+  display: block;
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+button[data-busy='true'] {
+  cursor: progress;
+}

@@ -1,0 +1,87 @@
+/**
+  * Constants shared across bundles. Popup, content script, and detector are
+  * separate outputs, so a value that two of them depend on must live here and
+  * not in a literal on each side.
+  */
+
+/** HTML entry points. The Vite build and the runtime must agree on these names. */
+export const POPUP_HTML = 'popup.html';
+export const OFFSCREEN_HTML = 'offscreen.html';
+
+/** Runtime channel names that every message carries. */
+export const SERVICE_WORKER_TARGET = 'service-worker';
+export const OFFSCREEN_TARGET = 'offscreen';
+
+/** File injected into the page when the user picks an image or applies overlays. */
+export const CONTENT_SCRIPT_FILE = 'pickImage.js';
+
+/** Storage key that carries a picked image URL from the content script. */
+export const PICKED_IMAGE_URL_KEY = 'pickedImageUrl';
+/** Marks the exact image element that was picked, so a duplicate URL is unambiguous. */
+export const PICKED_IMAGE_TARGET_KEY = 'pickedImageTarget';
+/** Attribute that carries the pick token on that element. */
+export const OVERLAY_TARGET_ATTRIBUTE = 'data-comic-translator-target';
+
+/** Last successful result, readable by the popup after it reopens. */
+
+export const LAST_RESULT_KEY = 'lastDetection';
+export const BATCH_STATE_KEY = 'translationBatch';
+
+/** Bump only when the stored detection shape changes, not on every build. */
+export const DETECTION_CACHE_VERSION = 'detection-v3';
+
+/** When true, a line outside every block is still kept. */
+/** Stored in the browser only, and sent to DeepSeek by the extension itself. */
+export const DEEPSEEK_KEY = 'deepseekKey';
+/** The popup asks the page to show its finished image. */
+export const REPLACE_IMAGE_MESSAGE = 'comic-translator:replace-image';
+/** The page can put its own image back. */
+export const UNDO_IMAGE_MESSAGE = 'comic-translator:undo-image';
+export const FONT_KEY = 'typesetFont';
+export const LEADING_KEY = 'typesetLeading';
+export const WEIGHT_KEY = 'typesetWeight';
+export const LEADING_MIN = 1;
+export const LEADING_MAX = 1.6;
+export const FONT_CHOICES = ['sans', 'serif'] as const;
+export type FontChoice = (typeof FONT_CHOICES)[number];
+/** Gemini wins the tie by default: its free tier needs nothing but a key. */
+export const GEMINI_KEY = 'geminiKey';
+export const TRANSLATOR_KEY = 'translator';
+export const TRANSLATORS = ['gemini', 'deepseek', 'builtin'] as const;
+export type TranslatorChoice = (typeof TRANSLATORS)[number];
+
+/** Id of the temporary declarativeNetRequest rule that sets Referer. */
+export const REFERER_RULE_ID = 1;
+
+/** Detector model and postprocessing thresholds. */
+export const DETECTOR_MODEL_PATH = 'models/comictextdetector.pt.onnx';
+export const DETECTOR_INPUT_SIZE = 1024;
+export const DETECTOR_SCORE_THRESHOLD = 0.25;
+export const DETECTOR_MIN_AREA = 20;
+export const DETECTOR_MIN_MEAN_SCORE = 0.5;
+
+/** Japanese recogniser, PP-OCRv6 medium in ONNX, plus its charset. */
+
+
+export const OCR_MODEL_PATH = 'models/ppocr_v6_medium_rec.onnx';
+export const OCR_DICT_PATH = 'models/ppocr_v6_dict.txt';
+export const OCR_INPUT_HEIGHT = 48;
+export const OCR_INPUT_WIDTH = 320;
+export const OCR_NORMALIZE: 'zero_one' | 'minus_one' = 'minus_one';
+/** OCR lines below this confidence are inspection-only, never translated. */
+export const OCR_MIN_CONFIDENCE = 0.7;
+
+/** DBNet widens a shrunken region by area * ratio / perimeter before merging. */
+export const DETECTOR_UNCLIP_RATIO = 1.5;
+/** Bubble segmentation, a YOLOv8 seg export that finds speech balloons. */
+export const BUBBLE_MODEL_PATH = 'models/bubble.onnx';
+export const BUBBLE_INPUT_SIZE = 640;
+export const BUBBLE_SCORE_THRESHOLD = 0.3;
+export const BUBBLE_NMS = 0.45;
+export const BUBBLE_MASK_THRESHOLD = 0.5;
+/** AOT inpainting, 512 square, minus one to one, hole zeroed after the scale. */
+export const INPAINT_MODEL_PATH = 'models/aot_inpaint_512.onnx';
+export const INPAINT_INPUT_SIZE = 512;
+export const INPAINT_MASK_GROW = 2;
+
+
