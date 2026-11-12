@@ -330,16 +330,16 @@ function start(): void {
                 const placeConfirm = (): void => {
                     if (!button.isConnected) return;
                     const rect = picked.element.getBoundingClientRect();
-                    let left = rect.right + gap;
-                    if (left + size > window.innerWidth - margin) left = rect.left - size - gap;
-                    if (left < margin) {
-                        left = Math.min(window.innerWidth - size - margin, Math.max(margin, rect.right - size - gap));
-                    }
-                    let top = Math.min(window.innerHeight - size - margin, Math.max(margin, rect.bottom - size - gap));
+                    const visibleRight = Math.min(rect.right, window.innerWidth);
+                    const visibleBottom = Math.min(rect.bottom, window.innerHeight);
+                    let left = visibleRight + gap;
                     if (left + size > window.innerWidth - margin) {
-                        left = Math.min(window.innerWidth - size - margin, Math.max(margin, rect.right - size - gap));
-                        top = Math.min(window.innerHeight - size - margin, Math.max(margin, rect.bottom + gap));
+                        left = Math.max(margin, visibleRight - size - gap);
                     }
+                    const top = Math.min(
+                        window.innerHeight - size - margin,
+                        Math.max(margin, visibleBottom - size - gap),
+                    );
                     button.style.left = `${left}px`;
                     button.style.top = `${top}px`;
                 };
