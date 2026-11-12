@@ -256,7 +256,7 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         }
     }
 
-    const items: OverlayItem[] = placements.map(({ group, text, vertical, layout, balloon }) => ({
+    const items: OverlayItem[] = placements.map(({ group, text, vertical, layout, tight, balloon }) => ({
         x: layout.x,
         y: layout.y,
         width: layout.width,
@@ -270,7 +270,12 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         rectangle: group.rectangle,
         fontSize: group.fontSize,
         clip: balloon?.outline,
-        fill: Boolean(balloon) && group.width * group.height <= pageWidth * pageHeight * 0.15,
+        patch: balloon ? {
+            x: tight.x,
+            y: tight.y,
+            width: tight.width,
+            height: tight.height,
+        } : undefined,
     }));
     if (items.length === 0) throw new Error('The translation returned no dialogue to place.');
 

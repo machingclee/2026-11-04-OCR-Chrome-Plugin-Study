@@ -96,6 +96,8 @@ export type OverlayItem = {
     clip?: { x: number; y: number }[];
     /** Fill the tight detected area instead of only the seg glyph pixels. */
     fill?: boolean;
+    /** Paper patch over the original glyphs, separate from the text box. */
+    patch?: { x: number; y: number; width: number; height: number };
 };
 
 /** Popup to content script: place these boxes over the picked image. */
