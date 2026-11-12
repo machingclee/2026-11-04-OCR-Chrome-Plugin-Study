@@ -28,6 +28,15 @@ const H2V = new Map<string, string>([
     [']', '﹈'],
 ]);
 
+export function toHorizontal(text: string): string {
+    // Chinese and Japanese horizontal text uses two ellipsis marks, not three
+    // ASCII periods. Keep a single period because it may be a decimal point.
+    return text
+        .replace(/\.{2,}/g, '……')
+        .replace(/…+/g, '……')
+        .replace(/⋯+/g, '……');
+}
+
 export function toVertical(text: string): string {
     // Three ASCII dots or a run of ellipsis marks is one vertical ellipsis, not
     // three full stops or a horizontal row of dots beside the column.
