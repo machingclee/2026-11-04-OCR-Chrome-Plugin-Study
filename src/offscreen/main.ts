@@ -8,11 +8,12 @@ import { DETECTOR_INPUT_SIZE, OFFSCREEN_TARGET } from '../shared/constants';
 import type {
     BoxData,
     DetectResponse,
+    DetectTimings,
     GroupData,
     IncomingMessage,
     OffscreenDetectRequest,
 } from '../shared/types';
-import type { TextMask } from '../lib/types';
+import type { TextLine, TextMask } from '../lib/types';
 import serviceWorkerResponseFactory from '../shared/factories/serviceWorkerResponseFactory';
 
 /** Each crop is a data url in storage, so the strip stops at this many. */
@@ -218,17 +219,36 @@ function paintGroupColours(
     }
 }
 
+async function recognizeLines(
+    bitmap: ImageBitmap,
+    lines: TextLine[],
+): Promise<BoxData[]> {
+    const collected: BoxData[] = [];
+    for (const line of lines) {
+        const recognised = await recognizeLine(
+            bitmap,
+            line,
+            line.direction === 'vertical',
+        ).catch(() => ({ text: '', confidence: 0 }));
+        collected.push({ ...line, text: recognised.text, confidence: recognised.confidence });
+    }
+    return collected;
+}
+
 async function runDetection(request: OffscreenDetectRequest): Promise<DetectResponse> {
     const started = performance.now();
     const warm = isSessionReady();
+    const timings: DetectTimings = { fetch: 0, detect: 0, bubble: 0, group: 0, ocr: 0, extras: 0 };
 
     try {
+        const fetchStarted = performance.now();
         const response = await fetch(request.imageUrl, { credentials: 'include' });
         if (!response.ok) {
             return { ok: false, error: `Image fetch failed with ${response.status}.` };
         }
 
         const bitmap = await createImageBitmap(await response.blob());
+        timings.fetch = Math.round(performance.now() - fetchStarted);
 
         // The page is one image. Tiling only raises the resolution the detector
         // sees; every box, mask and balloon still lives in this one space.
@@ -239,14 +259,22 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             else tilesY -= 1;
         }
 
+        const detectStarted = performance.now();
         const detected = await detectBoxes(bitmap, tilesX, tilesY);
+        timings.detect = Math.round(performance.now() - detectStarted);
         const ordered = toOrderedTextLines(detected.detBoxes, [], true);
+
+        // ORT is single-threaded here, so running the balloon session beside the
+        // detector only queues work on the same thread. Measure it instead.
         let bubbleError: string | null = null;
+        const bubbleStarted = performance.now();
         const bubbles = await detectBubbles(bitmap).catch((cause: unknown) => {
             bubbleError = cause instanceof Error ? cause.message : String(cause);
             return null;
         });
+        timings.bubble = Math.round(performance.now() - bubbleStarted);
 
+        const groupStarted = performance.now();
         const balloonList = bubbles ? bubbles.bubbles : [];
         const grouped = groupByRegion(ordered, balloonList, detected.blkBoxes, false);
 
@@ -254,14 +282,12 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             ...line,
             ...expandToInk(line, detected.mask),
         }));
+        timings.group = Math.round(performance.now() - groupStarted);
 
-        const collected: BoxData[] = [];
-        for (const line of lines) {
-            const recognised = await recognizeLine(bitmap, line, line.direction === 'vertical').catch(
-                () => ({ text: '', confidence: 0 }),
-            );
-            collected.push({ ...line, text: recognised.text, confidence: recognised.confidence });
-        }
+        const ocrStarted = performance.now();
+        const collected = await recognizeLines(bitmap, lines);
+        timings.ocr = Math.round(performance.now() - ocrStarted);
+        timings.extras = Math.round(performance.now() - started - timings.fetch - timings.detect - timings.group - timings.ocr);
 
         const usable = collected.filter((line) => !skipAsNonDialogue(line, balloonList));
 
@@ -345,6 +371,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             })),
             ms: Math.round(performance.now() - started),
             warm,
+            timings,
         };
     } catch (cause) {
         return { ok: false, error: cause instanceof Error ? cause.message : String(cause) };

@@ -62,6 +62,8 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
                 bubbles: response.bubbles,
                 groups: response.groups,
                 ms: response.ms,
+                warm: response.warm,
+                timings: response.timings,
             };
 
             // Session storage holds 10 MB. The crops are the only large part, so

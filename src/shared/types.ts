@@ -133,6 +133,16 @@ export type IncomingMessage =
     | OffscreenDetectRequest
     | OffscreenPing;
 
+/** Wall-clock cost of each stage, in milliseconds. */
+export type DetectTimings = {
+    fetch: number;
+    detect: number;
+    bubble: number;
+    group: number;
+    ocr: number;
+    extras: number;
+};
+
 export type DetectResponse =
     | {
           ok: true;
@@ -146,6 +156,7 @@ export type DetectResponse =
           groups: GroupData[];
           bubbleError: string | null;
           bubbles: BubbleData[];
+          timings?: DetectTimings;
       }
     | { ok: false; error: string };
 

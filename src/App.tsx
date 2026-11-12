@@ -18,6 +18,7 @@ import {
 import type {
     BoxData,
     DetectResponse,
+    DetectTimings,
     OverlayItem,
     OverlayRequest,
     OverlayResponse,
@@ -50,6 +51,15 @@ type GroupStroke = {
     rectangle?: boolean;
     fontSize?: number;
 };
+function seconds(ms: number): string {
+    return `${(ms / 1000).toFixed(1)} s`;
+}
+
+function stageSummary(timings?: DetectTimings): string {
+    if (!timings) return '';
+    return `; detect ${seconds(timings.detect)}, OCR ${seconds(timings.ocr)}, bubbles ${seconds(timings.bubble)}`;
+}
+
 type LastResult = {
     version?: string;
     imageUrl: string;
@@ -58,6 +68,8 @@ type LastResult = {
     bubbles?: BubbleStroke[];
     groups?: GroupStroke[];
     ms: number;
+    warm?: boolean;
+    timings?: DetectTimings;
 };
 
 /**
@@ -178,7 +190,12 @@ export default function App() {
                     setPreviews(Array.isArray(lastResult.previews) ? lastResult.previews : []);
                     setBubbles(Array.isArray(lastResult.bubbles) ? lastResult.bubbles : []);
                     setGroups(Array.isArray(lastResult.groups) ? lastResult.groups : []);
-                    setStatus(`Restored ${lastResult.boxes.length} boxes from ${lastResult.ms} ms.`);
+                    const previousRun = lastResult.warm === undefined
+                        ? 'previous run'
+                        : `previous ${lastResult.warm ? 'warm' : 'cold'} run`;
+                    setStatus(
+                        `Restored ${lastResult.boxes.length} boxes from the ${previousRun} (${seconds(lastResult.ms)}${stageSummary(lastResult.timings)}). Translate reuses it.`,
+                    );
                     return;
                 }
 
@@ -254,7 +271,7 @@ export default function App() {
             const ruby = response.boxes.reduce((sum, box) => sum + box.ruby.length, 0);
             const read = response.boxes.filter((box) => box.text.length > 0).length;
             setStatus(
-                `${response.boxes.length} lines (${vertical} vertical, ${ruby} ruby), ${read} read, ${response.bubbles?.length ?? 0} balloons, ${response.groupedLines} grouped, image ${response.imageWidth}x${response.imageHeight}, ${response.ms} ms (${response.warm ? 'reused session' : 'cold session'}).`,
+                `${response.boxes.length} lines (${vertical} vertical, ${ruby} ruby), ${read} read, ${response.bubbles?.length ?? 0} balloons, ${response.groupedLines} grouped, image ${response.imageWidth}x${response.imageHeight}, ${seconds(response.ms)} (${response.warm ? 'reused session' : 'cold session'}${stageSummary(response.timings)}).`,
             );
             return response;
         } catch (cause) {

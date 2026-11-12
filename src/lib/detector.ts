@@ -533,6 +533,60 @@ function overlapRatio(a: Box, b: Box): number {
     return shared / Math.min(a.width * a.height, b.width * b.height);
 }
 
+type MaskPart = {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    mask: Pass['mask'];
+};
+
+/**
+ * The old tiled path ran every tile and then one more full-page pass only to
+ * recover a seg mask in page coordinates. Stitch the tile masks instead: each
+ * tile already has a higher-resolution mask than the full page would, and the
+ * extra pass disappears.
+ */
+function stitchTileMasks(bitmap: ImageBitmap, parts: MaskPart[]): Pass['mask'] {
+    const usable = parts.filter((part) => part.mask !== null);
+    if (usable.length === 0) return null;
+
+    const fullScale = Math.min(DETECTOR_INPUT_SIZE / bitmap.width, DETECTOR_INPUT_SIZE / bitmap.height);
+    const drawWidth = Math.max(1, Math.round(bitmap.width * fullScale));
+    const drawHeight = Math.max(1, Math.round(bitmap.height * fullScale));
+    const padX = Math.floor((DETECTOR_INPUT_SIZE - drawWidth) / 2);
+    const padY = Math.floor((DETECTOR_INPUT_SIZE - drawHeight) / 2);
+    const data = new Float32Array(DETECTOR_INPUT_SIZE * DETECTOR_INPUT_SIZE);
+
+    for (const part of usable) {
+        const mask = part.mask;
+        if (!mask) continue;
+        const tile = mask.data;
+        for (let my = 0; my < DETECTOR_INPUT_SIZE; my += 1) {
+            const localY = (my - mask.padY) / mask.scale;
+            if (localY < 0 || localY >= part.height) continue;
+            const pageY = part.y + localY;
+            const fullY = Math.round(pageY * fullScale + padY);
+            if (fullY < 0 || fullY >= DETECTOR_INPUT_SIZE) continue;
+
+            for (let mx = 0; mx < DETECTOR_INPUT_SIZE; mx += 1) {
+                const value = tile[my * DETECTOR_INPUT_SIZE + mx];
+                if (value <= 0) continue;
+                const localX = (mx - mask.padX) / mask.scale;
+                if (localX < 0 || localX >= part.width) continue;
+                const pageX = part.x + localX;
+                const fullX = Math.round(pageX * fullScale + padX);
+                if (fullX < 0 || fullX >= DETECTOR_INPUT_SIZE) continue;
+
+                const index = fullY * DETECTOR_INPUT_SIZE + fullX;
+                if (value > data[index]) data[index] = value;
+            }
+        }
+    }
+
+    return { data, scale: fullScale, padX, padY };
+}
+
 /**
  * A full page shrinks every stroke when it is letterboxed to 1024, and a thin
  * column can fall below what the model sees. Splitting the page into overlapping
@@ -549,6 +603,7 @@ export async function detectBoxes(bitmap: ImageBitmap, tilesX = 1, tilesY = 1): 
     const stepY = 1 / tilesY;
     const kept: Box[] = [];
     const blocks: TextBlock[] = [];
+    const parts: MaskPart[] = [];
 
     for (let row = 0; row < tilesY; row += 1) {
         for (let column = 0; column < tilesX; column += 1) {
@@ -560,6 +615,7 @@ export async function detectBoxes(bitmap: ImageBitmap, tilesX = 1, tilesY = 1): 
             const h = Math.min(bitmap.height - y, height * bitmap.height);
 
             const pass = await runPass(tileOf(bitmap, x, y, w, h));
+            parts.push({ x, y, width: w, height: h, mask: pass.mask });
             for (const box of pass.boxes) {
                 const shifted = { ...box, x: box.x + x, y: box.y + y };
                 if (kept.some((other) => overlapRatio(shifted, other) > 0.5)) continue;
@@ -571,6 +627,12 @@ export async function detectBoxes(bitmap: ImageBitmap, tilesX = 1, tilesY = 1): 
         }
     }
 
-    const first = await runPass(bitmap);
-    return { detBoxes: kept.length > 0 ? kept : first.boxes, blkBoxes: blocks, mask: first.mask };
+    if (kept.length === 0) {
+        // No tile found a line. A full pass is still the safest fallback, but it
+        // only runs on a page that would otherwise have no text at all.
+        const first = await runPass(bitmap);
+        return { detBoxes: first.boxes, blkBoxes: blocks.length > 0 ? blocks : first.blocks, mask: first.mask };
+    }
+
+    return { detBoxes: kept, blkBoxes: blocks, mask: stitchTileMasks(bitmap, parts) };
 }
