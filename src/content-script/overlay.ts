@@ -547,17 +547,25 @@ function apply(request: OverlayRequest): OverlayResponse {
         group.setAttribute('data-comic-translator-group-container', 'true');
         group.style.position = 'absolute';
         group.style.inset = '0';
-        group.style.overflow = 'hidden';
-        group.style.clipPath = `inset(${(minY / height) * 100}% ${((width - maxX) / width) * 100}% ${((height - maxY) / height) * 100}% ${(minX / width) * 100}%)`;
+        group.style.overflow = 'visible';
         group.style.pointerEvents = 'auto';
         group.style.cursor = 'grab';
         group.style.touchAction = 'none';
         group.style.zIndex = '1';
         if (request.erasedUrl) {
-            group.style.backgroundImage = `url("${request.erasedUrl}")`;
-            group.style.backgroundRepeat = 'no-repeat';
-            group.style.backgroundSize = '100% 100%';
-            group.style.backgroundPosition = 'center';
+            const cutout = document.createElement('div');
+            cutout.style.position = 'absolute';
+            cutout.style.left = `${(minX / width) * 100}%`;
+            cutout.style.top = `${(minY / height) * 100}%`;
+            cutout.style.width = `${((maxX - minX) / width) * 100}%`;
+            cutout.style.height = `${((maxY - minY) / height) * 100}%`;
+            cutout.style.overflow = 'hidden';
+            cutout.style.pointerEvents = 'none';
+            cutout.style.backgroundImage = `url("${request.erasedUrl}")`;
+            cutout.style.backgroundRepeat = 'no-repeat';
+            cutout.style.backgroundSize = `${width * scale}px ${height * scale}px`;
+            cutout.style.backgroundPosition = `${-minX * scale}px ${-minY * scale}px`;
+            group.appendChild(cutout);
         }
         layer.appendChild(group);
         for (const item of items) {
