@@ -1,12 +1,29 @@
 import offscreenRequestFactory from '../shared/factories/offscreenRequestFactory';
 import { DETECTION_CACHE_VERSION } from '../shared/constants';
 import {
+    CONTENT_SCRIPT_FILE,
+    DEEPSEEK_KEY,
+    FONT_KEY,
+    GEMINI_KEY,
     LAST_RESULT_KEY,
+    LEADING_KEY,
     OFFSCREEN_HTML,
     REFERER_RULE_ID,
     SERVICE_WORKER_TARGET,
+    TRANSLATOR_KEY,
+    WEIGHT_KEY,
 } from '../shared/constants';
-import type { DetectRequest, DetectResponse, IncomingMessage } from '../shared/types';
+import type {
+    DetectRequest,
+    DetectResponse,
+    IncomingMessage,
+    OverlayRequest,
+    OverlayResponse,
+    TranslateRequest,
+    TranslateResponse,
+    TranslateSettings,
+} from '../shared/types';
+import { translateGroups } from '../lib/translationJob';
 
 let offscreenReady: Promise<void> | null = null;
 
@@ -15,7 +32,7 @@ let offscreenReady: Promise<void> | null = null;
 // only short-lived tasks should be done here, 
 // like pinging the offscreen document and relaying the detection request to it. 
 
-chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
     // message directly form the frontend
     const request = message as IncomingMessage | undefined;
     if (!request || request.target !== SERVICE_WORKER_TARGET) return false;
@@ -23,6 +40,17 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
     if (request.type === 'detect') {
         runDetection(request).then((detectionResponse) => {
             sendResponse(detectionResponse);
+        });
+        return true;
+    }
+
+    if (request.type === 'translate') {
+        runTranslation(request, sender).then((response) => {
+            try {
+                sendResponse(response);
+            } catch {
+                // The popup may have closed. The overlay already ran.
+            }
         });
         return true;
     }
@@ -90,6 +118,129 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
     }
 }
 
+
+async function readSettings(): Promise<TranslateSettings> {
+    const local = await chrome.storage.local.get([
+        DEEPSEEK_KEY,
+        GEMINI_KEY,
+        TRANSLATOR_KEY,
+        FONT_KEY,
+        LEADING_KEY,
+        WEIGHT_KEY,
+    ]);
+    const translator = local[TRANSLATOR_KEY];
+    return {
+        translator: translator === 'deepseek' || translator === 'builtin' ? translator : 'gemini',
+        deepSeekKey: typeof local[DEEPSEEK_KEY] === 'string' ? local[DEEPSEEK_KEY] : '',
+        geminiKey: typeof local[GEMINI_KEY] === 'string' ? local[GEMINI_KEY] : '',
+        font: local[FONT_KEY] === 'serif' ? 'serif' : 'sans',
+        leading: typeof local[LEADING_KEY] === 'number' ? local[LEADING_KEY] : 1.15,
+        weight: local[WEIGHT_KEY] === 'bold' ? 'bold' : 'normal',
+    };
+}
+
+async function resolveTabId(request: TranslateRequest, sender: chrome.runtime.MessageSender): Promise<number> {
+    if (typeof request.tabId === 'number') return request.tabId;
+    if (typeof sender.tab?.id === 'number') return sender.tab.id;
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (typeof tab?.id !== 'number') throw new Error('There is no active tab.');
+    return tab.id;
+}
+
+async function runTranslation(request: TranslateRequest, sender: chrome.runtime.MessageSender): Promise<TranslateResponse> {
+    if (typeof request.imageUrl !== 'string' || request.imageUrl.length === 0) {
+        return { ok: false, error: 'Missing image url.' };
+    }
+
+    try {
+        const tabId = await resolveTabId(request, sender);
+        const detection = await runDetection({
+            target: SERVICE_WORKER_TARGET,
+            type: 'detect',
+            imageUrl: request.imageUrl,
+            tabPageUrl: request.tabPageUrl,
+        });
+        if (!detection.ok) return detection;
+
+        const settings = request.settings ?? await readSettings();
+        const job = await translateGroups({
+            groups: detection.groups,
+            boxes: detection.boxes,
+            balloons: detection.bubbles,
+            imageWidth: detection.imageWidth,
+            imageHeight: detection.imageHeight,
+            settings,
+        });
+
+        if (job.active !== settings.translator) {
+            await chrome.storage.local.set({ [TRANSLATOR_KEY]: job.active });
+        }
+
+        const overlay: OverlayRequest = {
+            token: request.token,
+            imageUrl: request.imageUrl,
+            width: detection.imageWidth,
+            height: detection.imageHeight,
+            items: job.items,
+            fontFamily: settings.font === 'serif'
+                ? '"Songti TC", "Noto Serif CJK TC", serif'
+                : 'system-ui, "PingFang TC", sans-serif',
+            weight: settings.weight,
+            leading: settings.leading,
+        };
+
+        await chrome.scripting.executeScript({
+            target: { tabId, allFrames: true },
+            files: [CONTENT_SCRIPT_FILE],
+        });
+        const results = await chrome.scripting.executeScript({
+            target: { tabId, allFrames: true },
+            world: 'ISOLATED',
+            args: [overlay],
+            func: (input: OverlayRequest): OverlayResponse => {
+                const api = (globalThis as unknown as {
+                    __comicTranslatorOverlay?: {
+                        apply: (value: OverlayRequest) => OverlayResponse;
+                    };
+                }).__comicTranslatorOverlay;
+                if (!api) {
+                    return { ok: false, error: 'The overlay helper is not installed in this frame.' };
+                }
+                try {
+                    return api.apply(input);
+                } catch (cause) {
+                    return { ok: false, error: cause instanceof Error ? cause.message : String(cause) };
+                }
+            },
+        });
+        const answers = results.map((entry) => entry.result);
+        const placed = answers.find(
+            (answer): answer is { ok: true; count: number } => Boolean(answer?.ok),
+        );
+        if (!placed) {
+            const failure = answers.find(
+                (answer): answer is { ok: false; error: string } => Boolean(answer && !answer.ok),
+            );
+            return { ok: false, error: failure?.error ?? 'The page did not accept the overlay.' };
+        }
+
+        return {
+            ok: true,
+            count: placed.count,
+            used: job.used,
+            active: job.active,
+            skipped: job.skipped,
+            withBalloon: job.withBalloon,
+            balloons: detection.bubbles.length,
+            answers: job.answers,
+            ms: detection.ms,
+            warm: detection.warm,
+            timings: detection.timings,
+        };
+    } catch (cause) {
+        return { ok: false, error: cause instanceof Error ? cause.message : String(cause) };
+    }
+}
 
 /**
  * Create the offscreen document when it is absent. Chrome loads offscreen.html,

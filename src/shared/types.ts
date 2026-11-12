@@ -4,7 +4,7 @@ export type MessageTarget =
     | typeof SERVICE_WORKER_TARGET
     | typeof OFFSCREEN_TARGET;
 
-export type MessageType = 'detect' | 'ping';
+export type MessageType = 'detect' | 'translate' | 'ping';
 
 export type RubyBox = {
     x: number;
@@ -140,6 +140,7 @@ export type PingResponse = { ok: true };
   */
 export type IncomingMessage =
     | DetectRequest
+    | TranslateRequest
     | OffscreenDetectRequest
     | OffscreenPing;
 
@@ -170,3 +171,48 @@ export type DetectResponse =
       }
     | { ok: false; error: string };
 
+
+
+/** One translated region, enough for the popup to show the result. */
+export type TranslationAnswer = {
+    text: string;
+    columns?: string[];
+    skip?: boolean;
+    type?: 'chat' | 'sfx';
+};
+
+export type TranslateSettings = {
+    translator: 'gemini' | 'deepseek' | 'builtin';
+    deepSeekKey: string;
+    geminiKey: string;
+    font: 'sans' | 'serif';
+    leading: number;
+    weight: 'normal' | 'bold';
+};
+
+/** Popup or content script to service worker: run the full image job. */
+export type TranslateRequest = {
+    target: typeof SERVICE_WORKER_TARGET;
+    type: 'translate';
+    imageUrl: string;
+    tabPageUrl?: string;
+    tabId?: number;
+    token?: string;
+    settings?: TranslateSettings;
+};
+
+export type TranslateResponse =
+    | {
+          ok: true;
+          count: number;
+          used: string;
+          active: 'gemini' | 'deepseek' | 'builtin';
+          skipped: number;
+          withBalloon: number;
+          balloons: number;
+          answers: TranslationAnswer[];
+          ms: number;
+          warm: boolean;
+          timings?: DetectTimings;
+      }
+    | { ok: false; error: string };

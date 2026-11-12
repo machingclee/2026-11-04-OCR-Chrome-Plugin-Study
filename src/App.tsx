@@ -21,15 +21,8 @@ import type {
     BoxData,
     DetectResponse,
     DetectTimings,
-    OverlayItem,
-    OverlayRequest,
-    OverlayResponse,
+    TranslateResponse,
 } from './shared/types';
-import { canTranslate, translateAll } from './lib/translate';
-import { classifyVisionCandidates, type VisionProvider } from './lib/visionClassify';
-import { toHorizontal, toVertical } from './lib/punct';
-import { translateWithDeepSeek } from './lib/translateDeepSeek';
-import { translateWithGemini } from './lib/translateGemini';
 import type { RegionAnswer } from './lib/translatePrompt';
 import serviceWorkerRequestFactory from './shared/factories/serviceWorkerRequestFactory';
 import { cropSize } from './lib/warp';
@@ -88,51 +81,6 @@ type LastResult = {
     timings?: DetectTimings;
 };
 
-/**
- * A group that came from a block holds a big box, and painting into it would
- * cover the drawing. The lines themselves decide the area, which keeps a
- * page-sized balloon from turning into a page-sized text column.
- */
-function tightenBox(group: GroupStroke, lines: BoxData[]): GroupStroke {
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-
-    for (const line of lines) {
-        const centreX = line.x + line.width / 2;
-        const centreY = line.y + line.height / 2;
-        if (centreX < group.x || centreX > group.x + group.width) continue;
-        if (centreY < group.y || centreY > group.y + group.height) continue;
-        minX = Math.min(minX, line.x);
-        minY = Math.min(minY, line.y);
-        maxX = Math.max(maxX, line.x + line.width);
-        maxY = Math.max(maxY, line.y + line.height);
-    }
-
-    if (!Number.isFinite(minX) || maxX <= minX || maxY <= minY) return group;
-
-    const pad = Math.max(3, Math.min(maxX - minX, maxY - minY) * 0.08);
-    return {
-        x: minX - pad,
-        y: minY - pad,
-        width: maxX - minX + pad * 2,
-        height: maxY - minY + pad * 2,
-        lines: group.lines,
-    };
-}
-
-/** How many groups found a balloon, which is the number that places them. */
-function countWithBalloon(list: GroupStroke[], balloons: BubbleStroke[]): number {
-    return list.filter((group) => {
-        const centreX = group.x + group.width / 2;
-        const centreY = group.y + group.height / 2;
-        return balloons.some((bubble) =>
-            centreX >= bubble.x && centreX <= bubble.x + bubble.width
-            && centreY >= bubble.y && centreY <= bubble.y + bubble.height);
-    }).length;
-}
-
 export default function App() {
     const [imageUrl, setImageUrl] = useState<string | null>(null);
     const [boxes, setBoxes] = useState<BoxData[]>([]);
@@ -143,12 +91,6 @@ export default function App() {
     const [error, setError] = useState<string | null>(null);
     const [bubbles, setBubbles] = useState<BubbleStroke[]>([]);
     const [groups, setGroups] = useState<GroupStroke[]>([]);
-    const [detection, setDetection] = useState<{
-        ms: number;
-        timings?: DetectTimings;
-        reused: boolean;
-        warm?: boolean;
-    } | null>(null);
     const [translated, setTranslated] = useState<RegionAnswer[] | null>(null);
     const [translating, setTranslating] = useState(false);
     const [deepSeekKey, setDeepSeekKey] = useState('');
@@ -158,7 +100,6 @@ export default function App() {
     const [font, setFont] = useState<FontChoice>('sans');
     const [leading, setLeading] = useState(1.15);
     const [weight, setWeight] = useState<'normal' | 'bold'>('normal');
-    const [bubbleError, setBubbleError] = useState<string | null>(null);
     const [targetToken, setTargetToken] = useState<string | undefined>();
     const settingsLoaded = useRef(false);
     const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
@@ -225,12 +166,6 @@ export default function App() {
                     setPreviews(Array.isArray(lastResult.previews) ? lastResult.previews : []);
                     setBubbles(Array.isArray(lastResult.bubbles) ? lastResult.bubbles : []);
                     setGroups(Array.isArray(lastResult.groups) ? lastResult.groups : []);
-                    setDetection({
-                        ms: lastResult.ms,
-                        timings: lastResult.timings,
-                        reused: true,
-                        warm: lastResult.warm,
-                    });
                     const previousRun = lastResult.warm === undefined
                         ? 'previous run'
                         : `previous ${lastResult.warm ? 'warm' : 'cold'} run`;
@@ -240,7 +175,6 @@ export default function App() {
                     return;
                 }
 
-                setDetection(null);
                 setStatus('Picked from the page. Run the detector to find boxes.');
             })
             .catch(() => setError('Cannot read the stored state.'));
@@ -337,7 +271,6 @@ export default function App() {
         setError(null);
         setBoxes([]);
         setPreviews([]);
-        setDetection(null);
         setStatus('Asking the background worker.');
 
         try {
@@ -352,14 +285,12 @@ export default function App() {
             setBubbles(response.bubbles ?? []);
             setGroups(response.groups ?? []);
             setTranslated(null);
-            setBubbleError(response.bubbleError ?? null);
             const vertical = response.boxes.filter((box) => box.direction === 'vertical').length;
             const ruby = response.boxes.reduce((sum, box) => sum + box.ruby.length, 0);
             const read = response.boxes.filter((box) => box.text.length > 0).length;
             const lowConfidence = response.boxes.filter((box) =>
                 box.text.length > 0 && box.confidence < OCR_MIN_CONFIDENCE,
             ).length;
-            setDetection({ ms: response.ms, timings: response.timings, reused: false, warm: response.warm });
             setStatus(
                 `${response.boxes.length} lines (${vertical} vertical, ${ruby} ruby), ${read} read (${lowConfidence} below OCR floor), ${response.bubbles?.length ?? 0} balloons, ${response.groupedLines} grouped, image ${response.imageWidth}x${response.imageHeight}, ${seconds(response.ms)} (${response.warm ? 'reused session' : 'cold session'}${stageSummary(response.timings)}).`,
             );
@@ -405,270 +336,46 @@ export default function App() {
         setError('');
         try {
             if (!imageUrl) throw new Error('No image was picked.');
-            // One press does the whole job: measure the page when it has not been
-            // measured yet, translate every group, then place the answer over the
-            // live image in the tab.
-            let current = groups;
-            let currentBoxes = boxes;
-            let pageWidth = size.width;
-            let pageHeight = size.height;
-            // A detection run updates the state asynchronously, so the balloons
-            // and timing for this pass must come from the answer, not from the state.
-            let balloons = bubbles;
-            let detectionInfo = detection;
-            if (current.length === 0) {
-                const detected = await runDetect();
-                if (!detected || !detected.ok) throw new Error('The detection pass failed.');
-                current = detected.groups ?? [];
-                balloons = detected.bubbles ?? [];
-                currentBoxes = detected.boxes;
-                pageWidth = detected.imageWidth;
-                pageHeight = detected.imageHeight;
-                detectionInfo = {
-                    ms: detected.ms,
-                    timings: detected.timings,
-                    reused: false,
-                    warm: detected.warm,
-                };
-            }
-            let visionSkipped = 0;
-            let visionProvider: VisionProvider | null = null;
-            if (translator === 'deepseek' && deepSeekKey.trim().length > 0) {
-                visionProvider = { kind: 'deepseek', apiKey: deepSeekKey.trim() };
-            } else if (translator === 'gemini' && geminiKey.trim().length > 0) {
-                visionProvider = { kind: 'gemini', apiKey: geminiKey.trim() };
-            } else if (deepSeekKey.trim().length > 0) {
-                visionProvider = { kind: 'deepseek', apiKey: deepSeekKey.trim() };
-            } else if (geminiKey.trim().length > 0) {
-                visionProvider = { kind: 'gemini', apiKey: geminiKey.trim() };
-            }
-
-            if (current.length > 0 && visionProvider) {
-                const candidates = current
-                    .map((group, index) => ({
-                        index,
-                        crop: group.visionCrop ?? '',
-                        text: group.lines.join(''),
-                    }))
-                    .filter((candidate) => candidate.crop.length > 0);
-                if (candidates.length > 0) {
-                    const verdicts = await classifyVisionCandidates(candidates, visionProvider);
-                    const removed = new Set<number>();
-                    for (const candidate of candidates) {
-                        const verdict = verdicts.get(candidate.index);
-                        if (verdict === 'sfx' || verdict === 'false_positive') removed.add(candidate.index);
-                    }
-                    if (removed.size > 0) {
-                        visionSkipped = removed.size;
-                        current = current.filter((_, index) => !removed.has(index));
-                    }
-                }
-            }
-
-            if (current.length === 0) throw new Error('No text was found on this page.');
-            if (pageWidth <= 0 || pageHeight <= 0) {
-                pageWidth = Math.max(...currentBoxes.map((box) => box.x + box.width), 1);
-                pageHeight = Math.max(...currentBoxes.map((box) => box.y + box.height), 1);
-            }
-
-            const regions = current.map((group, index) => ({
-                id: `r${index + 1}`,
-                direction: (group.vertical ?? (group.height > group.width * 1.3) ? 'v' : 'h') as 'v' | 'h',
-                lines: group.lines,
-            }));
-            // If the selected provider has no key but the other one does, use the
-            // one that can actually run instead of falling back to the browser.
-            let active = translator;
-            if (active === 'gemini' && geminiKey.trim().length === 0 && deepSeekKey.trim().length > 0) {
-                active = 'deepseek';
-            } else if (active === 'deepseek' && deepSeekKey.trim().length === 0 && geminiKey.trim().length > 0) {
-                active = 'gemini';
-            }
-            if (active !== translator) {
-                setTranslator(active);
-                void chrome.storage.local.set({ [TRANSLATOR_KEY]: active });
-            }
-            const key = active === 'gemini' ? geminiKey.trim() : deepSeekKey.trim();
-            let used = active === 'gemini' ? 'Gemini' : active === 'deepseek' ? 'DeepSeek' : 'browser';
-
-            let out: RegionAnswer[] | null = null;
-            if (active === 'builtin') {
-                used = 'browser';
-                const plain = current.map((group) => group.lines.join(''));
-                out = canTranslate()
-                    ? (await translateAll(plain, 'ja', 'zh-Hant')).map((text) => ({ text }))
-                    : null;
-            } else if (key.length > 0) {
-                out = active === 'gemini'
-                    ? await translateWithGemini(regions, key)
-                    : await translateWithDeepSeek(regions, key);
-            } else if (canTranslate()) {
-                used = 'browser (no API key)';
-                const plain = current.map((group) => group.lines.join(''));
-                out = (await translateAll(plain, 'ja', 'zh-Hant')).map((text) => ({ text }));
-                setStatus('No key, so the browser translator did the work.');
-            }
-
-            if (!out) {
-                throw new Error(
-                    translator === 'builtin'
-                        ? 'This Chrome ships no translator. Pick Gemini or DeepSeek and paste a key.'
-                        : `Paste a ${translator === 'gemini' ? 'Gemini' : 'DeepSeek'} key above.`,
-                );
-            }
-
-            const placements: Array<{
-                group: GroupStroke;
-                text: string;
-                vertical: boolean;
-                layout: GroupStroke;
-                tight: GroupStroke;
-                balloon?: BubbleStroke;
-            }> = [];
-            let skipped = visionSkipped;
-            current.forEach((group, index) => {
-                const answer = out[index];
-                if (answer?.skip || answer?.type === 'sfx') {
-                    skipped += 1;
-                    return;
-                }
-                const text = answer?.text ?? group.lines.join('');
-                if (text.trim().length === 0) {
-                    skipped += 1;
-                    return;
-                }
-                const tight = tightenBox(group, currentBoxes);
-                const centreX = group.x + group.width / 2;
-                const centreY = group.y + group.height / 2;
-                const balloon = group.balloon
-                    ? bubbles.find((bubble) =>
-                        centreX >= bubble.x && centreX <= bubble.x + bubble.width
-                        && centreY >= bubble.y && centreY <= bubble.y + bubble.height)
-                    : undefined;
-                const vertical = balloon
-                    ? balloon.height > balloon.width * 1.15 || group.vertical === true
-                    : group.vertical ?? group.height > group.width * 1.3;
-                let layout = tight;
-                if (balloon) {
-                    // Keep the translated text inside the detected line area. The
-                    // balloon is only an outer limit and a clip, never a reason to
-                    // spread the text across the whole balloon.
-                    const left = Math.max(tight.x, balloon.x);
-                    const right = Math.min(tight.x + tight.width, balloon.x + balloon.width);
-                    const top = Math.max(tight.y, balloon.y);
-                    const bottom = Math.min(tight.y + tight.height, balloon.y + balloon.height);
-                    if (right > left && bottom > top) {
-                        layout = {
-                            ...tight,
-                            x: left,
-                            y: top,
-                            width: right - left,
-                            height: bottom - top,
-                        };
-                    }
-                }
-                placements.push({ group, text, vertical, layout, tight, balloon });
-            });
-
-            // Two balloons can overlap, or one merged balloon can be split into
-            // groups whose cluster boxes overlap. Falling back to the line box
-            // keeps the two translations from printing on top of each other.
-            for (let left = 0; left < placements.length; left += 1) {
-                for (let right = left + 1; right < placements.length; right += 1) {
-                    const a = placements[left].layout;
-                    const b = placements[right].layout;
-                    const overlapWidth = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
-                    const overlapHeight = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
-                    if (overlapWidth <= 0 || overlapHeight <= 0) continue;
-                    const shared = overlapWidth * overlapHeight;
-                    const smaller = Math.min(a.width * a.height, b.width * b.height);
-                    if (shared <= smaller * 0.1) continue;
-                    if (placements[left].group.balloon) placements[left].layout = placements[left].tight;
-                    if (placements[right].group.balloon) placements[right].layout = placements[right].tight;
-                }
-            }
-
-            const items: OverlayItem[] = placements.map(({ group, text, vertical, layout, balloon }) => ({
-                x: layout.x,
-                y: layout.y,
-                width: layout.width,
-                height: layout.height,
-                text: vertical ? toVertical(text) : toHorizontal(text),
-                vertical,
-                background: group.background,
-                color: group.color,
-                maskUrl: group.maskUrl,
-                maskBox: group.maskBox,
-                rectangle: group.rectangle,
-                fontSize: group.fontSize,
-                clip: balloon?.outline,
-                fill: Boolean(balloon)
-                    && group.width * group.height <= pageWidth * pageHeight * 0.15,
-            }));
-            if (items.length === 0) throw new Error('The translation returned no dialogue to place.');
-            setTranslated(out);
-
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
             if (!tab?.id) throw new Error('There is no active tab.');
-            await chrome.scripting.executeScript({
-                target: { tabId: tab.id, allFrames: true },
-                files: [CONTENT_SCRIPT_FILE],
-            });
-            const request: OverlayRequest = {
-                token: targetToken,
-                imageUrl,
-                width: pageWidth,
-                height: pageHeight,
-                items,
-                fontFamily: font === 'serif'
-                    ? '"Songti TC", "Noto Serif CJK TC", serif'
-                    : 'system-ui, "PingFang TC", sans-serif',
-                weight,
-                leading,
-            };
-            const results = await chrome.scripting.executeScript({
-                target: { tabId: tab.id, allFrames: true },
-                world: 'ISOLATED',
-                args: [request],
-                func: (input: OverlayRequest): OverlayResponse => {
-                    const api = (globalThis as unknown as {
-                        __comicTranslatorOverlay?: {
-                            apply: (value: OverlayRequest) => OverlayResponse;
-                        };
-                    }).__comicTranslatorOverlay;
-                    if (!api) {
-                        return { ok: false, error: 'The overlay helper is not installed in this frame.' };
-                    }
-                    try {
-                        return api.apply(input);
-                    } catch (cause) {
-                        return {
-                            ok: false,
-                            error: cause instanceof Error ? cause.message : String(cause),
-                        };
-                    }
-                },
-            });
-            const answers = results.map((entry) => entry.result);
-            const placed = answers.find(
-                (answer): answer is { ok: true; count: number } => Boolean(answer?.ok),
-            );
-            if (!placed) {
-                const failure = answers.find(
-                    (answer): answer is { ok: false; error: string } => Boolean(answer && !answer.ok),
-                );
-                throw new Error(failure?.error ?? 'The page did not accept the overlay.');
+            const tabPageUrl = tab.url?.startsWith('http') ? tab.url : undefined;
+            const response = (await chrome.runtime.sendMessage(
+                serviceWorkerRequestFactory.ofTranslation({
+                    imageUrl,
+                    tabPageUrl,
+                    tabId: tab.id,
+                    token: targetToken,
+                    settings: {
+                        translator,
+                        deepSeekKey,
+                        geminiKey,
+                        font,
+                        leading,
+                        weight,
+                    },
+                }),
+            )) as TranslateResponse | undefined;
+            if (!response) throw new Error('The background worker sent no answer.');
+            if (!response.ok) throw new Error(response.error);
+
+            setTranslated(response.answers);
+            if (response.active !== translator) setTranslator(response.active);
+
+            // The background detection writes the same cache the popup reads on
+            // reopen. Refresh the inspection lists without forcing a second pass.
+            const local = await chrome.storage.local.get(LAST_RESULT_KEY);
+            const last = local[LAST_RESULT_KEY] as LastResult | undefined;
+            if (last) {
+                setBoxes(last.boxes);
+                setPreviews(last.previews ?? []);
+                setBubbles(last.bubbles ?? []);
+                setGroups(last.groups ?? []);
             }
 
-            const withBalloon = countWithBalloon(current, balloons);
-            const session = detectionInfo?.warm === undefined
-                ? ''
-                : detectionInfo.warm ? 'warm session; ' : 'cold session; ';
-            const detectionStatus = detectionInfo
-                ? `; ${detectionInfo.reused ? 'previous detection' : 'detection'} ${seconds(detectionInfo.ms)}${detectionInfo.timings ? ` (${session}${stageBreakdown(detectionInfo.timings)})` : ''}`
-                : '';
+            const session = response.warm ? 'warm session; ' : 'cold session; ';
+            const detectionStatus = `; detection ${seconds(response.ms)}${response.timings ? ` (${session}${stageBreakdown(response.timings)})` : ''}`;
             setStatus(
-                `Overlaid ${placed.count} translated boxes with ${used} on the page (${balloons.length} balloons, ${withBalloon} groups inside one)${detectionStatus}${skipped ? `; left ${skipped} UI/name/SFX regions untouched` : ''}${bubbleError ? `; balloon error: ${bubbleError}` : ''}.`,
+                `Overlaid ${response.count} translated boxes with ${response.used} on the page (${response.balloons} balloons, ${response.withBalloon} groups inside one)${detectionStatus}${response.skipped ? `; left ${response.skipped} UI/name/SFX regions untouched` : ''}.`,
             );
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));
@@ -676,18 +383,11 @@ export default function App() {
             setTranslating(false);
         }
     }, [
-        boxes,
-        bubbles,
         deepSeekKey,
-        detection,
         font,
         geminiKey,
-        groups,
         imageUrl,
         leading,
-        runDetect,
-        size.height,
-        size.width,
         targetToken,
         translator,
         weight,
@@ -744,7 +444,7 @@ export default function App() {
                     type="button"
                     onClick={handleTranslate}
                     disabled={translating || !imageUrl}
-                    title={canTranslate() ? undefined : 'This browser ships no translator.'}
+                    title="Translation runs in the background worker."
                 >
                     {translating ? 'Translating' : 'Translate the page'}
                 </button>
