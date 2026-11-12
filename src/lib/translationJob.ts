@@ -231,6 +231,30 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
             carry = chars.slice(cut).join('');
         }
 
+        const push = (line: { x: number; y: number; width: number; height: number }, content: string) => {
+            items.push({
+                x: line.x,
+                y: line.y,
+                width: line.width,
+                height: line.height,
+                text: vertical ? toVertical(content) : toHorizontal(content),
+                vertical,
+                groupId: index,
+                background: group.background,
+                color: group.color,
+                maskUrl: group.maskUrl,
+                maskBox: group.maskBox,
+                rectangle: group.rectangle,
+                fontSize: font,
+                patch: balloon && !input.inpainted ? {
+                    x: line.x,
+                    y: line.y,
+                    width: line.width,
+                    height: line.height,
+                } : undefined,
+            });
+        };
+
         if (columns.length > 1 && columns.length <= sortedLines.length) {
             sortedLines.slice(0, columns.length).forEach((line, columnIndex) => {
                 push(line, columns[columnIndex]);
