@@ -416,8 +416,8 @@ export default function App() {
     }, [recording]);
 
     return (
-        <main className="mx-auto flex w-[720px] flex-col gap-4 rounded-2xl bg-orange-50 p-4 text-slate-900">
-            <div className="flex self-start rounded-xl bg-orange-100 p-1">
+        <main className="mx-auto flex w-[720px] flex-col gap-4 rounded-2xl bg-[#f8f5f0] p-4 text-slate-900">
+            <div className="flex self-start rounded-xl bg-[#eee7dc] p-1">
                 <button
                     type="button"
                     onClick={() => setView('production')}
