@@ -261,7 +261,13 @@ function makeBox(
     style.overflow = 'hidden';
     style.padding = '1px 2px';
     style.textAlign = 'center';
-    if (item.maskUrl && item.maskBox) {
+    if (item.fill) {
+        // The tight detected area sits inside the balloon. A solid patch there
+        // removes every original glyph, including strokes the seg mask missed.
+        // The balloon clip keeps the patch off the artwork outside the balloon.
+        style.backgroundColor = item.background ?? '#ffffff';
+        style.backgroundImage = 'none';
+    } else if (item.maskUrl && item.maskBox) {
         // Paint only the glyph-shaped pixels the seg mask selected. The rest
         // of the box stays transparent, so a loose detection box cannot cover
         // the paper or artwork outside the balloon.

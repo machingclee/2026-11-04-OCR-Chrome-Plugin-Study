@@ -92,6 +92,8 @@ export type OverlayItem = {
     fontSize?: number;
     /** Balloon outline in image pixels; clips the label to the balloon. */
     clip?: { x: number; y: number }[];
+    /** Fill the tight detected area instead of only the seg glyph pixels. */
+    fill?: boolean;
 };
 
 /** Popup to content script: place these boxes over the picked image. */
