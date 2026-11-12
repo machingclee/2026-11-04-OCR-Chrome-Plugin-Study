@@ -312,14 +312,50 @@ function makeBox(
     return box;
 }
 
-/** Shrink each box until its text fits, so a long translation stays inside. */
-function fitBoxes(layer: HTMLElement): void {
+/**
+ * Shrink each box until its text fits. scrollWidth and scrollHeight clamp for a
+ * centred vertical grid, so measure the text range itself; it keeps the real
+ * width and height even when the grid clips the overflow.
+ */
+function textFits(box: HTMLElement): boolean {
+    const range = document.createRange();
+    range.selectNodeContents(box);
+    const rect = range.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return true;
+    const style = getComputedStyle(box);
+    const paddingX = Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight);
+    const paddingY = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
+    return rect.width <= box.clientWidth - paddingX + 1
+        && rect.height <= box.clientHeight - paddingY + 1;
+}
+
+function estimatedFits(box: HTMLElement, size: number, leading: number): boolean {
+    const text = box.textContent ?? '';
+    const characters = [...text].length;
+    if (characters === 0) return true;
+
+    const style = getComputedStyle(box);
+    const paddingX = Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight);
+    const paddingY = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
+    const width = box.clientWidth - paddingX;
+    const height = box.clientHeight - paddingY;
+    if (width <= 0 || height <= 0) return false;
+
+    if (style.writingMode.startsWith('vertical')) {
+        const perColumn = Math.max(1, Math.floor(height / size));
+        const columns = Math.ceil(characters / perColumn);
+        return columns * size * leading <= width + 1;
+    }
+
+    const perLine = Math.max(1, Math.floor(width / size));
+    const lines = Math.ceil(characters / perLine);
+    return lines * size * leading <= height + 1;
+}
+
+function fitBoxes(layer: HTMLElement, leading: number): void {
     for (const box of layer.querySelectorAll<HTMLElement>(`[${BOX_ATTR}]`)) {
         let size = Number.parseFloat(box.style.fontSize) || 12;
-        while (
-            size > 7
-            && (box.scrollHeight > box.clientHeight + 1 || box.scrollWidth > box.clientWidth + 1)
-        ) {
+        while (size > 7 && (!textFits(box) || !estimatedFits(box, size, leading))) {
             size -= 1;
             box.style.fontSize = `${size}px`;
         }
@@ -350,7 +386,7 @@ function apply(request: OverlayRequest): OverlayResponse {
         layer.appendChild(makeBox(item, request, width, height, scale));
         count += 1;
     }
-    fitBoxes(layer);
+    fitBoxes(layer, request.leading);
     watchTarget(target);
 
     return { ok: true, count };

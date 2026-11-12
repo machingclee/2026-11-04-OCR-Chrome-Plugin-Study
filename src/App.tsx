@@ -472,7 +472,12 @@ export default function App() {
                 );
             }
 
-            const items: OverlayItem[] = [];
+            const placements: Array<{
+                group: GroupStroke;
+                text: string;
+                layout: GroupStroke;
+                tight: GroupStroke;
+            }> = [];
             let skipped = 0;
             current.forEach((group, index) => {
                 const answer = out[index];
@@ -485,24 +490,49 @@ export default function App() {
                     skipped += 1;
                     return;
                 }
+                const tight = tightenBox(group, currentBoxes);
                 // A balloon is the text container. A block is not: filling a
                 // block box would cover the panel, so its lines define the area.
-                const layout = group.balloon ? group : tightenBox(group, currentBoxes);
-                items.push({
-                    x: layout.x,
-                    y: layout.y,
-                    width: layout.width,
-                    height: layout.height,
+                placements.push({
+                    group,
                     text,
-                    vertical: group.vertical ?? layout.height > layout.width * 1.3,
-                    background: group.background,
-                    color: group.color,
-                    maskUrl: group.maskUrl,
-                    maskBox: group.maskBox,
-                    rectangle: group.rectangle,
-                    fontSize: group.fontSize,
+                    layout: group.balloon ? group : tight,
+                    tight,
                 });
             });
+
+            // Two balloons can overlap, or one merged balloon can be split into
+            // groups whose cluster boxes overlap. Falling back to the line box
+            // keeps the two translations from printing on top of each other.
+            for (let left = 0; left < placements.length; left += 1) {
+                for (let right = left + 1; right < placements.length; right += 1) {
+                    const a = placements[left].layout;
+                    const b = placements[right].layout;
+                    const overlapWidth = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+                    const overlapHeight = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+                    if (overlapWidth <= 0 || overlapHeight <= 0) continue;
+                    const shared = overlapWidth * overlapHeight;
+                    const smaller = Math.min(a.width * a.height, b.width * b.height);
+                    if (shared <= smaller * 0.1) continue;
+                    if (placements[left].group.balloon) placements[left].layout = placements[left].tight;
+                    if (placements[right].group.balloon) placements[right].layout = placements[right].tight;
+                }
+            }
+
+            const items: OverlayItem[] = placements.map(({ group, text, layout }) => ({
+                x: layout.x,
+                y: layout.y,
+                width: layout.width,
+                height: layout.height,
+                text,
+                vertical: group.vertical ?? layout.height > layout.width * 1.3,
+                background: group.background,
+                color: group.color,
+                maskUrl: group.maskUrl,
+                maskBox: group.maskBox,
+                rectangle: group.rectangle,
+                fontSize: group.fontSize,
+            }));
             if (items.length === 0) throw new Error('The translation returned no dialogue to place.');
             setTranslated(out);
 
