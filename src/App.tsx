@@ -48,6 +48,15 @@ function seconds(ms: number): string {
     return `${(ms / 1000).toFixed(1)} s`;
 }
 
+function formatShortcut(value: string): string {
+    return value
+        .replace(/\bCommand\b/g, '⌘')
+        .replace(/\bCtrl\b/g, '⌃')
+        .replace(/\bAlt\b/g, '⌥')
+        .replace(/\bShift\b/g, '⇧')
+        .replace(/\+/g, '');
+}
+
 function ocrScore(value: number | undefined): string {
     if (typeof value !== 'number' || !Number.isFinite(value)) return 'OCR n/a';
     return `OCR ${(value * 100).toFixed(1)}%`;
@@ -481,8 +490,17 @@ export default function App() {
                         </button>
                     </div>
                 ) : (
-                    <div className="mt-4 rounded-md border border-[#ded2c4] bg-orange-50 px-4 py-3 text-sm text-orange-900">
-                        Press <kbd className="rounded border border-[#ded2c4] bg-white px-1.5 py-0.5 font-mono text-xs">⌥Q</kbd> on macOS or <kbd className="rounded border border-[#ded2c4] bg-white px-1.5 py-0.5 font-mono text-xs">Alt+Q</kbd> on Windows, select an image, then click the check mark.
+                    <div className="mt-4 rounded-md border border-[#ded2c4] bg-[#f3eee8] px-4 py-3 text-sm text-[#5f4a38]">
+                        Press{' '}
+                        <button
+                            type="button"
+                            onClick={() => setRecording(true)}
+                            className="rounded border border-[#ded2c4] bg-white px-1.5 py-0.5 font-mono text-xs text-[#6d523b] transition hover:bg-[#f8f3ec]"
+                            title="Click to record a new shortcut"
+                        >
+                            {recording ? 'Press keys...' : formatShortcut(shortcut)}
+                        </button>{' '}
+                        to pick an image, then click the check mark. Option+Q on macOS is the same as Alt+Q on Windows.
                     </div>
                 )}
             </header>
