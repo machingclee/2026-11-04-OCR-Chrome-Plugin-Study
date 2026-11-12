@@ -707,7 +707,7 @@ function startBatchSelection(): void {
     }
 
     function onClick(event: MouseEvent): void {
-        if (isBatchUi(event.target as Element)) return;
+        if (isBatchUi(event.target as Element) && event.type !== 'contextmenu') return;
         event.preventDefault();
         event.stopPropagation();
 
