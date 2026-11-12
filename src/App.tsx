@@ -426,7 +426,7 @@ export default function App() {
                     onClick={() => setView('production')}
                     className={`rounded px-3 py-1.5 text-xs font-medium transition ${view === 'production' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
                 >
-                    Setting
+                    Settings
                 </button>
                 <button
                     type="button"
