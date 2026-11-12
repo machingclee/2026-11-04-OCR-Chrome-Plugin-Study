@@ -431,7 +431,7 @@ export default function App() {
     }, [recording]);
 
     return (
-        <main className={`mx-auto flex flex-col gap-3 rounded-md bg-[#f4f1ec] p-3 text-slate-900 ${view === 'debug' ? 'w-[720px]' : 'w-[480px]'}`}>
+        <main className={`mx-auto flex flex-col gap-3 rounded-md bg-[#f4f1ec] p-3 text-slate-900 transition-[width] duration-200 ease-out ${view === 'debug' ? 'w-[720px]' : 'w-[480px]'}`}>
             <div className="flex self-start rounded-md bg-[#e9e3da] p-1">
                 <button
                     type="button"

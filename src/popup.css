@@ -16,6 +16,7 @@ body {
   box-sizing: border-box;
   border-radius: 8px;
   overflow-x: hidden;
+  transition: width 200ms ease;
   background: #f4f1ec;
   font-family: ui-sans-serif, system-ui, sans-serif;
 }
