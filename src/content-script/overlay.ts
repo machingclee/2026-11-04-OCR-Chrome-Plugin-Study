@@ -87,7 +87,7 @@ function createLayer(): HTMLElement {
     layer.setAttribute(LAYER_ATTR, 'true');
     layer.style.position = 'absolute';
     layer.style.inset = '0';
-    layer.style.overflow = 'visible';
+    layer.style.overflow = 'hidden';
     layer.style.pointerEvents = 'none';
     layer.style.zIndex = '2';
     return layer;
@@ -335,7 +335,7 @@ function makeBox(
     style.display = 'flex';
     style.alignItems = 'center';
     style.justifyContent = 'center';
-    style.overflow = 'visible';
+    style.overflow = 'hidden';
     style.padding = '1px 2px';
     style.textAlign = 'center';
     if (item.patch) {
