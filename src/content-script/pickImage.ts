@@ -4,7 +4,16 @@ import {
     PICKED_IMAGE_URL_KEY,
 } from '../shared/constants';
 import { clearAll } from './overlay';
-import { HIGHLIGHT_ID, IMAGE_URL_PATTERN, SHIELD_ID, TOAST_ID } from './constants';
+import serviceWorkerRequestFactory from '../shared/factories/serviceWorkerRequestFactory';
+import type { BatchProgressMessage, BatchState, TranslateBatchResponse } from '../shared/types';
+import {
+    BATCH_BAR_ID,
+    BATCH_MARK_ATTR,
+    HIGHLIGHT_ID,
+    IMAGE_URL_PATTERN,
+    SHIELD_ID,
+    TOAST_ID,
+} from './constants';
 
 
 declare global {
@@ -39,7 +48,15 @@ function showToast(message: string): void {
 }
 
 function isPickerUi(element: Element): boolean {
-    return element.id === SHIELD_ID || element.id === HIGHLIGHT_ID || element.id === TOAST_ID;
+    if (element.closest(`#${BATCH_BAR_ID}`)) return true;
+    return element.id === SHIELD_ID
+        || element.id === HIGHLIGHT_ID
+        || element.id === TOAST_ID
+        || Boolean(element.closest(`[${BATCH_MARK_ATTR}]`));
+}
+
+function isBatchUi(element: Element): boolean {
+    return Boolean(element.closest(`#${BATCH_BAR_ID}`) || element.closest(`[${BATCH_MARK_ATTR}]`) || element.closest('[data-comic-translator-batch-progress]'));
 }
 
 function absoluteUrl(value: string): string {
@@ -280,10 +297,277 @@ function start(): void {
     showToast('Pick mode is on. Click an image, or press Escape.');
 }
 
+
+type BatchSelection = {
+    token: string;
+    url: string;
+    element: HTMLElement;
+    rect: DOMRect;
+};
+
+function startBatchSelection(): void {
+    if (window.__comicTranslatorPickerActive) return;
+    window.__comicTranslatorPickerActive = true;
+
+    const selection: BatchSelection[] = [];
+    let stopped = false;
+    let bar: HTMLElement | null = null;
+    let marks: HTMLElement | null = null;
+
+    const shield = document.createElement('div');
+    shield.id = SHIELD_ID;
+    shield.style.position = 'fixed';
+    shield.style.inset = '0';
+    shield.style.zIndex = '2147483645';
+    shield.style.background = 'transparent';
+    shield.style.cursor = 'crosshair';
+    document.documentElement.append(shield);
+
+    const hover = document.createElement('div');
+    hover.id = HIGHLIGHT_ID;
+    hover.style.position = 'fixed';
+    hover.style.pointerEvents = 'none';
+    hover.style.display = 'none';
+    hover.style.border = '2px solid #ff4d6d';
+    hover.style.borderRadius = '4px';
+    hover.style.background = 'rgba(255, 77, 109, 0.12)';
+    hover.style.zIndex = '2147483646';
+    document.documentElement.append(hover);
+
+    marks = document.createElement('div');
+    marks.setAttribute(BATCH_MARK_ATTR, 'layer');
+    marks.style.position = 'fixed';
+    marks.style.inset = '0';
+    marks.style.pointerEvents = 'none';
+    marks.style.zIndex = '2147483646';
+    document.documentElement.append(marks);
+
+    const placeHover = (rect: DOMRect | null): void => {
+        if (!rect || rect.width === 0 || rect.height === 0) {
+            hover.style.display = 'none';
+            return;
+        }
+        hover.style.display = 'block';
+        hover.style.top = `${rect.top}px`;
+        hover.style.left = `${rect.left}px`;
+        hover.style.width = `${rect.width}px`;
+        hover.style.height = `${rect.height}px`;
+    };
+
+    const rectFor = (item: BatchSelection): DOMRect => {
+        if (item.element.ownerDocument === document && item.element.isConnected) {
+            return item.element.getBoundingClientRect();
+        }
+        return item.rect;
+    };
+
+    const redrawMarks = (): void => {
+        if (!marks) return;
+        marks.replaceChildren();
+        selection.forEach((item, index) => {
+            const rect = rectFor(item);
+            if (rect.width < 1 || rect.height < 1) return;
+            const outline = document.createElement('div');
+            outline.setAttribute(BATCH_MARK_ATTR, 'outline');
+            outline.style.position = 'fixed';
+            outline.style.left = `${rect.left}px`;
+            outline.style.top = `${rect.top}px`;
+            outline.style.width = `${rect.width}px`;
+            outline.style.height = `${rect.height}px`;
+            outline.style.border = '2px solid #2f7bd8';
+            outline.style.borderRadius = '4px';
+            outline.style.boxShadow = '0 0 0 9999px rgba(47, 123, 216, 0.04)';
+            const badge = document.createElement('span');
+            badge.textContent = String(index + 1);
+            badge.style.position = 'absolute';
+            badge.style.right = '-10px';
+            badge.style.top = '-10px';
+            badge.style.width = '20px';
+            badge.style.height = '20px';
+            badge.style.borderRadius = '10px';
+            badge.style.background = '#2f7bd8';
+            badge.style.color = '#fff';
+            badge.style.font = '12px/20px system-ui, sans-serif';
+            badge.style.textAlign = 'center';
+            outline.append(badge);
+            marks?.append(outline);
+        });
+        if (bar) {
+            const button = bar.querySelector<HTMLButtonElement>('[data-action="translate"]');
+            const count = bar.querySelector<HTMLElement>('[data-count]');
+            if (count) count.textContent = `${selection.length} selected`;
+            if (button) {
+                button.textContent = selection.length > 0
+                    ? `✓ Translate ${selection.length} image${selection.length === 1 ? '' : 's'}`
+                    : '✓ Translate selected';
+                button.disabled = selection.length === 0;
+            }
+        }
+    };
+
+    const makeBar = (): void => {
+        if (bar) return;
+        bar = document.createElement('div');
+        bar.id = BATCH_BAR_ID;
+        bar.style.position = 'fixed';
+        bar.style.left = '50%';
+        bar.style.bottom = '20px';
+        bar.style.transform = 'translateX(-50%)';
+        bar.style.zIndex = '2147483647';
+        bar.style.display = 'flex';
+        bar.style.alignItems = 'center';
+        bar.style.gap = '10px';
+        bar.style.padding = '10px 12px';
+        bar.style.borderRadius = '10px';
+        bar.style.background = 'rgba(17, 17, 17, 0.95)';
+        bar.style.color = '#fff';
+        bar.style.font = '13px/1.3 system-ui, sans-serif';
+        bar.style.boxShadow = '0 6px 24px rgba(0, 0, 0, 0.28)';
+        bar.style.pointerEvents = 'auto';
+
+        const count = document.createElement('span');
+        count.setAttribute('data-count', 'true');
+        const translate = document.createElement('button');
+        translate.type = 'button';
+        translate.setAttribute('data-action', 'translate');
+        translate.style.border = '0';
+        translate.style.borderRadius = '6px';
+        translate.style.padding = '7px 10px';
+        translate.style.background = '#2f7bd8';
+        translate.style.color = '#fff';
+        translate.style.cursor = 'pointer';
+        translate.style.font = 'inherit';
+        translate.addEventListener('click', (event) => {
+            event.stopPropagation();
+            void confirmSelection();
+        });
+
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.textContent = 'Cancel';
+        cancel.style.border = '1px solid rgba(255,255,255,0.35)';
+        cancel.style.borderRadius = '6px';
+        cancel.style.padding = '6px 9px';
+        cancel.style.background = 'transparent';
+        cancel.style.color = '#fff';
+        cancel.style.cursor = 'pointer';
+        cancel.style.font = 'inherit';
+        cancel.addEventListener('click', (event) => {
+            event.stopPropagation();
+            finish(false);
+        });
+
+        bar.append(count, translate, cancel);
+        bar.addEventListener('click', (event) => event.stopPropagation());
+        document.documentElement.append(bar);
+    };
+
+    const finish = (keepTokens: boolean): void => {
+        if (stopped) return;
+        stopped = true;
+        shield.removeEventListener('click', onClick);
+        window.removeEventListener('click', onClick, true);
+        window.removeEventListener('mousemove', onMove, true);
+        window.removeEventListener('keydown', onKey, true);
+        window.removeEventListener('scroll', redrawMarks, true);
+        window.removeEventListener('resize', redrawMarks);
+        shield.remove();
+        hover.remove();
+        bar?.remove();
+        marks?.remove();
+        bar = null;
+        marks = null;
+        window.__comicTranslatorPickerActive = false;
+        if (!keepTokens) {
+            for (const item of selection) item.element.removeAttribute(OVERLAY_TARGET_ATTRIBUTE);
+            selection.length = 0;
+        }
+    };
+
+    const confirmSelection = async (): Promise<void> => {
+        if (selection.length === 0) {
+            showToast('Select at least one image.');
+            return;
+        }
+        const items = selection.map((item) => ({ imageUrl: item.url, token: item.token }));
+        finish(true);
+        try {
+            const response = (await chrome.runtime.sendMessage(
+                serviceWorkerRequestFactory.ofBatch(items),
+            )) as TranslateBatchResponse | undefined;
+            if (!response) throw new Error('The background worker sent no answer.');
+            if (!response.ok) throw new Error(response.error);
+            showToast(`Queued ${response.count} image${response.count === 1 ? '' : 's'}.`);
+        } catch (cause) {
+            showToast(`Could not queue the batch: ${cause instanceof Error ? cause.message : String(cause)}`);
+        }
+    };
+
+    function onMove(event: MouseEvent): void {
+        if (isBatchUi(event.target as Element)) {
+            placeHover(null);
+            return;
+        }
+        const hit = findAt(document, event.clientX, event.clientY, 0, 0);
+        placeHover(hit && hit !== 'blocked-frame' ? hit.rect : null);
+    }
+
+    function onClick(event: MouseEvent): void {
+        if (isBatchUi(event.target as Element)) return;
+        event.preventDefault();
+        event.stopPropagation();
+
+        const hit = findAt(document, event.clientX, event.clientY, 0, 0);
+        if (hit === 'blocked-frame') {
+            showToast('This image is inside a frame the picker cannot read.');
+            return;
+        }
+        if (!hit) {
+            showToast('No image under the pointer.');
+            return;
+        }
+        if (hit.url.startsWith('blob:')) {
+            showToast('This image has no stable URL, so it cannot be fetched later.');
+            return;
+        }
+
+        const existing = selection.findIndex((item) =>
+            item.element === hit.element
+            || (item.url === hit.url && Math.abs(item.rect.top - hit.rect.top) < 1
+                && Math.abs(item.rect.left - hit.rect.left) < 1));
+        if (existing >= 0) {
+            selection[existing].element.removeAttribute(OVERLAY_TARGET_ATTRIBUTE);
+            selection.splice(existing, 1);
+            redrawMarks();
+            return;
+        }
+
+        const token = `batch-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        hit.element.setAttribute(OVERLAY_TARGET_ATTRIBUTE, token);
+        selection.push({ token, url: hit.url, element: hit.element, rect: hit.rect });
+        makeBar();
+        redrawMarks();
+    }
+
+    function onKey(event: KeyboardEvent): void {
+        if (event.key === 'Escape') finish(false);
+    }
+
+    shield.addEventListener('click', onClick);
+    window.addEventListener('click', onClick, true);
+    window.addEventListener('mousemove', onMove, true);
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('scroll', redrawMarks, true);
+    window.addEventListener('resize', redrawMarks);
+    makeBar();
+    redrawMarks();
+    showToast('Selection mode: click images to select, then use the tick bar. Escape cancels.');
+}
+
 // The same bundle is injected for the overlay, so the popup starts the picker
 // explicitly through this handle; importing the bundle must not open pick mode.
 const pickerScope = window as unknown as {
-    __comicTranslatorPicker?: { start: () => void };
+    __comicTranslatorPicker?: { start: () => void; startSelection: () => void };
 };
 pickerScope.__comicTranslatorPicker = {
     start: () => {
@@ -291,6 +575,96 @@ pickerScope.__comicTranslatorPicker = {
         window.__comicTranslatorPickerActive = true;
         start();
     },
+    startSelection: () => {
+        if (window.__comicTranslatorPickerActive) return;
+        startBatchSelection();
+    },
 };
+
+type BatchProgressUi = {
+    element: HTMLElement;
+    text: HTMLElement;
+    cancel: HTMLButtonElement;
+    hideTimer?: number;
+};
+
+let batchProgressUi: BatchProgressUi | null = null;
+
+function updateBatchProgress(state: BatchState): void {
+    if (!batchProgressUi) {
+        const element = document.createElement('div');
+        element.setAttribute('data-comic-translator-batch-progress', 'true');
+        element.style.position = 'fixed';
+        element.style.right = '18px';
+        element.style.bottom = '18px';
+        element.style.zIndex = '2147483647';
+        element.style.display = 'flex';
+        element.style.alignItems = 'center';
+        element.style.gap = '10px';
+        element.style.padding = '9px 11px';
+        element.style.borderRadius = '8px';
+        element.style.background = 'rgba(17, 17, 17, 0.95)';
+        element.style.color = '#fff';
+        element.style.font = '12px/1.35 system-ui, sans-serif';
+        element.style.boxShadow = '0 5px 18px rgba(0, 0, 0, 0.25)';
+        element.style.pointerEvents = 'auto';
+        const text = document.createElement('span');
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.textContent = 'Cancel';
+        cancel.style.border = '1px solid rgba(255,255,255,0.35)';
+        cancel.style.borderRadius = '5px';
+        cancel.style.padding = '4px 7px';
+        cancel.style.background = 'transparent';
+        cancel.style.color = '#fff';
+        cancel.style.cursor = 'pointer';
+        cancel.style.font = 'inherit';
+        element.append(text, cancel);
+        document.documentElement.append(element);
+        batchProgressUi = { element, text, cancel };
+    }
+    const ui = batchProgressUi;
+    const total = state.items.length;
+    const done = state.items.filter((item) => item.status === 'done').length;
+    const failed = state.items.filter((item) => item.status === 'error').length;
+    const running = state.items.findIndex((item) => item.status === 'running');
+    if (state.status === 'done') {
+        ui.text.textContent = `Batch done: ${done}/${total}${failed ? `, ${failed} failed` : ''}`;
+        ui.cancel.style.display = 'none';
+        window.clearTimeout(ui.hideTimer);
+        ui.hideTimer = window.setTimeout(() => {
+            ui.element.remove();
+            batchProgressUi = null;
+        }, 6000);
+    } else if (state.status === 'cancelled') {
+        ui.text.textContent = `Batch cancelled: ${done}/${total}`;
+        ui.cancel.style.display = 'none';
+        window.clearTimeout(ui.hideTimer);
+        ui.hideTimer = window.setTimeout(() => {
+            ui.element.remove();
+            batchProgressUi = null;
+        }, 4000);
+    } else {
+        ui.cancel.style.display = '';
+        ui.text.textContent = running >= 0
+            ? `Translating ${running + 1}/${total}...`
+            : `Queued ${total} images...`;
+        ui.cancel.onclick = () => {
+            ui.cancel.disabled = true;
+            void chrome.runtime.sendMessage(serviceWorkerRequestFactory.ofCancel(state.id)).catch(() => undefined);
+        };
+    }
+}
+
+const batchWindow = window as unknown as { __comicTranslatorBatchListener?: boolean };
+if (!batchWindow.__comicTranslatorBatchListener) {
+    batchWindow.__comicTranslatorBatchListener = true;
+    chrome.runtime.onMessage.addListener((message: unknown) => {
+        const progress = message as BatchProgressMessage | undefined;
+        if (!progress || progress.type !== 'batch-progress') return false;
+        updateBatchProgress(progress.state);
+        return false;
+    });
+}
 
 export { };

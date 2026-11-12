@@ -4,7 +4,7 @@ export type MessageTarget =
     | typeof SERVICE_WORKER_TARGET
     | typeof OFFSCREEN_TARGET;
 
-export type MessageType = 'detect' | 'ping';
+export type MessageType = 'detect' | 'translate' | 'translate-batch' | 'batch-progress' | 'cancel-batch' | 'translate-builtin' | 'ping';
 
 export type RubyBox = {
     x: number;
@@ -96,6 +96,8 @@ export type OverlayItem = {
     clip?: { x: number; y: number }[];
     /** Fill the tight detected area instead of only the seg glyph pixels. */
     fill?: boolean;
+    /** Paper patch over the original glyphs, separate from the text box. */
+    patch?: { x: number; y: number; width: number; height: number };
 };
 
 /** Popup to content script: place these boxes over the picked image. */
@@ -103,6 +105,8 @@ export type OverlayRequest = {
     /** The token stored when the image was picked. */
     token?: string;
     imageUrl: string;
+    /** Inpainted page, when the inpaint pass succeeded. */
+    erasedUrl?: string | null;
     /** Natural image size; every item coordinate is in this space. */
     width: number;
     height: number;
@@ -124,6 +128,16 @@ export type OffscreenDetectRequest = {
     imageUrl: string;
 };
 
+export type OffscreenBuiltinTranslateRequest = {
+    target: typeof OFFSCREEN_TARGET;
+    type: 'translate-builtin';
+    lines: string[];
+};
+
+export type OffscreenBuiltinTranslateResponse =
+    | { ok: true; texts: string[] }
+    | { ok: false; error: string };
+
 /** Offscreen document to service worker. */
 export type OffscreenPing = {
     target: typeof OFFSCREEN_TARGET;
@@ -140,7 +154,11 @@ export type PingResponse = { ok: true };
   */
 export type IncomingMessage =
     | DetectRequest
+    | TranslateRequest
+    | TranslateBatchRequest
+    | CancelBatchRequest
     | OffscreenDetectRequest
+    | OffscreenBuiltinTranslateRequest
     | OffscreenPing;
 
 /** Wall-clock cost of each stage, in milliseconds. */
@@ -166,7 +184,96 @@ export type DetectResponse =
           groups: GroupData[];
           bubbleError: string | null;
           bubbles: BubbleData[];
+          erasedUrl: string | null;
           timings?: DetectTimings;
       }
     | { ok: false; error: string };
 
+
+
+/** One translated region, enough for the popup to show the result. */
+export type TranslationAnswer = {
+    text: string;
+    columns?: string[];
+    skip?: boolean;
+    type?: 'chat' | 'sfx';
+};
+
+export type TranslateSettings = {
+    translator: 'gemini' | 'deepseek' | 'builtin';
+    deepSeekKey: string;
+    geminiKey: string;
+    font: 'sans' | 'serif';
+    leading: number;
+    weight: 'normal' | 'bold';
+};
+
+/** Popup or content script to service worker: run the full image job. */
+export type TranslateRequest = {
+    target: typeof SERVICE_WORKER_TARGET;
+    type: 'translate';
+    imageUrl: string;
+    tabPageUrl?: string;
+    tabId?: number;
+    token?: string;
+    settings?: TranslateSettings;
+};
+
+export type TranslateResponse =
+    | {
+          ok: true;
+          count: number;
+          used: string;
+          active: 'gemini' | 'deepseek' | 'builtin';
+          skipped: number;
+          withBalloon: number;
+          balloons: number;
+          answers: TranslationAnswer[];
+          ms: number;
+          warm: boolean;
+          timings?: DetectTimings;
+      }
+    | { ok: false; error: string };
+
+
+export type BatchItem = {
+    imageUrl: string;
+    token?: string;
+};
+
+export type BatchItemState = BatchItem & {
+    status: 'pending' | 'running' | 'done' | 'error';
+    error?: string;
+};
+
+export type BatchState = {
+    id: string;
+    tabId: number;
+    status: 'running' | 'done' | 'cancelled';
+    items: BatchItemState[];
+    createdAt: number;
+    updatedAt: number;
+};
+
+export type TranslateBatchRequest = {
+    target: typeof SERVICE_WORKER_TARGET;
+    type: 'translate-batch';
+    items: BatchItem[];
+    tabId?: number;
+    settings?: TranslateSettings;
+};
+
+export type TranslateBatchResponse =
+    | { ok: true; batchId: string; count: number }
+    | { ok: false; error: string };
+
+export type CancelBatchRequest = {
+    target: typeof SERVICE_WORKER_TARGET;
+    type: 'cancel-batch';
+    batchId: string;
+};
+
+export type BatchProgressMessage = {
+    type: 'batch-progress';
+    state: BatchState;
+};

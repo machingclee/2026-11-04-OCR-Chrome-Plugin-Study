@@ -7,7 +7,7 @@ const BOX_ATTR = 'data-comic-translator-box';
 const IMAGE_STYLE_ATTR = 'data-comic-translator-image-style';
 const POSITION_ATTR = 'data-comic-translator-position';
 
-let stopWatching: (() => void) | null = null;
+const stopWatchers = new Map<HTMLElement, () => void>();
 
 type ImageStyle = {
     display: string;
@@ -87,7 +87,7 @@ function createLayer(): HTMLElement {
     layer.setAttribute(LAYER_ATTR, 'true');
     layer.style.position = 'absolute';
     layer.style.inset = '0';
-    layer.style.overflow = 'hidden';
+    layer.style.overflow = 'visible';
     layer.style.pointerEvents = 'none';
     layer.style.zIndex = '2';
     return layer;
@@ -153,36 +153,69 @@ function attachLayer(element: HTMLElement): HTMLElement {
  * as soon as the node changes, disappears or gets a different source.
  */
 function watchTarget(target: HTMLElement): void {
-    stopWatching?.();
+    stopWatchers.get(target)?.();
 
     if (target instanceof HTMLImageElement) {
         const src = target.getAttribute('src');
         const srcset = target.getAttribute('srcset');
         const changed = (): void => {
             if (!target.isConnected || target.getAttribute('src') !== src || target.getAttribute('srcset') !== srcset) {
-                clearAll();
+                clearTarget(target);
             }
         };
         const observer = new MutationObserver(changed);
         observer.observe(target, { attributes: true, attributeFilter: ['src', 'srcset'] });
         if (target.parentElement) observer.observe(target.parentElement, { childList: true });
-        stopWatching = () => {
+        stopWatchers.set(target, () => {
             observer.disconnect();
-            stopWatching = null;
-        };
+            stopWatchers.delete(target);
+        });
         return;
     }
 
     const background = backgroundUrl(target);
     const changed = (): void => {
-        if (!target.isConnected || backgroundUrl(target) !== background) clearAll();
+        if (!target.isConnected || backgroundUrl(target) !== background) clearTarget(target);
     };
     const observer = new MutationObserver(changed);
     observer.observe(target, { attributes: true, attributeFilter: ['style', 'class'] });
-    stopWatching = () => {
+    stopWatchers.set(target, () => {
         observer.disconnect();
-        stopWatching = null;
-    };
+        stopWatchers.delete(target);
+    });
+}
+
+/** Remove only the overlay attached to this image, not the rest of a batch. */
+function clearTarget(target: HTMLElement): void {
+    stopWatchers.get(target)?.();
+    stopWatchers.delete(target);
+
+    const wrapper = target.closest<HTMLElement>(`[${WRAPPER_ATTR}]`);
+    if (wrapper) {
+        const parent = wrapper.parentNode;
+        for (const child of [...wrapper.children]) {
+            if (child.hasAttribute(LAYER_ATTR)) {
+                child.remove();
+                continue;
+            }
+            if (child instanceof HTMLImageElement) restoreStyle(child);
+            if (child instanceof HTMLPictureElement) {
+                const nested = child.querySelector('img');
+                if (nested) restoreStyle(nested);
+            }
+            parent?.insertBefore(child, wrapper);
+        }
+        wrapper.remove();
+        return;
+    }
+
+    for (const layer of target.querySelectorAll<HTMLElement>(`[${LAYER_ATTR}]`)) {
+        layer.remove();
+    }
+    if (target.hasAttribute(POSITION_ATTR)) {
+        target.style.position = target.getAttribute(POSITION_ATTR) ?? '';
+        target.removeAttribute(POSITION_ATTR);
+    }
 }
 
 /** Let the reader move a label away from the artwork it is covering. */
@@ -237,6 +270,50 @@ function enableDrag(box: HTMLElement): void {
     });
 }
 
+function makePatch(
+    item: OverlayItem,
+    request: OverlayRequest,
+    width: number,
+    height: number,
+    scale: number,
+): HTMLElement | null {
+    const area = item.patch;
+    if (!area || area.width <= 0 || area.height <= 0) return null;
+    const patch = document.createElement('div');
+    const style = patch.style;
+    style.position = 'absolute';
+    style.left = `${(area.x / width) * 100}%`;
+    style.top = `${(area.y / height) * 100}%`;
+    style.width = `${(area.width / width) * 100}%`;
+    style.height = `${(area.height / height) * 100}%`;
+    style.boxSizing = 'border-box';
+    style.pointerEvents = 'none';
+    style.zIndex = '1';
+    if (item.clip && item.clip.length >= 3) {
+        // The tight text area stays inside the balloon. The solid patch removes
+        // every original glyph, and the balloon outline keeps it off the art.
+        style.background = item.background ?? '#ffffff';
+        const points = item.clip.map((point) => {
+            const x = ((point.x - area.x) / area.width) * 100;
+            const y = ((point.y - area.y) / area.height) * 100;
+            return `${x}% ${y}%`;
+        });
+        style.clipPath = `polygon(${points.join(', ')})`;
+    } else if (item.maskUrl) {
+        // No usable outline. Paint the glyph mask instead of a visible square.
+        style.backgroundImage = `url("${item.maskUrl}")`;
+        style.backgroundRepeat = 'no-repeat';
+        style.backgroundSize = '100% 100%';
+        style.backgroundColor = 'transparent';
+    } else {
+        style.background = item.background ?? '#ffffff';
+    }
+    patch.dataset.comicTranslatorPatch = 'true';
+    void request;
+    void scale;
+    return patch;
+}
+
 function makeBox(
     item: OverlayItem,
     request: OverlayRequest,
@@ -258,10 +335,15 @@ function makeBox(
     style.display = 'flex';
     style.alignItems = 'center';
     style.justifyContent = 'center';
-    style.overflow = 'hidden';
+    style.overflow = 'visible';
     style.padding = '1px 2px';
     style.textAlign = 'center';
-    if (item.fill) {
+    if (item.patch) {
+        // The paper patch is its own layer, sized to the detected text area.
+        // This box only carries the translated text.
+        style.backgroundColor = 'transparent';
+        style.backgroundImage = 'none';
+    } else if (item.fill) {
         // The tight detected area sits inside the balloon. A solid patch there
         // removes every original glyph, including strokes the seg mask missed.
         // The balloon clip keeps the patch off the artwork outside the balloon.
@@ -294,15 +376,6 @@ function makeBox(
     style.pointerEvents = 'none';
     style.zIndex = '2';
 
-    if (item.clip && item.clip.length >= 3 && item.width > 0 && item.height > 0) {
-        const points = item.clip.map((point) => {
-            const x = ((point.x - item.x) / item.width) * 100;
-            const y = ((point.y - item.y) / item.height) * 100;
-            return `${x}% ${y}%`;
-        });
-        style.clipPath = `polygon(${points.join(', ')})`;
-    }
-
     if (item.vertical) {
         // A flex container swaps its axes in vertical writing mode, which can
         // leave a short column at the left edge. A grid centres the text on both
@@ -313,9 +386,11 @@ function makeBox(
         style.display = 'grid';
         style.placeItems = 'center';
         style.textAlign = 'center';
-        // A trailing ellipsis must not start a second column. Let the fit loop
-        // shrink instead of wrapping it to the left of the text.
-        style.whiteSpace = 'nowrap';
+        // Let the text use the number of columns the balloon has room for.
+        // The word joiner in toVertical keeps a trailing ellipsis with the
+        // preceding glyph instead of forcing the whole label into one column.
+        style.whiteSpace = 'pre-wrap';
+        style.lineBreak = 'strict';
     }
 
     const boxWidth = Math.max(1, item.width * scale);
@@ -382,11 +457,11 @@ function fitBoxes(layer: HTMLElement, leading: number): void {
 }
 
 function apply(request: OverlayRequest): OverlayResponse {
-    clearAll();
     const target = findTarget(request);
     if (!target) {
         return { ok: false, error: 'The picked image is no longer on this page.' };
     }
+    clearTarget(target);
 
     const width = request.width > 0 ? request.width : target.clientWidth;
     const height = request.height > 0 ? request.height : target.clientHeight;
@@ -399,9 +474,28 @@ function apply(request: OverlayRequest): OverlayResponse {
     const renderedWidth = host?.getBoundingClientRect().width ?? width;
     const scale = renderedWidth / width;
 
+    if (request.erasedUrl) {
+        // Keep the original image node. The erased image is a layer inside the
+        // same wrapper, so Clear overlay restores the page without a reload.
+        const erased = document.createElement('img');
+        erased.src = request.erasedUrl;
+        erased.alt = '';
+        erased.style.position = 'absolute';
+        erased.style.inset = '0';
+        erased.style.width = '100%';
+        erased.style.height = '100%';
+        erased.style.objectFit = 'fill';
+        erased.style.pointerEvents = 'none';
+        erased.style.zIndex = '1';
+        erased.setAttribute('data-comic-translator-erased', 'true');
+        layer.appendChild(erased);
+    }
+
     let count = 0;
     for (const item of request.items) {
         if (!item.text.trim() || item.width <= 0 || item.height <= 0) continue;
+        const patch = makePatch(item, request, width, height, scale);
+        if (patch) layer.appendChild(patch);
         layer.appendChild(makeBox(item, request, width, height, scale));
         count += 1;
     }
@@ -416,7 +510,8 @@ function apply(request: OverlayRequest): OverlayResponse {
  * overlays left by an earlier injection of this script.
  */
 function clearAll(): void {
-    stopWatching?.();
+    for (const cleanup of [...stopWatchers.values()]) cleanup();
+    stopWatchers.clear();
 
     for (const wrapper of document.querySelectorAll<HTMLElement>(`[${WRAPPER_ATTR}]`)) {
         const parent = wrapper.parentNode;

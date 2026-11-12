@@ -25,6 +25,7 @@ export const OVERLAY_TARGET_ATTRIBUTE = 'data-comic-translator-target';
 /** Last successful result, readable by the popup after it reopens. */
 
 export const LAST_RESULT_KEY = 'lastDetection';
+export const BATCH_STATE_KEY = 'translationBatch';
 
 /** Bump only when the stored detection shape changes, not on every build. */
 export const DETECTION_CACHE_VERSION = 'detection-v3';
@@ -78,5 +79,9 @@ export const BUBBLE_INPUT_SIZE = 640;
 export const BUBBLE_SCORE_THRESHOLD = 0.3;
 export const BUBBLE_NMS = 0.45;
 export const BUBBLE_MASK_THRESHOLD = 0.5;
+/** AOT inpainting, 512 square, minus one to one, hole zeroed after the scale. */
+export const INPAINT_MODEL_PATH = 'models/aot_inpaint_512.onnx';
+export const INPAINT_INPUT_SIZE = 512;
+export const INPAINT_MASK_GROW = 3;
 
 
