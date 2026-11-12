@@ -64,6 +64,6 @@ export function refineMask(
     const textSize = sizes.length > 0
         ? sizes.reduce((sum, size) => sum + size, 0) / sizes.length
         : 12;
-    const radius = Math.max(INPAINT_MASK_GROW, Math.round(textSize * 0.03));
+    const radius = Math.max(INPAINT_MASK_GROW, Math.round(textSize * 0.04));
     return dilate(raw, pageWidth, pageHeight, radius);
 }
