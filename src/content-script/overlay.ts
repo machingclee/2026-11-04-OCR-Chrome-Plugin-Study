@@ -324,6 +324,7 @@ function makeBox(
     const box = document.createElement('span');
     box.setAttribute(BOX_ATTR, 'true');
     box.setAttribute('data-comic-translator-label', 'true');
+    if (item.groupId !== undefined) box.setAttribute('data-comic-translator-group', String(item.groupId));
     box.textContent = item.text;
 
     const style = box.style;
@@ -450,12 +451,21 @@ function estimatedFits(box: HTMLElement, size: number, leading: number): boolean
 }
 
 function fitBoxes(layer: HTMLElement, leading: number): void {
+    const groups = new Map<string, HTMLElement[]>();
+    let solo = 0;
     for (const box of layer.querySelectorAll<HTMLElement>(`[${BOX_ATTR}]`)) {
-        let size = Number.parseFloat(box.style.fontSize) || 12;
-        while (size > 7 && (!textFits(box) || !estimatedFits(box, size, leading))) {
+        const key = box.getAttribute('data-comic-translator-group') ?? `solo-${solo++}`;
+        const list = groups.get(key);
+        if (list) list.push(box);
+        else groups.set(key, [box]);
+    }
+
+    for (const boxes of groups.values()) {
+        let size = Number.parseFloat(boxes[0].style.fontSize) || 12;
+        while (size > 7 && boxes.some((box) => !textFits(box) || !estimatedFits(box, size, leading))) {
             size -= 1;
-            box.style.fontSize = `${size}px`;
         }
+        for (const box of boxes) box.style.fontSize = `${size}px`;
     }
 }
 

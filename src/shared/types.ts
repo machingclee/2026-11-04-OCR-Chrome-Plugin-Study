@@ -82,6 +82,8 @@ export type OverlayItem = {
     height: number;
     text: string;
     vertical: boolean;
+    /** All spans from one bubble share this id for group fitting. */
+    groupId?: number;
     /** Label colour sampled from the paper; defaults to white. */
     background?: string;
     color?: string;

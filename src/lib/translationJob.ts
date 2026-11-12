@@ -231,6 +231,7 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
                 height: tight.height,
                 text: vertical ? toVertical(part) : toHorizontal(part),
                 vertical,
+                groupId: index,
                 background: group.background,
                 color: group.color,
                 maskUrl: group.maskUrl,
