@@ -270,6 +270,7 @@ function start(): void {
         if (progressListener) chrome.runtime.onMessage.removeListener(progressListener);
         shield.removeEventListener('click', onClick);
         window.removeEventListener('click', onClick, true);
+        window.removeEventListener('contextmenu', onClick, true);
         window.removeEventListener('mousemove', onMove, true);
         window.removeEventListener('keydown', onKey, true);
         for (const type of PAGE_EVENTS) window.removeEventListener(type, swallowPageEvent, true);
@@ -467,6 +468,7 @@ function start(): void {
 
     shield.addEventListener('click', onClick);
     window.addEventListener('click', onClick, true);
+    window.addEventListener('contextmenu', onClick, true);
     window.addEventListener('mousemove', onMove, true);
     window.addEventListener('keydown', onKey, true);
     for (const type of PAGE_EVENTS) window.addEventListener(type, swallowPageEvent, true);
@@ -655,6 +657,7 @@ function startBatchSelection(): void {
         stopped = true;
         shield.removeEventListener('click', onClick);
         window.removeEventListener('click', onClick, true);
+        window.removeEventListener('contextmenu', onClick, true);
         window.removeEventListener('mousemove', onMove, true);
         window.removeEventListener('keydown', onKey, true);
         document.removeEventListener('keydown', onKey, true);
@@ -746,6 +749,7 @@ function startBatchSelection(): void {
 
     shield.addEventListener('click', onClick);
     window.addEventListener('click', onClick, true);
+    window.addEventListener('contextmenu', onClick, true);
     window.addEventListener('mousemove', onMove, true);
     window.addEventListener('keydown', onKey, true);
     document.addEventListener('keydown', onKey, true);
@@ -754,7 +758,7 @@ function startBatchSelection(): void {
     for (const type of PAGE_EVENTS) window.addEventListener(type, swallowPageEvent, true);
     makeBar();
     redrawMarks();
-    showToast('Selection mode: click images to select, then use the tick bar. Escape cancels.');
+    showToast('Selection mode: right-click images to select, then click a green badge to translate all. Escape cancels.');
 }
 
 // The same bundle is injected for the overlay, so the popup starts the picker
