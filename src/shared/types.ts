@@ -90,6 +90,8 @@ export type OverlayItem = {
     rectangle?: boolean;
     /** Original glyph thickness in image pixels, used for the label font size. */
     fontSize?: number;
+    /** Balloon outline in image pixels; clips the label to the balloon. */
+    clip?: { x: number; y: number }[];
 };
 
 /** Popup to content script: place these boxes over the picked image. */

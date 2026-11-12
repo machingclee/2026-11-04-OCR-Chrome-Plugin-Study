@@ -519,20 +519,30 @@ export default function App() {
                 }
             }
 
-            const items: OverlayItem[] = placements.map(({ group, text, layout }) => ({
-                x: layout.x,
-                y: layout.y,
-                width: layout.width,
-                height: layout.height,
-                text,
-                vertical: group.vertical ?? layout.height > layout.width * 1.3,
-                background: group.background,
-                color: group.color,
-                maskUrl: group.maskUrl,
-                maskBox: group.maskBox,
-                rectangle: group.rectangle,
-                fontSize: group.fontSize,
-            }));
+            const items: OverlayItem[] = placements.map(({ group, text, layout }) => {
+                const centreX = group.x + group.width / 2;
+                const centreY = group.y + group.height / 2;
+                const balloon = group.balloon
+                    ? bubbles.find((bubble) =>
+                        centreX >= bubble.x && centreX <= bubble.x + bubble.width
+                        && centreY >= bubble.y && centreY <= bubble.y + bubble.height)
+                    : undefined;
+                return {
+                    x: layout.x,
+                    y: layout.y,
+                    width: layout.width,
+                    height: layout.height,
+                    text,
+                    vertical: group.vertical ?? layout.height > layout.width * 1.3,
+                    background: group.background,
+                    color: group.color,
+                    maskUrl: group.maskUrl,
+                    maskBox: group.maskBox,
+                    rectangle: group.rectangle,
+                    fontSize: group.fontSize,
+                    clip: balloon?.outline,
+                };
+            });
             if (items.length === 0) throw new Error('The translation returned no dialogue to place.');
             setTranslated(out);
 

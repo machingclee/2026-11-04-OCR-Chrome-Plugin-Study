@@ -96,9 +96,10 @@ function groupFontSize(lines: BoxData[], group: { x: number; y: number; width: n
     const sizes: number[] = [];
     for (const line of lines) {
         if (!centreInsideBox(line, group)) continue;
-        const thickness = line.lineThickness && line.lineThickness > 0
+        const shortSide = Math.min(line.width, line.height);
+        const thickness = line.lineThickness && line.lineThickness > 0 && line.lineThickness <= shortSide * 1.25
             ? line.lineThickness
-            : Math.min(line.width, line.height);
+            : shortSide;
         if (thickness >= 4) sizes.push(thickness);
     }
     if (sizes.length === 0) return 0;
