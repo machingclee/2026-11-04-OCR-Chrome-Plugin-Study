@@ -208,14 +208,16 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         const characters = [...fullText];
         const capacities = sortedLines.map((line) =>
             Math.max(1, Math.floor((vertical ? line.height : line.width) / Math.max(1, font))));
+        const totalCapacity = Math.max(1, capacities.reduce((sum, value) => sum + value, 0));
         const columns: string[] = [];
         let offset = 0;
         for (let index = 0; index < sortedLines.length; index += 1) {
             if (offset >= characters.length) break;
-            const remaining = sortedLines.length - index - 1;
-            const take = remaining === 0
+            const isLast = index === sortedLines.length - 1;
+            const proportional = Math.round(characters.length * capacities[index] / totalCapacity);
+            const take = isLast
                 ? characters.length - offset
-                : Math.min(capacities[index], characters.length - offset);
+                : Math.max(0, Math.min(capacities[index], proportional, characters.length - offset));
             columns.push(characters.slice(offset, offset + take).join(''));
             offset += take;
         }
