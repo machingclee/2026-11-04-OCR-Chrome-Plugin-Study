@@ -411,7 +411,10 @@ export function splitGroupByColumnGap<T extends {
             const cross = vertical ? gapX : gapY;
             const along = vertical ? gapY : gapX;
             const crossLimit = Math.max(thickness * 0.6, 6);
-            const alongLimit = Math.max(thickness * 3, 24);
+            // Columns in one balloon overlap along the reading axis. A gap of
+            // more than one line thickness is a new text band or a second
+            // balloon, not another column of the same speech.
+            const alongLimit = Math.max(thickness * 1.2, 12);
             if (cross <= crossLimit && along <= alongLimit) union(left, right);
         }
     }

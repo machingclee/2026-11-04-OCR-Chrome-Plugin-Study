@@ -121,36 +121,6 @@ function groupVertical(lines: BoxData[], group: { x: number; y: number; width: n
 }
 
 /** Original glyph thickness, not the size of the whole group box. */
-function mergeClustersByBalloon<T extends { x: number; y: number; width: number; height: number }>(
-    clusters: T[][],
-    balloons: { x: number; y: number; width: number; height: number }[],
-): T[][] {
-    if (clusters.length <= 1 || balloons.length === 0) return clusters;
-    const buckets = new Map<number, T[]>();
-    for (const cluster of clusters) {
-        let minX = Number.POSITIVE_INFINITY;
-        let minY = Number.POSITIVE_INFINITY;
-        let maxX = Number.NEGATIVE_INFINITY;
-        let maxY = Number.NEGATIVE_INFINITY;
-        for (const line of cluster) {
-            minX = Math.min(minX, line.x);
-            minY = Math.min(minY, line.y);
-            maxX = Math.max(maxX, line.x + line.width);
-            maxY = Math.max(maxY, line.y + line.height);
-        }
-        const centreX = (minX + maxX) / 2;
-        const centreY = (minY + maxY) / 2;
-        const index = balloons.findIndex((balloon) =>
-            centreX >= balloon.x && centreX <= balloon.x + balloon.width
-            && centreY >= balloon.y && centreY <= balloon.y + balloon.height);
-        if (index < 0) return clusters;
-        const bucket = buckets.get(index);
-        if (bucket) bucket.push(...cluster);
-        else buckets.set(index, [...cluster]);
-    }
-    return buckets.size > 1 ? [...buckets.values()] : [clusters.flat()];
-}
-
 function groupFontSize(lines: BoxData[], group: { x: number; y: number; width: number; height: number }): number {
     const inside = lines.filter((line) => centreInsideBox(line, group));
     if (inside.length === 0) return 0;
@@ -421,10 +391,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         // paragraph that can only be placed in one of them.
         const splitGroups: GroupData[] = [];
         for (const group of groups) {
-            const rawClusters = splitGroupByColumnGap(group, usable, detected.blkBoxes);
-            const clusters = group.balloon
-                ? mergeClustersByBalloon(rawClusters, balloonList)
-                : rawClusters;
+            const clusters = splitGroupByColumnGap(group, usable, detected.blkBoxes);
             if (clusters.length <= 1) {
                 splitGroups.push(group);
                 continue;
