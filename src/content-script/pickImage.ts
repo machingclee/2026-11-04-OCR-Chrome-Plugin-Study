@@ -833,7 +833,7 @@ function updateBatchProgress(state: BatchState): void {
     } else {
         ui.cancel.style.display = '';
         ui.text.textContent = running >= 0
-            ? `Translating ${running + 1}/${total}...`
+            ? `Processing ${Math.min(done + 1, total)}/${total} images`
             : `Queued ${total} images...`;
         ui.cancel.onclick = () => {
             ui.cancel.disabled = true;
