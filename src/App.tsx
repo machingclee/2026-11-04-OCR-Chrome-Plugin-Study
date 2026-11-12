@@ -103,6 +103,10 @@ export default function App() {
     const [view, setView] = useState<'production' | 'debug'>('production');
     const [shortcut, setShortcut] = useState('Alt+Q');
     const [recording, setRecording] = useState(false);
+
+    useEffect(() => {
+        document.body.style.width = view === 'debug' ? '720px' : '480px';
+    }, [view]);
     const [targetToken, setTargetToken] = useState<string | undefined>();
     const settingsLoaded = useRef(false);
     const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
@@ -425,7 +429,7 @@ export default function App() {
     }, [recording]);
 
     return (
-        <main className="mx-auto flex w-[720px] flex-col gap-4 rounded-md bg-[#f4f1ec] p-4 text-slate-900">
+        <main className={`mx-auto flex flex-col gap-4 rounded-md bg-[#f4f1ec] p-4 text-slate-900 ${view === 'debug' ? 'w-[720px]' : 'w-[480px]'}`}>
             <div className="flex self-start rounded-md bg-[#e9e3da] p-1">
                 <button
                     type="button"
