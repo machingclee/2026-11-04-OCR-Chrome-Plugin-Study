@@ -262,7 +262,7 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         const byTop = [...sortedLines].sort((left, right) => left.y - right.y);
         let bandTop = byTop[0]?.y ?? 0;
         for (const line of byTop) {
-            if (line.y - bandTop > Math.max(4, font * 0.8)) bandTop = line.y;
+            if (line.y - bandTop > Math.max(8, font * 2.5)) bandTop = line.y;
             tops.set(line, bandTop);
         }
 
