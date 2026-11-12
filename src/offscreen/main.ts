@@ -59,13 +59,16 @@ function skipAsNonDialogue(
     const normalised = text.replace(/[\s!！?？.…。、・「」『』]/gu, '');
     const kanaOnly = /^[\u3040-\u30FF\u30FC]+$/u.test(normalised);
     const shortSide = Math.min(line.width, line.height);
+    const huge = medianThickness > 0 && shortSide > medianThickness * 2.2;
 
     // A huge kana run is a sound effect, not dialogue. This stays true when the
     // bubble model mistakes the SFX for a balloon, which is what produced the
     // large white patch and the translated SFX.
-    if (kanaOnly && normalised.length <= 6 && medianThickness > 0 && shortSide > medianThickness * 2.2) {
-        return true;
-    }
+    if (kanaOnly && normalised.length <= 6 && huge) return true;
+
+    // Large lettering is often OCR'd as unrelated kanji. When the OCR score is
+    // low, that reading is unreliable even if the script is not kana.
+    if (huge && line.confidence < 0.7) return true;
 
     // Short kana-only text outside every balloon is usually OCR noise from a
     // sound effect or artwork. Kanji or mixed script outside a balloon can be
