@@ -265,7 +265,7 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
 
         if (columns.length > 1 && columns.length <= sortedLines.length) {
             sortedLines.slice(0, columns.length).forEach((line, columnIndex) => {
-                push({ ...line, y: tops.get(line) ?? line.y }, columns[columnIndex]);
+                push({ ...line, y: columnTop }, columns[columnIndex]);
             });
         } else {
             push(tight, columns.join(''));
