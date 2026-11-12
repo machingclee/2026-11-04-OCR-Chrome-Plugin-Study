@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     CONTENT_SCRIPT_FILE,
     DEEPSEEK_KEY,
@@ -138,6 +138,9 @@ export default function App() {
     const [weight, setWeight] = useState<'normal' | 'bold'>('normal');
     const [bubbleError, setBubbleError] = useState<string | null>(null);
     const [targetToken, setTargetToken] = useState<string | undefined>();
+    const settingsLoaded = useRef(false);
+    const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
+    const saveVersion = useRef(0);
 
     useEffect(() => {
         // start working when we open this popup again,
@@ -175,6 +178,7 @@ export default function App() {
                 if (storedChoice !== choice) {
                     void chrome.storage.local.set({ [TRANSLATOR_KEY]: choice });
                 }
+                settingsLoaded.current = true;
                 const lastResult = session[LAST_RESULT_KEY] as LastResult | undefined;
 
                 if (typeof pickedImageUrl !== 'string' || pickedImageUrl.length === 0) {
@@ -232,17 +236,48 @@ export default function App() {
         }
     }, []);
 
-    const handleSaveSettings = useCallback(async () => {
-        await chrome.storage.local.set({
+    // Persist every setting as it changes. The old flow only wrote the API keys
+    // when Save settings ran, so typing a key and closing the popup lost it.
+    useEffect(() => {
+        if (!settingsLoaded.current) return;
+        const version = saveVersion.current + 1;
+        saveVersion.current = version;
+        const payload = {
             [GEMINI_KEY]: geminiKey.trim(),
             [DEEPSEEK_KEY]: deepSeekKey.trim(),
             [TRANSLATOR_KEY]: translator,
             [FONT_KEY]: font,
             [LEADING_KEY]: leading,
             [WEIGHT_KEY]: weight,
-        });
-        setDirty(false);
-        setStatus('Settings saved.');
+        };
+        saveQueue.current = saveQueue.current
+            .catch(() => undefined)
+            .then(() => chrome.storage.local.set(payload))
+            .then(() => {
+                if (version === saveVersion.current) setDirty(false);
+            })
+            .catch((cause: unknown) => {
+                setError(`Could not save settings: ${cause instanceof Error ? cause.message : String(cause)}`);
+                setDirty(true);
+            });
+    }, [deepSeekKey, font, geminiKey, leading, translator, weight]);
+
+    const handleSaveSettings = useCallback(async () => {
+        try {
+            await chrome.storage.local.set({
+                [GEMINI_KEY]: geminiKey.trim(),
+                [DEEPSEEK_KEY]: deepSeekKey.trim(),
+                [TRANSLATOR_KEY]: translator,
+                [FONT_KEY]: font,
+                [LEADING_KEY]: leading,
+                [WEIGHT_KEY]: weight,
+            });
+            setDirty(false);
+            setStatus('Settings saved.');
+        } catch (cause) {
+            setError(`Could not save settings: ${cause instanceof Error ? cause.message : String(cause)}`);
+            setDirty(true);
+        }
     }, [deepSeekKey, font, geminiKey, leading, translator, weight]);
 
 
