@@ -250,17 +250,10 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         const bitmap = await createImageBitmap(await response.blob());
         timings.fetch = Math.round(performance.now() - fetchStarted);
 
-        // The page is one image. Tiling only raises the resolution the detector
-        // sees; every box, mask and balloon still lives in this one space.
-        let tilesX = Math.max(1, Math.ceil(bitmap.width / 1024));
-        let tilesY = Math.max(1, Math.ceil(bitmap.height / 1024));
-        while (tilesX * tilesY > 16) {
-            if (tilesX >= tilesY) tilesX -= 1;
-            else tilesY -= 1;
-        }
-
+        // One whole-page pass, as in the target project. Tiling was measured and
+        // removed: it cost one full pass per tile for very little text gain.
         const detectStarted = performance.now();
-        const detected = await detectBoxes(bitmap, tilesX, tilesY);
+        const detected = await detectBoxes(bitmap);
         timings.detect = Math.round(performance.now() - detectStarted);
         const ordered = toOrderedTextLines(detected.detBoxes, [], true);
 
