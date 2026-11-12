@@ -234,7 +234,7 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         const push = (line: { x: number; y: number; width: number; height: number }, content: string) => {
             items.push({
                 x: line.x,
-                y: columnTop,
+                y: line.y,
                 width: line.width,
                 height: line.height,
                 text: vertical ? toVertical(content) : toHorizontal(content),
@@ -255,7 +255,6 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
             });
         };
 
-        const columnTop = Math.min(...sortedLines.map((line) => line.y));
         const fitSizes = columns.slice(0, sortedLines.length).map((column, index) => {
             const line = sortedLines[index];
             const glyphs = Math.max(1, [...column].length);
@@ -265,7 +264,7 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
 
         if (columns.length > 1 && columns.length <= sortedLines.length) {
             sortedLines.slice(0, columns.length).forEach((line, columnIndex) => {
-                push({ ...line, y: columnTop }, columns[columnIndex]);
+                push(line, columns[columnIndex]);
             });
         } else {
             push(tight, columns.join(''));
