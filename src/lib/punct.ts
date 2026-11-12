@@ -29,7 +29,13 @@ const H2V = new Map<string, string>([
 ]);
 
 export function toVertical(text: string): string {
-    return [...text].map((character) => H2V.get(character) ?? character).join('');
+    // Three ASCII dots or a run of ellipsis marks is one vertical ellipsis, not
+    // three full stops or a horizontal row of dots beside the column.
+    const collapsed = text
+        .replace(/\.{3,}/g, '⋮')
+        .replace(/…+/g, '⋮')
+        .replace(/⋯+/g, '︙');
+    return [...collapsed].map((character) => H2V.get(character) ?? character).join('');
 }
 
 /** A mark that may not start a line, which is where a break is forbidden. */

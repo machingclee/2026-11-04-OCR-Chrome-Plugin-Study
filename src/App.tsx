@@ -25,6 +25,7 @@ import type {
     OverlayResponse,
 } from './shared/types';
 import { canTranslate, translateAll } from './lib/translate';
+import { toVertical } from './lib/punct';
 import { translateWithDeepSeek } from './lib/translateDeepSeek';
 import { translateWithGemini } from './lib/translateGemini';
 import type { RegionAnswer } from './lib/translatePrompt';
@@ -546,7 +547,7 @@ export default function App() {
                 y: layout.y,
                 width: layout.width,
                 height: layout.height,
-                text,
+                text: vertical ? toVertical(text) : text,
                 vertical,
                 background: group.background,
                 color: group.color,
