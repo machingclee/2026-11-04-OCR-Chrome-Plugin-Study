@@ -731,6 +731,21 @@ function startBatchSelection(): void {
         redrawMarks();
     }
 
+    function selectAllVisible(): void {
+        for (const image of document.images) {
+            const rect = image.getBoundingClientRect();
+            if (rect.width < 200 || rect.height < 200) continue;
+            if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
+            const url = imageUrl(image);
+            if (!url || url.startsWith('blob:')) continue;
+            if (selection.some((item) => item.element === image || item.url === url)) continue;
+            const token = `batch-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            image.setAttribute(OVERLAY_TARGET_ATTRIBUTE, token);
+            selection.push({ token, url, element: image, rect });
+        }
+        redrawMarks();
+    }
+
     function showPickMenu(hit: Exclude<ReturnType<typeof findAt>, 'blocked-frame' | null>, x: number, y: number): void {
         pickMenu?.remove();
         const menu = document.createElement('div');
@@ -771,6 +786,7 @@ function startBatchSelection(): void {
             menu.append(item);
         };
         addItem(selected ? 'Unselect this image' : 'Select this image', () => toggleHit(hit));
+        addItem('Select all visible images', selectAllVisible);
         addItem('Translate all', () => { void confirmSelection(); });
         menu.addEventListener('contextmenu', (event) => event.preventDefault());
         document.documentElement.append(menu);
