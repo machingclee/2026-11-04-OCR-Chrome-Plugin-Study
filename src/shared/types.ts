@@ -96,6 +96,8 @@ export type OverlayItem = {
     clip?: { x: number; y: number }[];
     /** Fill the tight detected area instead of only the seg glyph pixels. */
     fill?: boolean;
+    /** Paper patch over the original glyphs, separate from the text box. */
+    patch?: { x: number; y: number; width: number; height: number };
 };
 
 /** Popup to content script: place these boxes over the picked image. */
@@ -103,6 +105,8 @@ export type OverlayRequest = {
     /** The token stored when the image was picked. */
     token?: string;
     imageUrl: string;
+    /** Inpainted page, when the inpaint pass succeeded. */
+    erasedUrl?: string | null;
     /** Natural image size; every item coordinate is in this space. */
     width: number;
     height: number;
@@ -180,6 +184,7 @@ export type DetectResponse =
           groups: GroupData[];
           bubbleError: string | null;
           bubbles: BubbleData[];
+          erasedUrl: string | null;
           timings?: DetectTimings;
       }
     | { ok: false; error: string };

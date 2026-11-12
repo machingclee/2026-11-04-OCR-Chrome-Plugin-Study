@@ -20,6 +20,7 @@ export type TranslationJobInput = {
     imageWidth: number;
     imageHeight: number;
     settings: TranslationSettings;
+    inpainted?: boolean;
     translateBuiltin?: (lines: string[]) => Promise<string[]>;
 };
 
@@ -169,6 +170,18 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         );
     }
 
+    const balloonGroupCount = new Map<BubbleData, number>();
+    for (const group of current) {
+        const centreX = group.x + group.width / 2;
+        const centreY = group.y + group.height / 2;
+        const balloon = group.balloon
+            ? balloons.find((bubble) =>
+                centreX >= bubble.x && centreX <= bubble.x + bubble.width
+                && centreY >= bubble.y && centreY <= bubble.y + bubble.height)
+            : undefined;
+        if (balloon) balloonGroupCount.set(balloon, (balloonGroupCount.get(balloon) ?? 0) + 1);
+    }
+
     const placements: Array<{
         group: GroupData;
         text: string;
@@ -204,12 +217,26 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
             : group.vertical ?? group.height > group.width * 1.3;
         let layout = tight;
         if (balloon) {
-            const left = Math.max(tight.x, balloon.x);
-            const right = Math.min(tight.x + tight.width, balloon.x + balloon.width);
-            const top = Math.max(tight.y, balloon.y);
-            const bottom = Math.min(tight.y + tight.height, balloon.y + balloon.height);
-            if (right > left && bottom > top) {
-                layout = { ...tight, x: left, y: top, width: right - left, height: bottom - top };
+            const shared = (balloonGroupCount.get(balloon) ?? 0) > 1;
+            if (!shared) {
+                // One group owns this balloon. Use the balloon interior so the
+                // translation keeps the source size and sits in the original
+                // speech area instead of a tight line union in one corner.
+                const inset = Math.max(2, Math.min(balloon.width, balloon.height) * 0.04);
+                const width = balloon.width - inset * 2;
+                const height = balloon.height - inset * 2;
+                if (width > 0 && height > 0) {
+                    layout = { ...tight, x: balloon.x + inset, y: balloon.y + inset, width, height };
+                }
+            } else {
+                // Two clusters share one detected bubble. Keep them apart.
+                const left = Math.max(tight.x, balloon.x);
+                const right = Math.min(tight.x + tight.width, balloon.x + balloon.width);
+                const top = Math.max(tight.y, balloon.y);
+                const bottom = Math.min(tight.y + tight.height, balloon.y + balloon.height);
+                if (right > left && bottom > top) {
+                    layout = { ...tight, x: left, y: top, width: right - left, height: bottom - top };
+                }
             }
         }
         placements.push({ group, text, vertical, layout, tight, balloon });
@@ -230,7 +257,7 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         }
     }
 
-    const items: OverlayItem[] = placements.map(({ group, text, vertical, layout, balloon }) => ({
+    const items: OverlayItem[] = placements.map(({ group, text, vertical, layout, tight, balloon }) => ({
         x: layout.x,
         y: layout.y,
         width: layout.width,
@@ -244,7 +271,12 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         rectangle: group.rectangle,
         fontSize: group.fontSize,
         clip: balloon?.outline,
-        fill: Boolean(balloon) && group.width * group.height <= pageWidth * pageHeight * 0.15,
+        patch: balloon && !input.inpainted ? {
+            x: tight.x,
+            y: tight.y,
+            width: tight.width,
+            height: tight.height,
+        } : undefined,
     }));
     if (items.length === 0) throw new Error('The translation returned no dialogue to place.');
 

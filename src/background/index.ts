@@ -146,6 +146,7 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
                 previews: response.previews,
                 bubbles: response.bubbles,
                 groups: response.groups,
+                erasedUrl: response.erasedUrl,
                 ms: response.ms,
                 warm: response.warm,
                 timings: response.timings,
@@ -345,6 +346,7 @@ async function runTranslation(request: TranslateRequest, sender: chrome.runtime.
             imageWidth: detection.imageWidth,
             imageHeight: detection.imageHeight,
             settings,
+            inpainted: Boolean(detection.erasedUrl),
             translateBuiltin: async (lines) => {
                 const response = (await chrome.runtime.sendMessage(
                     offscreenRequestFactory.ofBuiltinTranslate(lines),
@@ -362,6 +364,7 @@ async function runTranslation(request: TranslateRequest, sender: chrome.runtime.
         const overlay: OverlayRequest = {
             token: request.token,
             imageUrl: request.imageUrl,
+            erasedUrl: detection.erasedUrl,
             width: detection.imageWidth,
             height: detection.imageHeight,
             items: job.items,

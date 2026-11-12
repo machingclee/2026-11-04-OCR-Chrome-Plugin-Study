@@ -87,7 +87,7 @@ function createLayer(): HTMLElement {
     layer.setAttribute(LAYER_ATTR, 'true');
     layer.style.position = 'absolute';
     layer.style.inset = '0';
-    layer.style.overflow = 'hidden';
+    layer.style.overflow = 'visible';
     layer.style.pointerEvents = 'none';
     layer.style.zIndex = '2';
     return layer;
@@ -270,6 +270,50 @@ function enableDrag(box: HTMLElement): void {
     });
 }
 
+function makePatch(
+    item: OverlayItem,
+    request: OverlayRequest,
+    width: number,
+    height: number,
+    scale: number,
+): HTMLElement | null {
+    const area = item.patch;
+    if (!area || area.width <= 0 || area.height <= 0) return null;
+    const patch = document.createElement('div');
+    const style = patch.style;
+    style.position = 'absolute';
+    style.left = `${(area.x / width) * 100}%`;
+    style.top = `${(area.y / height) * 100}%`;
+    style.width = `${(area.width / width) * 100}%`;
+    style.height = `${(area.height / height) * 100}%`;
+    style.boxSizing = 'border-box';
+    style.pointerEvents = 'none';
+    style.zIndex = '1';
+    if (item.clip && item.clip.length >= 3) {
+        // The tight text area stays inside the balloon. The solid patch removes
+        // every original glyph, and the balloon outline keeps it off the art.
+        style.background = item.background ?? '#ffffff';
+        const points = item.clip.map((point) => {
+            const x = ((point.x - area.x) / area.width) * 100;
+            const y = ((point.y - area.y) / area.height) * 100;
+            return `${x}% ${y}%`;
+        });
+        style.clipPath = `polygon(${points.join(', ')})`;
+    } else if (item.maskUrl) {
+        // No usable outline. Paint the glyph mask instead of a visible square.
+        style.backgroundImage = `url("${item.maskUrl}")`;
+        style.backgroundRepeat = 'no-repeat';
+        style.backgroundSize = '100% 100%';
+        style.backgroundColor = 'transparent';
+    } else {
+        style.background = item.background ?? '#ffffff';
+    }
+    patch.dataset.comicTranslatorPatch = 'true';
+    void request;
+    void scale;
+    return patch;
+}
+
 function makeBox(
     item: OverlayItem,
     request: OverlayRequest,
@@ -291,10 +335,15 @@ function makeBox(
     style.display = 'flex';
     style.alignItems = 'center';
     style.justifyContent = 'center';
-    style.overflow = 'hidden';
+    style.overflow = 'visible';
     style.padding = '1px 2px';
     style.textAlign = 'center';
-    if (item.fill) {
+    if (item.patch) {
+        // The paper patch is its own layer, sized to the detected text area.
+        // This box only carries the translated text.
+        style.backgroundColor = 'transparent';
+        style.backgroundImage = 'none';
+    } else if (item.fill) {
         // The tight detected area sits inside the balloon. A solid patch there
         // removes every original glyph, including strokes the seg mask missed.
         // The balloon clip keeps the patch off the artwork outside the balloon.
@@ -327,15 +376,6 @@ function makeBox(
     style.pointerEvents = 'none';
     style.zIndex = '2';
 
-    if (item.clip && item.clip.length >= 3 && item.width > 0 && item.height > 0) {
-        const points = item.clip.map((point) => {
-            const x = ((point.x - item.x) / item.width) * 100;
-            const y = ((point.y - item.y) / item.height) * 100;
-            return `${x}% ${y}%`;
-        });
-        style.clipPath = `polygon(${points.join(', ')})`;
-    }
-
     if (item.vertical) {
         // A flex container swaps its axes in vertical writing mode, which can
         // leave a short column at the left edge. A grid centres the text on both
@@ -346,9 +386,11 @@ function makeBox(
         style.display = 'grid';
         style.placeItems = 'center';
         style.textAlign = 'center';
-        // A trailing ellipsis must not start a second column. Let the fit loop
-        // shrink instead of wrapping it to the left of the text.
-        style.whiteSpace = 'nowrap';
+        // Let the text use the number of columns the balloon has room for.
+        // The word joiner in toVertical keeps a trailing ellipsis with the
+        // preceding glyph instead of forcing the whole label into one column.
+        style.whiteSpace = 'pre-wrap';
+        style.lineBreak = 'strict';
     }
 
     const boxWidth = Math.max(1, item.width * scale);
@@ -432,9 +474,28 @@ function apply(request: OverlayRequest): OverlayResponse {
     const renderedWidth = host?.getBoundingClientRect().width ?? width;
     const scale = renderedWidth / width;
 
+    if (request.erasedUrl) {
+        // Keep the original image node. The erased image is a layer inside the
+        // same wrapper, so Clear overlay restores the page without a reload.
+        const erased = document.createElement('img');
+        erased.src = request.erasedUrl;
+        erased.alt = '';
+        erased.style.position = 'absolute';
+        erased.style.inset = '0';
+        erased.style.width = '100%';
+        erased.style.height = '100%';
+        erased.style.objectFit = 'fill';
+        erased.style.pointerEvents = 'none';
+        erased.style.zIndex = '1';
+        erased.setAttribute('data-comic-translator-erased', 'true');
+        layer.appendChild(erased);
+    }
+
     let count = 0;
     for (const item of request.items) {
         if (!item.text.trim() || item.width <= 0 || item.height <= 0) continue;
+        const patch = makePatch(item, request, width, height, scale);
+        if (patch) layer.appendChild(patch);
         layer.appendChild(makeBox(item, request, width, height, scale));
         count += 1;
     }

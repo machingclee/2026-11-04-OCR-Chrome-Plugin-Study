@@ -3,6 +3,8 @@ import { detectBubbles } from '../lib/bubble';
 import { cropPreviews } from '../lib/regions';
 import { expandToInk } from '../lib/expand';
 import { trimMergedRuby } from '../lib/trimRuby';
+import { inpaintPage } from '../lib/inpaint';
+import { refineMask } from '../lib/mask';
 import { canTranslate, translateAll } from '../lib/translate';
 import { groupByRegion, splitGroupByColumnGap, toOrderedTextLines } from '../lib/readingOrder';
 import { recognizeLine } from '../lib/ocr/recognize';
@@ -120,14 +122,18 @@ function groupVertical(lines: BoxData[], group: { x: number; y: number; width: n
 
 /** Original glyph thickness, not the size of the whole group box. */
 function groupFontSize(lines: BoxData[], group: { x: number; y: number; width: number; height: number }): number {
+    const inside = lines.filter((line) => centreInsideBox(line, group));
+    if (inside.length === 0) return 0;
+    const vertical = inside.filter((line) => line.direction === 'vertical').length >= inside.length / 2;
     const sizes: number[] = [];
-    for (const line of lines) {
-        if (!centreInsideBox(line, group)) continue;
-        const shortSide = Math.min(line.width, line.height);
-        const thickness = line.lineThickness && line.lineThickness > 0 && line.lineThickness <= shortSide * 1.25
-            ? line.lineThickness
-            : shortSide;
-        if (thickness >= 4) sizes.push(thickness);
+    for (const line of inside) {
+        // A vertical column's width and a horizontal row's height are the
+        // glyph em box. lineThickness is a fallback for angled lines.
+        const side = vertical ? line.width : line.height;
+        const thickness = side >= 4
+            ? side
+            : line.lineThickness && line.lineThickness >= 4 ? line.lineThickness : 0;
+        if (thickness > 0) sizes.push(thickness);
     }
     if (sizes.length === 0) return 0;
     sizes.sort((left, right) => left - right);
@@ -432,10 +438,56 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
 
         const previews = cropPreviews(bitmap, collected.slice(0, MAX_PREVIEWS));
 
+        let erasedUrl: string | null = null;
+        if (detected.mask && usable.length > 0) {
+            const inpaintStarted = performance.now();
+            const canvas = document.createElement('canvas');
+            canvas.width = bitmap.width;
+            canvas.height = bitmap.height;
+            const context = canvas.getContext('2d', { willReadFrequently: true });
+            if (context) {
+                context.drawImage(bitmap, 0, 0);
+                const image = context.getImageData(0, 0, canvas.width, canvas.height);
+                let mask = refineMask(usable, detected.mask, canvas.width, canvas.height);
+                let maskPixels = 0;
+                for (const value of mask) if (value === 1) maskPixels += 1;
+                if (maskPixels === 0) {
+                    mask = refineMask(detected.detBoxes, detected.mask, canvas.width, canvas.height);
+                    for (const value of mask) if (value === 1) maskPixels += 1;
+                }
+                const painted = maskPixels > 0
+                    ? await inpaintPage(image, mask).catch(() => null)
+                    : null;
+                if (painted) {
+                    // Keep only the inpainted mask pixels. The rest of the layer
+                    // stays transparent, so the original page remains visible.
+                    const overlay = document.createElement('canvas');
+                    overlay.width = canvas.width;
+                    overlay.height = canvas.height;
+                    const overlayContext = overlay.getContext('2d');
+                    if (overlayContext) {
+                        const cutout = overlayContext.createImageData(canvas.width, canvas.height);
+                        for (let index = 0; index < mask.length; index += 1) {
+                            if (mask[index] !== 1) continue;
+                            const offset = index * 4;
+                            cutout.data[offset] = painted.data[offset];
+                            cutout.data[offset + 1] = painted.data[offset + 1];
+                            cutout.data[offset + 2] = painted.data[offset + 2];
+                            cutout.data[offset + 3] = 255;
+                        }
+                        overlayContext.putImageData(cutout, 0, 0);
+                        erasedUrl = overlay.toDataURL('image/png');
+                    }
+                }
+            }
+            timings.extras += Math.round(performance.now() - inpaintStarted);
+        }
+
         return {
             ok: true,
             boxes: collected,
             previews,
+            erasedUrl,
             imageWidth: bitmap.width,
             imageHeight: bitmap.height,
             groupedLines: grouped.lines.length,

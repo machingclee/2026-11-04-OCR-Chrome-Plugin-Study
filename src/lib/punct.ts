@@ -44,7 +44,12 @@ export function toVertical(text: string): string {
         .replace(/(?:[.．・·]\s*){2,}/g, '⋮')
         .replace(/…+/g, '⋮')
         .replace(/⋯+/g, '⋮');
-    return [...collapsed].map((character) => H2V.get(character) ?? character).join('');
+    return [...collapsed]
+        .map((character) => H2V.get(character) ?? character)
+        .join('')
+        // Keep the ellipsis with the preceding glyph. The label may use several
+        // columns, but a column must not begin with a lone ellipsis.
+        .replace(/(.)([⋮︙])/gu, '$1\u2060$2');
 }
 
 /** A mark that may not start a line, which is where a break is forbidden. */
