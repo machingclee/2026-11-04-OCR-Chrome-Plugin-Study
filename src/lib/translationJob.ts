@@ -5,7 +5,7 @@ import { canTranslate, translateAll } from './translate';
 import { translateWithDeepSeek } from './translateDeepSeek';
 import { translateWithGemini } from './translateGemini';
 import { classifyVisionCandidates, type VisionProvider } from './visionClassify';
-import { toHorizontal, toVertical } from './punct';
+import { safeBreak, toHorizontal, toVertical } from './punct';
 
 export type TranslationSettings = {
     translator: TranslatorChoice;
@@ -203,56 +203,40 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
             : 0;
         const font = glyph > 0 ? Math.max(6, Math.round(glyph)) : (group.fontSize ?? 12);
 
-        const modelColumns = answer?.columns?.filter((value) => value.trim().length > 0) ?? [];
-        const fullText = modelColumns.length > 0 ? modelColumns.join('') : text;
-        const characters = [...fullText];
-        const capacities = sortedLines.map((line) =>
-            Math.max(1, Math.floor((vertical ? line.height : line.width) / Math.max(1, font))));
-        const totalCapacity = Math.max(1, capacities.reduce((sum, value) => sum + value, 0));
+        const sourceColumns = group.lines.map((line) => line.trim()).filter(Boolean);
+        const sourceLengths = sourceColumns.map((line) => [...line].length);
+        const baseline = Math.max(1, ...sourceLengths);
+        const translatedColumns = (answer?.columns ?? [])
+            .map((column) => column.trim())
+            .filter(Boolean);
+        if (translatedColumns.length === 0) translatedColumns.push(text.trim());
+
         const columns: string[] = [];
-        let offset = 0;
-        for (let index = 0; index < sortedLines.length; index += 1) {
-            if (offset >= characters.length) break;
-            const isLast = index === sortedLines.length - 1;
-            const proportional = Math.round(characters.length * capacities[index] / totalCapacity);
-            const take = isLast
-                ? characters.length - offset
-                : Math.max(0, Math.min(capacities[index], proportional, characters.length - offset));
-            columns.push(characters.slice(offset, offset + take).join(''));
-            offset += take;
+        let carry = '';
+        const targetCount = Math.max(sourceLengths.length, translatedColumns.length, 1);
+        for (let index = 0; index < targetCount || carry.length > 0; index += 1) {
+            const current = `${carry}${translatedColumns[index] ?? ''}`.trim();
+            carry = '';
+            if (!current) continue;
+            const own = sourceLengths[index] ?? sourceLengths[sourceLengths.length - 1] ?? baseline;
+            const length = [...current].length;
+            const isLast = index >= targetCount - 1;
+            if (length <= own || length <= baseline || isLast) {
+                columns.push(current);
+                continue;
+            }
+            const chars = [...current];
+            const cut = safeBreak(chars, baseline);
+            columns.push(chars.slice(0, cut).join(''));
+            carry = chars.slice(cut).join('');
         }
 
-        const push = (line: { x: number; y: number; width: number; height: number }, content: string) => {
-            items.push({
-                x: line.x,
-                y: line.y,
-                width: line.width,
-                height: line.height,
-                text: vertical ? toVertical(content) : toHorizontal(content),
-                vertical,
-                groupId: index,
-                background: group.background,
-                color: group.color,
-                maskUrl: group.maskUrl,
-                maskBox: group.maskBox,
-                rectangle: group.rectangle,
-                fontSize: font,
-                patch: balloon && !input.inpainted ? {
-                    x: line.x,
-                    y: line.y,
-                    width: line.width,
-                    height: line.height,
-                } : undefined,
-            });
-        };
-
-        if (sortedLines.length > 1) {
-            sortedLines.forEach((line, columnIndex) => {
-                const part = columns[columnIndex]?.trim();
-                if (part) push(line, part);
+        if (columns.length > 1 && columns.length <= sortedLines.length) {
+            sortedLines.slice(0, columns.length).forEach((line, columnIndex) => {
+                push(line, columns[columnIndex]);
             });
         } else {
-            push(tight, text);
+            push(tight, columns.join(''));
         }
     });
 
