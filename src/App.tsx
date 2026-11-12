@@ -562,7 +562,7 @@ export default function App() {
                     <div className="mt-3 rounded-md border border-[#ded2c4] bg-[#f3eee8] px-3 py-2 text-sm text-[#5f4a38]">
                         Press{' '}
                         <kbd className="rounded border border-[#ded2c4] bg-white px-1.5 py-0.5 font-mono text-xs text-[#6d523b]">{formatShortcut(activeShortcut)}</kbd>{' '}
-to pick an image, then click the check mark. Change the binding in chrome://extensions/shortcuts.
+to select images, then click the translate button. Each selected image receives a numbered tick. Change the binding in chrome://extensions/shortcuts.
                     </div>
                 )}
             </header>

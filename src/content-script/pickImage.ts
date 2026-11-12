@@ -749,9 +749,7 @@ const pickerScope = window as unknown as {
 pickerScope.__comicTranslatorPicker = {
     start: () => {
         if (window.__comicTranslatorPickerActive) return;
-        window.__comicTranslatorPickerActive = true;
-        document.documentElement.setAttribute(PICKING_ATTR, 'true');
-        start();
+        startBatchSelection();
     },
     startSelection: () => {
         if (window.__comicTranslatorPickerActive) return;
