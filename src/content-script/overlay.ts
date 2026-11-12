@@ -235,8 +235,11 @@ function enableDrag(box: HTMLElement): void {
 
         const startX = event.clientX;
         const startY = event.clientY;
+        const grouped = box.hasAttribute('data-comic-translator-group-container');
         const startLeft = Number.parseFloat(box.style.left) || 0;
         const startTop = Number.parseFloat(box.style.top) || 0;
+        const startXOffset = Number.parseFloat(box.dataset.dragX ?? '0') || 0;
+        const startYOffset = Number.parseFloat(box.dataset.dragY ?? '0') || 0;
         const width = Number.parseFloat(box.style.width) || 100;
         const height = Number.parseFloat(box.style.height) || 100;
         box.style.cursor = 'grabbing';
@@ -244,6 +247,14 @@ function enableDrag(box: HTMLElement): void {
         const move = (moveEvent: PointerEvent): void => {
             const rect = layer.getBoundingClientRect();
             if (rect.width === 0 || rect.height === 0) return;
+            if (grouped) {
+                const dx = moveEvent.clientX - startX + startXOffset;
+                const dy = moveEvent.clientY - startY + startYOffset;
+                box.dataset.dragX = String(dx);
+                box.dataset.dragY = String(dy);
+                box.style.transform = `translate(${dx}px, ${dy}px)`;
+                return;
+            }
             const dx = ((moveEvent.clientX - startX) / rect.width) * 100;
             const dy = ((moveEvent.clientY - startY) / rect.height) * 100;
             const left = Math.min(Math.max(0, startLeft + dx), Math.max(0, 100 - width));
@@ -518,31 +529,48 @@ function apply(request: OverlayRequest): OverlayResponse {
     const renderedWidth = host?.getBoundingClientRect().width ?? width;
     const scale = renderedWidth / width;
 
-    if (request.erasedUrl) {
-        const erased = document.createElement('img');
-        erased.src = request.erasedUrl;
-        erased.alt = '';
-        erased.style.position = 'absolute';
-        erased.style.inset = '0';
-        erased.style.width = '100%';
-        erased.style.height = '100%';
-        erased.style.objectFit = 'fill';
-        erased.style.pointerEvents = 'none';
-        erased.style.background = 'transparent';
-        erased.style.mixBlendMode = 'normal';
-        erased.style.zIndex = '1';
-        erased.setAttribute('data-comic-translator-erased', 'true');
-        layer.appendChild(erased);
+    let count = 0;
+    const grouped = new Map<number, typeof request.items>();
+    request.items.forEach((item, index) => {
+        const key = item.groupId ?? -1_000_000 - index;
+        const list = grouped.get(key);
+        if (list) list.push(item);
+        else grouped.set(key, [item]);
+    });
+
+    for (const items of grouped.values()) {
+        const minX = Math.min(...items.map((item) => item.x));
+        const minY = Math.min(...items.map((item) => item.y));
+        const maxX = Math.max(...items.map((item) => item.x + item.width));
+        const maxY = Math.max(...items.map((item) => item.y + item.height));
+        const group = document.createElement('div');
+        group.setAttribute('data-comic-translator-group-container', 'true');
+        group.style.position = 'absolute';
+        group.style.inset = '0';
+        group.style.overflow = 'hidden';
+        group.style.clipPath = `inset(${(minY / height) * 100}% ${((width - maxX) / width) * 100}% ${((height - maxY) / height) * 100}% ${(minX / width) * 100}%)`;
+        group.style.pointerEvents = 'auto';
+        group.style.cursor = 'grab';
+        group.style.touchAction = 'none';
+        group.style.zIndex = '1';
+        if (request.erasedUrl) {
+            group.style.backgroundImage = `url("${request.erasedUrl}")`;
+            group.style.backgroundRepeat = 'no-repeat';
+            group.style.backgroundSize = '100% 100%';
+            group.style.backgroundPosition = 'center';
+        }
+        layer.appendChild(group);
+        for (const item of items) {
+            const patch = makePatch(item, request, width, height, scale);
+            if (patch) group.appendChild(patch);
+            const box = makeBox(item, request, width, height, scale);
+            box.style.pointerEvents = 'none';
+            group.appendChild(box);
+            count += 1;
+        }
+        enableDrag(group);
     }
 
-    let count = 0;
-    for (const item of request.items) {
-        if (!item.text.trim() || item.width <= 0 || item.height <= 0) continue;
-        const patch = makePatch(item, request, width, height, scale);
-        if (patch) layer.appendChild(patch);
-        layer.appendChild(makeBox(item, request, width, height, scale));
-        count += 1;
-    }
     fitBoxes(layer, 1);
     watchTarget(target);
 
