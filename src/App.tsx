@@ -146,7 +146,16 @@ export default function App() {
         // start working when we open this popup again,
         // at this point our newly picked image url is nonempty.
         Promise.all([
-            chrome.storage.local.get([PICKED_IMAGE_URL_KEY, PICKED_IMAGE_TARGET_KEY]),
+            chrome.storage.local.get([
+                PICKED_IMAGE_URL_KEY,
+                PICKED_IMAGE_TARGET_KEY,
+                DEEPSEEK_KEY,
+                GEMINI_KEY,
+                TRANSLATOR_KEY,
+                FONT_KEY,
+                LEADING_KEY,
+                WEIGHT_KEY,
+            ]),
             chrome.storage.session.get(LAST_RESULT_KEY),
         ])
             .then(([local, session]) => {
