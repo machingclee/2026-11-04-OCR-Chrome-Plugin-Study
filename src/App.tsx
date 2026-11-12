@@ -457,7 +457,7 @@ export default function App() {
 
                 <section className="mt-3 rounded-md border border-[#e7dfd4] bg-[#fbf8f4] p-3">
                     <div className="flex items-center justify-between gap-3">
-                        <h2 className="text-sm font-semibold">Translation settings</h2>
+                        <h2 className="text-sm font-semibold">API Key Settings</h2>
                         {dirty ? (
                             <button
                                 type="button"
