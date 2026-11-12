@@ -471,6 +471,8 @@ function start(): void {
 }
 
 
+void start;
+
 type BatchSelection = {
     token: string;
     url: string;
