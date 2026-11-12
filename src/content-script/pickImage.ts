@@ -761,6 +761,9 @@ function startBatchSelection(): void {
         menu.style.border = '1px solid #d6c7b6';
         menu.style.boxShadow = '0 10px 30px rgba(15,23,42,0.25)';
         menu.style.zIndex = '2147483647';
+        menu.style.pointerEvents = 'auto';
+        menu.style.isolation = 'isolate';
+        menu.style.userSelect = 'none';
         menu.style.font = '13px/1.3 system-ui, sans-serif';
         const selected = selection.some((item) => item.element === hit.element || item.url === hit.url);
         const addItem = (label: string, run: () => void) => {
@@ -776,6 +779,7 @@ function startBatchSelection(): void {
             item.style.color = '#3f2f22';
             item.style.textAlign = 'left';
             item.style.cursor = 'pointer';
+            item.style.pointerEvents = 'auto';
             item.addEventListener('click', (event) => {
                 event.preventDefault();
                 event.stopPropagation();
