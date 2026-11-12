@@ -87,7 +87,7 @@ function createLayer(): HTMLElement {
     layer.setAttribute(LAYER_ATTR, 'true');
     layer.style.position = 'absolute';
     layer.style.inset = '0';
-    layer.style.overflow = 'hidden';
+    layer.style.overflow = 'visible';
     layer.style.pointerEvents = 'none';
     layer.style.zIndex = '2';
     return layer;
@@ -335,7 +335,7 @@ function makeBox(
     style.display = 'flex';
     style.alignItems = 'center';
     style.justifyContent = 'center';
-    style.overflow = 'hidden';
+    style.overflow = 'visible';
     style.padding = '1px 2px';
     style.textAlign = 'center';
     if (item.patch) {
@@ -375,15 +375,6 @@ function makeBox(
     style.wordBreak = 'break-word';
     style.pointerEvents = 'none';
     style.zIndex = '2';
-
-    if (item.clip && item.clip.length >= 3 && item.width > 0 && item.height > 0) {
-        const points = item.clip.map((point) => {
-            const x = ((point.x - item.x) / item.width) * 100;
-            const y = ((point.y - item.y) / item.height) * 100;
-            return `${x}% ${y}%`;
-        });
-        style.clipPath = `polygon(${points.join(', ')})`;
-    }
 
     if (item.vertical) {
         // A flex container swaps its axes in vertical writing mode, which can
