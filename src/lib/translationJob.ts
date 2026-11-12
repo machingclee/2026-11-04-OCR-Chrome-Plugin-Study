@@ -213,11 +213,16 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
             ? modelColumns
             : splitColumns(text, detected.length);
 
+        const glyphSizes = detected
+            .map((line) => vertical ? line.width : line.height)
+            .filter((size) => Number.isFinite(size) && size >= 4)
+            .sort((left, right) => left - right);
+        const glyph = glyphSizes.length > 0 ? glyphSizes[glyphSizes.length >> 1] : 0;
+        const font = glyph > 0 ? Math.max(6, Math.round(glyph * 0.9)) : group.fontSize;
+
         detected.forEach((line, columnIndex) => {
             const part = chunks[columnIndex]?.trim();
             if (!part) return;
-            const glyph = vertical ? line.width : line.height;
-            const font = glyph >= 4 ? Math.max(6, Math.round(glyph * 0.9)) : group.fontSize;
             const tight = { x: line.x, y: line.y, width: line.width, height: line.height };
             items.push({
                 x: tight.x,
