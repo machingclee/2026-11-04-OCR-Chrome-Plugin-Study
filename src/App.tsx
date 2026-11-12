@@ -60,6 +60,11 @@ function seconds(ms: number): string {
     return `${(ms / 1000).toFixed(1)} s`;
 }
 
+function ocrScore(value: number | undefined): string {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return 'OCR n/a';
+    return `OCR ${(value * 100).toFixed(1)}%`;
+}
+
 function stageBreakdown(timings?: DetectTimings): string {
     if (!timings) return '';
     return `detect ${seconds(timings.detect)}, OCR ${seconds(timings.ocr)}, bubbles ${seconds(timings.bubble)}`;
@@ -883,6 +888,7 @@ export default function App() {
                                     key={`${box.x}-${box.y}-${box.width}-${box.height}-${angle}`}
                                     className="box"
                                     data-direction={box.direction}
+                                    title={`${box.text || 'no text'} - ${ocrScore(box.confidence)}`}
                                     style={{
                                         left: `${((centreX - width / 2) / size.width) * 100}%`,
                                         top: `${((centreY - height / 2) / size.height) * 100}%`,
@@ -927,6 +933,7 @@ export default function App() {
                             <li key={index}>
                                 {previews[index] ? <img src={previews[index]} alt={`Text region ${index + 1}`} /> : null}
                                 <p>{box.text || 'no text'}</p>
+                                <span className="ocr-score">{ocrScore(box.confidence)}</span>
                             </li>
                         ))}
                     </ol>
