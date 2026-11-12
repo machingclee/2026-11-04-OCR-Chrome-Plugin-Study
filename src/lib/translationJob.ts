@@ -204,8 +204,12 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         const font = glyph > 0 ? Math.max(6, Math.round(glyph)) : group.fontSize;
 
         const modelColumns = answer?.columns?.filter((value) => value.trim().length > 0) ?? [];
-        const useColumns = modelColumns.length > 1
-            && modelColumns.length === sortedLines.length;
+        const columnCapacity = sortedLines.map((line) =>
+            Math.max(1, Math.floor((vertical ? line.height : line.width) / Math.max(1, font))));
+        const columnsFit = modelColumns.length === sortedLines.length
+            && modelColumns.every((column, columnIndex) =>
+                column.trim().length <= columnCapacity[columnIndex]);
+        const useColumns = modelColumns.length > 1 && columnsFit;
 
         const push = (line: { x: number; y: number; width: number; height: number }, content: string) => {
             items.push({
