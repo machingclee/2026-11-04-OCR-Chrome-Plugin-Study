@@ -5,7 +5,7 @@ import { canTranslate, translateAll } from './translate';
 import { translateWithDeepSeek } from './translateDeepSeek';
 import { translateWithGemini } from './translateGemini';
 import { classifyVisionCandidates, type VisionProvider } from './visionClassify';
-import { safeBreak, toHorizontal, toUnits, toVertical } from './punct';
+import { toHorizontal, toVertical } from './punct';
 
 export type TranslationSettings = {
     translator: TranslatorChoice;
@@ -141,24 +141,6 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         );
     }
 
-    function splitColumns(text: string, count: number): string[] {
-        if (count <= 1) return [text];
-        let rest = toUnits(text);
-        const chunks: string[] = [];
-        for (let index = 0; index < count; index += 1) {
-            const remaining = count - index;
-            if (remaining <= 1) {
-                chunks.push(rest.join(''));
-                break;
-            }
-            const target = Math.max(1, Math.ceil(rest.length / remaining));
-            const cut = safeBreak(rest, target);
-            chunks.push(rest.slice(0, cut).join(''));
-            rest = rest.slice(cut);
-        }
-        return chunks;
-    }
-
     const items: OverlayItem[] = [];
     let skipped = visionSkipped;
 
@@ -196,59 +178,48 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
                 ? balloon.height > balloon.width * 1.15 || group.vertical === true
                 : group.vertical ?? group.height > group.width * 1.3;
 
-        const lineBoxes = linesInGroup.sort((left, right) => vertical
-            ? (right.x + right.width / 2) - (left.x + left.width / 2)
-            : (left.y + left.height / 2) - (right.y + right.height / 2));
+        let minX = Number.POSITIVE_INFINITY;
+        let minY = Number.POSITIVE_INFINITY;
+        let maxX = Number.NEGATIVE_INFINITY;
+        let maxY = Number.NEGATIVE_INFINITY;
+        for (const line of linesInGroup) {
+            minX = Math.min(minX, line.x);
+            minY = Math.min(minY, line.y);
+            maxX = Math.max(maxX, line.x + line.width);
+            maxY = Math.max(maxY, line.y + line.height);
+        }
+        const tight = Number.isFinite(minX) && maxX > minX && maxY > minY
+            ? { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+            : { x: group.x, y: group.y, width: group.width, height: group.height };
 
-        const detected = lineBoxes.length > 0 ? lineBoxes : [{
-            x: group.x,
-            y: group.y,
-            width: group.width,
-            height: group.height,
-            direction: vertical ? 'vertical' as const : 'horizontal' as const,
-            score: 1,
-            ruby: [],
-            text,
-            confidence: 1,
-        }];
-        const modelColumns = answer?.columns?.filter((value) => value.trim().length > 0) ?? [];
-        const chunks = modelColumns.length === detected.length
-            ? modelColumns
-            : splitColumns(text, detected.length);
-
-        const glyphSizes = detected
+        const glyphSizes = linesInGroup
             .map((line) => vertical ? line.width : line.height)
-            .filter((size) => Number.isFinite(size) && size >= 4);
+            .filter((value) => Number.isFinite(value) && value >= 4);
         const glyph = glyphSizes.length > 0
-            ? glyphSizes.reduce((sum, size) => sum + size, 0) / glyphSizes.length
+            ? glyphSizes.reduce((sum, value) => sum + value, 0) / glyphSizes.length
             : 0;
         const font = glyph > 0 ? Math.max(6, Math.round(glyph)) : group.fontSize;
 
-        detected.forEach((line, columnIndex) => {
-            const part = chunks[columnIndex]?.trim();
-            if (!part) return;
-            const tight = { x: line.x, y: line.y, width: line.width, height: line.height };
-            items.push({
+        items.push({
+            x: tight.x,
+            y: tight.y,
+            width: tight.width,
+            height: tight.height,
+            text: vertical ? toVertical(text) : toHorizontal(text),
+            vertical,
+            groupId: index,
+            background: group.background,
+            color: group.color,
+            maskUrl: group.maskUrl,
+            maskBox: group.maskBox,
+            rectangle: group.rectangle,
+            fontSize: font,
+            patch: balloon && !input.inpainted ? {
                 x: tight.x,
                 y: tight.y,
                 width: tight.width,
                 height: tight.height,
-                text: vertical ? toVertical(part) : toHorizontal(part),
-                vertical,
-                groupId: index,
-                background: group.background,
-                color: group.color,
-                maskUrl: group.maskUrl,
-                maskBox: group.maskBox,
-                rectangle: group.rectangle,
-                fontSize: font,
-                patch: balloon && !input.inpainted ? {
-                    x: tight.x,
-                    y: tight.y,
-                    width: tight.width,
-                    height: tight.height,
-                } : undefined,
-            });
+            } : undefined,
         });
     });
 
