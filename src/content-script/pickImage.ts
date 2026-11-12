@@ -211,7 +211,11 @@ if (!guardScope.__comicTranslatorMousedownGuard) {
             return;
         }
         const target = event.target as Element | null;
-        if (target?.closest('#comic-translator-pick-confirm, #comic-translator-batch-bar, #comic-translator-pick-menu, [data-comic-translator-mark]')) return;
+        if (target?.closest('#comic-translator-pick-menu')) {
+            event.stopImmediatePropagation();
+            return;
+        }
+        if (target?.closest('#comic-translator-pick-confirm, #comic-translator-batch-bar, [data-comic-translator-mark]')) return;
         event.preventDefault();
         event.stopImmediatePropagation();
     }, true);
