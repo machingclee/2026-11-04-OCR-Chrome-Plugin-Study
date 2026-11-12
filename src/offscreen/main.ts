@@ -455,15 +455,25 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
                     ? await inpaintPage(image, mask).catch(() => null)
                     : null;
                 if (painted) {
-                    for (let index = 0; index < mask.length; index += 1) {
-                        if (mask[index] !== 1) continue;
-                        const offset = index * 4;
-                        image.data[offset] = painted.data[offset];
-                        image.data[offset + 1] = painted.data[offset + 1];
-                        image.data[offset + 2] = painted.data[offset + 2];
+                    // Keep only the inpainted mask pixels. The rest of the layer
+                    // stays transparent, so the original page remains visible.
+                    const overlay = document.createElement('canvas');
+                    overlay.width = canvas.width;
+                    overlay.height = canvas.height;
+                    const overlayContext = overlay.getContext('2d');
+                    if (overlayContext) {
+                        const cutout = overlayContext.createImageData(canvas.width, canvas.height);
+                        for (let index = 0; index < mask.length; index += 1) {
+                            if (mask[index] !== 1) continue;
+                            const offset = index * 4;
+                            cutout.data[offset] = painted.data[offset];
+                            cutout.data[offset + 1] = painted.data[offset + 1];
+                            cutout.data[offset + 2] = painted.data[offset + 2];
+                            cutout.data[offset + 3] = 255;
+                        }
+                        overlayContext.putImageData(cutout, 0, 0);
+                        erasedUrl = overlay.toDataURL('image/png');
                     }
-                    context.putImageData(image, 0, 0);
-                    erasedUrl = canvas.toDataURL('image/webp', 0.9);
                 }
             }
             timings.extras += Math.round(performance.now() - inpaintStarted);
