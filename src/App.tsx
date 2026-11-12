@@ -102,8 +102,7 @@ export default function App() {
     const [translator, setTranslator] = useState<TranslatorChoice>('gemini');
     const [dirty, setDirty] = useState(false);
     const [view, setView] = useState<'production' | 'debug'>('production');
-    const [shortcut, setShortcut] = useState('Alt+T');
-    const [recording, setRecording] = useState(false);
+    const [activeShortcut, setActiveShortcut] = useState('Alt+T');
 
     useEffect(() => {
         document.body.style.width = view === 'debug' ? '720px' : '480px';
@@ -425,36 +424,9 @@ export default function App() {
     useEffect(() => {
         void chrome.commands.getAll().then((commands) => {
             const command = commands.find((entry) => entry.name === 'pick-image');
-            if (command?.shortcut) setShortcut(command.shortcut);
+            if (command?.shortcut) setActiveShortcut(command.shortcut);
         }).catch(() => undefined);
     }, []);
-
-    useEffect(() => {
-        if (!recording) return;
-        const capture = (event: KeyboardEvent): void => {
-            event.preventDefault();
-            event.stopPropagation();
-            const key = event.key;
-            if (['Alt', 'Control', 'Meta', 'Shift'].includes(key)) return;
-            const parts: string[] = [];
-            if (event.altKey) parts.push('Alt');
-            if (event.ctrlKey) parts.push('Ctrl');
-            if (event.metaKey) parts.push('Command');
-            if (event.shiftKey) parts.push('Shift');
-            if (parts.length === 0) return;
-            const combo = [...parts, key.length === 1 ? key.toUpperCase() : key].join('+');
-            setRecording(false);
-            setShortcut(combo);
-            const commandsApi = chrome.commands as unknown as {
-                update: (change: { name: string; shortcut: string }) => Promise<void>;
-            };
-            void commandsApi.update({ name: 'pick-image', shortcut: combo })
-                .then(() => setStatus(`Shortcut set to ${combo}.`))
-                .catch((cause: unknown) => setError(`Could not set shortcut: ${cause instanceof Error ? cause.message : String(cause)}`));
-        };
-        window.addEventListener('keydown', capture, true);
-        return () => window.removeEventListener('keydown', capture, true);
-    }, [recording]);
 
     return (
         <main className={`mx-auto flex flex-col gap-3 rounded-md bg-[#f4f1ec] p-3 text-slate-900 transition-[width] duration-200 ease-out ${view === 'debug' ? 'w-[720px]' : 'w-[480px]'}`}>
@@ -533,15 +505,8 @@ export default function App() {
                 ) : (
                     <div className="mt-3 rounded-md border border-[#ded2c4] bg-[#f3eee8] px-3 py-2 text-sm text-[#5f4a38]">
                         Press{' '}
-                        <button
-                            type="button"
-                            onClick={() => setRecording(true)}
-                            className="rounded border border-[#ded2c4] bg-white px-1.5 py-0.5 font-mono text-xs text-[#6d523b] transition hover:bg-[#f8f3ec]"
-                            title="Click to record a new shortcut"
-                        >
-                            {recording ? 'Press keys...' : formatShortcut(shortcut)}
-                        </button>{' '}
-                        to pick an image, then click the check mark. Option+T on macOS is the same as Alt+T on Windows.
+                        <kbd className="rounded border border-[#ded2c4] bg-white px-1.5 py-0.5 font-mono text-xs text-[#6d523b]">{formatShortcut(activeShortcut)}</kbd>{' '}
+to pick an image, then click the check mark. Change the binding in chrome://extensions/shortcuts.
                     </div>
                 )}
             </header>
@@ -578,20 +543,6 @@ export default function App() {
                             <option value="deepseek">DeepSeek</option>
                             <option value="builtin">This browser</option>
                         </select>
-                    </label>
-
-                    <label className="col-span-2 flex flex-col gap-1 text-xs font-medium text-slate-600">
-                        Pick shortcut
-                        <button
-                            type="button"
-                            onClick={() => setRecording(true)}
-                            className={`rounded border px-3 py-2 text-left text-sm transition ${recording ? 'border-[#b08a68] bg-[#f3eee8] text-[#6d523b]' : 'border-slate-300 bg-white text-slate-900 hover:bg-orange-50'}`}
-                        >
-                            {recording ? 'Press a shortcut...' : shortcut || 'Not set'}
-                        </button>
-                        <span className="text-[11px] font-normal leading-4 text-slate-500">
-                            Click, then press the new key combination. On macOS, Option+T is recorded as Alt+T.
-                        </span>
                     </label>
 
                     <label className={`col-span-2 flex flex-col gap-1 text-xs font-medium text-slate-600 ${translator === 'gemini' ? '' : 'hidden'}`}>
