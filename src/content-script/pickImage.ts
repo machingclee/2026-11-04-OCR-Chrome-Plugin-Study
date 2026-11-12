@@ -198,11 +198,12 @@ const PAGE_EVENTS = ['mousedown', 'auxclick', 'contextmenu', 'dragstart'] as con
 
 // Installed at document_start by the manifest before the page registers its
 // own mousedown handlers. Rawkuma opens an ad from a window capture handler.
+const PICKING_ATTR = 'data-comic-translator-picking';
 const guardScope = window as unknown as { __comicTranslatorMousedownGuard?: boolean };
 if (!guardScope.__comicTranslatorMousedownGuard) {
     guardScope.__comicTranslatorMousedownGuard = true;
     window.addEventListener('mousedown', (event) => {
-        if (!window.__comicTranslatorPickerActive) return;
+        if (!document.documentElement.hasAttribute(PICKING_ATTR)) return;
         event.preventDefault();
         event.stopImmediatePropagation();
     }, true);
@@ -269,6 +270,7 @@ function start(): void {
         shield.remove();
         box.remove();
         window.__comicTranslatorPickerActive = false;
+        document.documentElement.removeAttribute(PICKING_ATTR);
     };
 
     function onMove(event: MouseEvent): void {
@@ -457,6 +459,7 @@ type BatchSelection = {
 function startBatchSelection(): void {
     if (window.__comicTranslatorPickerActive) return;
     window.__comicTranslatorPickerActive = true;
+    document.documentElement.setAttribute(PICKING_ATTR, 'true');
 
     const selection: BatchSelection[] = [];
     let stopped = false;
@@ -628,6 +631,7 @@ function startBatchSelection(): void {
         bar = null;
         marks = null;
         window.__comicTranslatorPickerActive = false;
+        document.documentElement.removeAttribute(PICKING_ATTR);
         if (!keepTokens) {
             for (const item of selection) item.element.removeAttribute(OVERLAY_TARGET_ATTRIBUTE);
             selection.length = 0;
@@ -724,6 +728,7 @@ pickerScope.__comicTranslatorPicker = {
     start: () => {
         if (window.__comicTranslatorPickerActive) return;
         window.__comicTranslatorPickerActive = true;
+        document.documentElement.setAttribute(PICKING_ATTR, 'true');
         start();
     },
     startSelection: () => {
