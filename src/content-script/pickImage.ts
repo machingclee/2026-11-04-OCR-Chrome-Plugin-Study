@@ -204,13 +204,15 @@ if (!guardScope.__comicTranslatorMousedownGuard) {
     guardScope.__comicTranslatorMousedownGuard = true;
     window.addEventListener('mousedown', (event) => {
         if (!document.documentElement.hasAttribute(PICKING_ATTR)) return;
+        const target = event.target as Element | null;
+        if (target?.closest('#comic-translator-pick-confirm, #comic-translator-batch-bar, [data-comic-translator-mark]')) return;
         event.preventDefault();
         event.stopImmediatePropagation();
     }, true);
 }
 
 function swallowPageEvent(event: Event): void {
-    if ((event.target as Element | null)?.closest('#comic-translator-pick-confirm')) return;
+    if ((event.target as Element | null)?.closest('#comic-translator-pick-confirm, #comic-translator-batch-bar, [data-comic-translator-mark]')) return;
     event.preventDefault();
     event.stopPropagation();
 }
