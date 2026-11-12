@@ -204,12 +204,13 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         const font = glyph > 0 ? Math.max(6, Math.round(glyph)) : (group.fontSize ?? 12);
 
         const modelColumns = answer?.columns?.filter((value) => value.trim().length > 0) ?? [];
-        const columnCapacity = sortedLines.map((line) =>
-            Math.max(1, Math.floor((vertical ? line.height : line.width) / Math.max(1, font))));
-        const columnsFit = modelColumns.length === sortedLines.length
-            && modelColumns.every((column, columnIndex) =>
-                column.trim().length <= columnCapacity[columnIndex]);
-        const useColumns = modelColumns.length > 1 && columnsFit;
+        const fullText = modelColumns.length > 0 ? modelColumns.join('') : text;
+        const characters = [...fullText];
+        const perColumn = Math.max(1, Math.ceil(characters.length / Math.max(1, sortedLines.length)));
+        const evenColumns: string[] = [];
+        for (let index = 0; index < sortedLines.length; index += 1) {
+            evenColumns.push(characters.slice(index * perColumn, (index + 1) * perColumn).join(''));
+        }
 
         const push = (line: { x: number; y: number; width: number; height: number }, content: string) => {
             items.push({
@@ -235,9 +236,10 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
             });
         };
 
-        if (useColumns) {
+        if (sortedLines.length > 1) {
             sortedLines.forEach((line, columnIndex) => {
-                push(line, modelColumns[columnIndex].trim());
+                const part = evenColumns[columnIndex]?.trim();
+                if (part) push(line, part);
             });
         } else {
             push(tight, text);
