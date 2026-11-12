@@ -5,7 +5,7 @@ import { expandToInk } from '../lib/expand';
 import { trimMergedRuby } from '../lib/trimRuby';
 import { groupByRegion, splitGroupByColumnGap, toOrderedTextLines } from '../lib/readingOrder';
 import { recognizeLine } from '../lib/ocr/recognize';
-import { DETECTOR_INPUT_SIZE, OFFSCREEN_TARGET } from '../shared/constants';
+import { DETECTOR_INPUT_SIZE, OCR_MIN_CONFIDENCE, OFFSCREEN_TARGET } from '../shared/constants';
 import type {
     BoxData,
     DetectResponse,
@@ -340,7 +340,10 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             .filter((size) => size >= 4)
             .sort((left, right) => left - right);
         const medianThickness = thicknesses.length > 0 ? thicknesses[thicknesses.length >> 1] : 0;
-        const usable = collected.filter((line) => !skipAsNonDialogue(line, balloonList, medianThickness));
+        const usable = collected.filter((line) =>
+            line.confidence >= OCR_MIN_CONFIDENCE
+            && !skipAsNonDialogue(line, balloonList, medianThickness),
+        );
 
         const groups: GroupData[] = [];
         const perGroup: string[][] = grouped.boxes.map(() => []);

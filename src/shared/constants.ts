@@ -29,7 +29,6 @@ export const LAST_RESULT_KEY = 'lastDetection';
 /** Bump only when the stored detection shape changes, not on every build. */
 export const DETECTION_CACHE_VERSION = 'detection-v3';
 
-
 /** When true, a line outside every block is still kept. */
 /** Stored in the browser only, and sent to DeepSeek by the extension itself. */
 export const DEEPSEEK_KEY = 'deepseekKey';
@@ -68,7 +67,8 @@ export const OCR_DICT_PATH = 'models/ppocr_v6_dict.txt';
 export const OCR_INPUT_HEIGHT = 48;
 export const OCR_INPUT_WIDTH = 320;
 export const OCR_NORMALIZE: 'zero_one' | 'minus_one' = 'minus_one';
-export const OCR_MIN_CONFIDENCE = 0.4;
+/** OCR lines below this confidence are inspection-only, never translated. */
+export const OCR_MIN_CONFIDENCE = 0.7;
 
 /** DBNet widens a shrunken region by area * ratio / perimeter before merging. */
 export const DETECTOR_UNCLIP_RATIO = 1.5;

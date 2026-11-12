@@ -3,6 +3,7 @@ import {
     CONTENT_SCRIPT_FILE,
     DEEPSEEK_KEY,
     DETECTION_CACHE_VERSION,
+    OCR_MIN_CONFIDENCE,
     GEMINI_KEY,
     FONT_KEY,
     LEADING_KEY,
@@ -172,6 +173,7 @@ export default function App() {
                 PICKED_IMAGE_TARGET_KEY,
                 DEEPSEEK_KEY,
                 DETECTION_CACHE_VERSION,
+    OCR_MIN_CONFIDENCE,
                 GEMINI_KEY,
                 TRANSLATOR_KEY,
                 FONT_KEY,
@@ -356,9 +358,12 @@ export default function App() {
             const vertical = response.boxes.filter((box) => box.direction === 'vertical').length;
             const ruby = response.boxes.reduce((sum, box) => sum + box.ruby.length, 0);
             const read = response.boxes.filter((box) => box.text.length > 0).length;
+            const lowConfidence = response.boxes.filter((box) =>
+                box.text.length > 0 && box.confidence < OCR_MIN_CONFIDENCE,
+            ).length;
             setDetection({ ms: response.ms, timings: response.timings, reused: false, warm: response.warm });
             setStatus(
-                `${response.boxes.length} lines (${vertical} vertical, ${ruby} ruby), ${read} read, ${response.bubbles?.length ?? 0} balloons, ${response.groupedLines} grouped, image ${response.imageWidth}x${response.imageHeight}, ${seconds(response.ms)} (${response.warm ? 'reused session' : 'cold session'}${stageSummary(response.timings)}).`,
+                `${response.boxes.length} lines (${vertical} vertical, ${ruby} ruby), ${read} read (${lowConfidence} below OCR floor), ${response.bubbles?.length ?? 0} balloons, ${response.groupedLines} grouped, image ${response.imageWidth}x${response.imageHeight}, ${seconds(response.ms)} (${response.warm ? 'reused session' : 'cold session'}${stageSummary(response.timings)}).`,
             );
             return response;
         } catch (cause) {
