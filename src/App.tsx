@@ -503,28 +503,20 @@ export default function App() {
                 const vertical = group.vertical ?? group.height > group.width * 1.3;
                 let layout = tight;
                 if (balloon) {
-                    // Vertical text gets the balloon width for centring, but its
-                    // top and bottom stay inside the detected line box and the
-                    // bubble. Horizontal text mirrors the rule on the x axis.
-                    if (vertical) {
-                        const top = Math.max(tight.y, balloon.y);
-                        const bottom = Math.min(tight.y + tight.height, balloon.y + balloon.height);
+                    // Keep the translated text inside the detected line area. The
+                    // balloon is only an outer limit and a clip, never a reason to
+                    // spread the text across the whole balloon.
+                    const left = Math.max(tight.x, balloon.x);
+                    const right = Math.min(tight.x + tight.width, balloon.x + balloon.width);
+                    const top = Math.max(tight.y, balloon.y);
+                    const bottom = Math.min(tight.y + tight.height, balloon.y + balloon.height);
+                    if (right > left && bottom > top) {
                         layout = {
                             ...tight,
-                            x: balloon.x,
-                            width: balloon.width,
-                            y: top,
-                            height: Math.max(1, bottom - top),
-                        };
-                    } else {
-                        const left = Math.max(tight.x, balloon.x);
-                        const right = Math.min(tight.x + tight.width, balloon.x + balloon.width);
-                        layout = {
-                            ...tight,
-                            y: balloon.y,
-                            height: balloon.height,
                             x: left,
-                            width: Math.max(1, right - left),
+                            y: top,
+                            width: right - left,
+                            height: bottom - top,
                         };
                     }
                 }
