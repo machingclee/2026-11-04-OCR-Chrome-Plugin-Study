@@ -1,5 +1,5 @@
 import { OFFSCREEN_TARGET } from '../constants';
-import type { OffscreenDetectRequest, OffscreenPing } from '../types';
+import type { OffscreenBuiltinTranslateRequest, OffscreenDetectRequest, OffscreenPing } from '../types';
 
 /** Messages addressed to the offscreen document. */
 function ofDetection(imageUrl: string): OffscreenDetectRequest {
@@ -11,6 +11,10 @@ function ofPing(): OffscreenPing {
     return { target: OFFSCREEN_TARGET, type: 'ping' };
 }
 
-const offscreenRequestFactory = { ofDetection, ofPing };
+function ofBuiltinTranslate(lines: string[]): OffscreenBuiltinTranslateRequest {
+    return { target: OFFSCREEN_TARGET, type: 'translate-builtin', lines };
+}
+
+const offscreenRequestFactory = { ofDetection, ofPing, ofBuiltinTranslate };
 
 export default offscreenRequestFactory;

@@ -345,6 +345,14 @@ async function runTranslation(request: TranslateRequest, sender: chrome.runtime.
             imageWidth: detection.imageWidth,
             imageHeight: detection.imageHeight,
             settings,
+            translateBuiltin: async (lines) => {
+                const response = (await chrome.runtime.sendMessage(
+                    offscreenRequestFactory.ofBuiltinTranslate(lines),
+                )) as { ok: true; texts: string[] } | { ok: false; error: string } | undefined;
+                if (!response) throw new Error('The offscreen document sent no answer.');
+                if (!response.ok) throw new Error(response.error);
+                return response.texts;
+            },
         });
 
         if (job.active !== settings.translator) {

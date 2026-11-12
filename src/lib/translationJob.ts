@@ -20,6 +20,7 @@ export type TranslationJobInput = {
     imageWidth: number;
     imageHeight: number;
     settings: TranslationSettings;
+    translateBuiltin?: (lines: string[]) => Promise<string[]>;
 };
 
 export type TranslationJobResult = {
@@ -141,12 +142,15 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
     let out: RegionAnswer[] | null = null;
 
     if (active === 'builtin') {
-        if (!canTranslate()) {
-            throw new Error('The background job needs Gemini or DeepSeek. The browser translator is only available inside the popup.');
+        const plain = current.map((group) => group.lines.join(''));
+        if (input.translateBuiltin) {
+            out = (await input.translateBuiltin(plain)).map((text) => ({ text }));
+        } else if (canTranslate()) {
+            out = (await translateAll(plain, 'ja', 'zh-Hant')).map((text) => ({ text }));
+        } else {
+            throw new Error('This Chrome build does not expose the browser translator.');
         }
         used = 'browser';
-        const plain = current.map((group) => group.lines.join(''));
-        out = (await translateAll(plain, 'ja', 'zh-Hant')).map((text) => ({ text }));
     } else if (key.length > 0) {
         out = active === 'gemini'
             ? await translateWithGemini(regions, key)

@@ -4,7 +4,7 @@ export type MessageTarget =
     | typeof SERVICE_WORKER_TARGET
     | typeof OFFSCREEN_TARGET;
 
-export type MessageType = 'detect' | 'translate' | 'translate-batch' | 'batch-progress' | 'cancel-batch' | 'ping';
+export type MessageType = 'detect' | 'translate' | 'translate-batch' | 'batch-progress' | 'cancel-batch' | 'translate-builtin' | 'ping';
 
 export type RubyBox = {
     x: number;
@@ -124,6 +124,16 @@ export type OffscreenDetectRequest = {
     imageUrl: string;
 };
 
+export type OffscreenBuiltinTranslateRequest = {
+    target: typeof OFFSCREEN_TARGET;
+    type: 'translate-builtin';
+    lines: string[];
+};
+
+export type OffscreenBuiltinTranslateResponse =
+    | { ok: true; texts: string[] }
+    | { ok: false; error: string };
+
 /** Offscreen document to service worker. */
 export type OffscreenPing = {
     target: typeof OFFSCREEN_TARGET;
@@ -144,6 +154,7 @@ export type IncomingMessage =
     | TranslateBatchRequest
     | CancelBatchRequest
     | OffscreenDetectRequest
+    | OffscreenBuiltinTranslateRequest
     | OffscreenPing;
 
 /** Wall-clock cost of each stage, in milliseconds. */

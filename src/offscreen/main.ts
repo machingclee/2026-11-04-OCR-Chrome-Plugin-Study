@@ -3,6 +3,7 @@ import { detectBubbles } from '../lib/bubble';
 import { cropPreviews } from '../lib/regions';
 import { expandToInk } from '../lib/expand';
 import { trimMergedRuby } from '../lib/trimRuby';
+import { canTranslate, translateAll } from '../lib/translate';
 import { groupByRegion, splitGroupByColumnGap, toOrderedTextLines } from '../lib/readingOrder';
 import { recognizeLine } from '../lib/ocr/recognize';
 import { DETECTOR_INPUT_SIZE, OCR_MIN_CONFIDENCE, OFFSCREEN_TARGET } from '../shared/constants';
@@ -456,6 +457,17 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
     }
 }
 
+async function runBuiltinTranslate(lines: string[]): Promise<{ ok: true; texts: string[] } | { ok: false; error: string }> {
+    if (!canTranslate()) {
+        return { ok: false, error: 'This Chrome build does not expose the browser translator.' };
+    }
+    try {
+        return { ok: true, texts: await translateAll(lines, 'ja', 'zh-Hant') };
+    } catch (cause) {
+        return { ok: false, error: cause instanceof Error ? cause.message : String(cause) };
+    }
+}
+
 // this is off the offscreen document
 chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
     const request = message as IncomingMessage | undefined;
@@ -464,6 +476,11 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
     if (request.type === 'ping') {
         sendResponse(serviceWorkerResponseFactory.ofPing());
         return false;
+    }
+
+    if (request.type === 'translate-builtin') {
+        runBuiltinTranslate(request.lines).then(sendResponse);
+        return true;
     }
 
     void runDetection(request).then(sendResponse);
