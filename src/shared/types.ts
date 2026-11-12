@@ -66,6 +66,8 @@ export type GroupData = {
     rectangle?: boolean;
     /** Original glyph thickness in image pixels, used for the label font size. */
     fontSize?: number;
+    /** True when the source lines are mostly vertical. */
+    vertical?: boolean;
 };
 
 /** One absolutely positioned translation, in the image's own pixels. */

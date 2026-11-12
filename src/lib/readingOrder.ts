@@ -354,10 +354,10 @@ export function toOrderedTextLines(
 }
 
 /**
- * A balloon detector can merge two touching balloons into one region. The
- * columns inside one balloon sit almost edge to edge, while two balloons leave
- * a gap. Split a vertical group wherever that gap is clearly wider than the
- * stroke thickness, so each balloon is translated and placed on its own.
+ * A balloon detector can merge two touching balloons into one region. Lines in
+ * one balloon overlap along their reading axis; two balloons leave a gap across
+ * it. Split by connected components in both axes, so a diagonal pair does not
+ * become one group just because the horizontal ranges overlap.
  */
 export function splitGroupByColumnGap<T extends {
     x: number;
@@ -368,6 +368,7 @@ export function splitGroupByColumnGap<T extends {
 }>(
     group: { x: number; y: number; width: number; height: number },
     lines: T[],
+    blocks: { x: number; y: number; width: number; height: number }[] = [],
 ): T[][] {
     const inside = lines.filter((line) => {
         const centreX = line.x + line.width / 2;
@@ -379,29 +380,81 @@ export function splitGroupByColumnGap<T extends {
 
     const vertical = inside.filter((line) =>
         (line.direction ?? (line.height >= line.width ? 'vertical' : 'horizontal')) === 'vertical',
-    ).length;
-    if (vertical < inside.length / 2) return [inside];
+    ).length >= inside.length / 2;
 
-    // Japanese vertical text reads right to left, so a right-to-left sort makes
-    // both the gaps and the resulting cluster order meaningful.
-    const ordered = [...inside].sort(
-        (a, b) => (b.x + b.width / 2) - (a.x + a.width / 2),
-    );
+    const parent = inside.map((_, index) => index);
+    const find = (index: number): number => {
+        let root = index;
+        while (parent[root] !== root) root = parent[root];
+        while (parent[index] !== index) {
+            const next = parent[index];
+            parent[index] = root;
+            index = next;
+        }
+        return root;
+    };
+    const union = (left: number, right: number): void => {
+        const a = find(left);
+        const b = find(right);
+        if (a !== b) parent[b] = a;
+    };
 
-    const clusters: T[][] = [];
-    let current: T[] = [ordered[0]];
-    for (let index = 1; index < ordered.length; index += 1) {
-        const previous = current[current.length - 1];
-        const next = ordered[index];
-        const gap = previous.x - (next.x + next.width);
-        const thickness = Math.min(previous.width, next.width);
-        if (gap > Math.max(thickness * 1.6, 12)) {
-            clusters.push(current);
-            current = [next];
-        } else {
-            current.push(next);
+    for (let left = 0; left < inside.length; left += 1) {
+        for (let right = left + 1; right < inside.length; right += 1) {
+            const a = inside[left];
+            const b = inside[right];
+            const gapX = Math.max(0, a.x - (b.x + b.width), b.x - (a.x + a.width));
+            const gapY = Math.max(0, a.y - (b.y + b.height), b.y - (a.y + a.height));
+            const thickness = vertical
+                ? Math.min(a.width, b.width)
+                : Math.min(a.height, b.height);
+            const cross = vertical ? gapX : gapY;
+            const along = vertical ? gapY : gapX;
+            const crossLimit = Math.max(thickness * 0.6, 6);
+            const alongLimit = Math.max(thickness * 3, 24);
+            if (cross <= crossLimit && along <= alongLimit) union(left, right);
         }
     }
-    clusters.push(current);
-    return clusters;
+
+    const groups = new Map<number, T[]>();
+    inside.forEach((line, index) => {
+        const root = find(index);
+        const bucket = groups.get(root);
+        if (bucket) bucket.push(line);
+        else groups.set(root, [line]);
+    });
+
+    const clusters = [...groups.values()].map((cluster) => {
+        cluster.sort((a, b) => {
+            if (vertical) return (b.x + b.width / 2) - (a.x + a.width / 2);
+            return a.y - b.y;
+        });
+        return cluster;
+    });
+
+    if (blocks.length === 0) return clusters;
+
+    return clusters.flatMap((cluster) => {
+        const buckets = new Map<number, T[]>();
+        for (const line of cluster) {
+            let best = -1;
+            let bestArea = Number.POSITIVE_INFINITY;
+            blocks.forEach((block, index) => {
+                const centreX = line.x + line.width / 2;
+                const centreY = line.y + line.height / 2;
+                if (centreX < block.x || centreX > block.x + block.width) return;
+                if (centreY < block.y || centreY > block.y + block.height) return;
+                const area = block.width * block.height;
+                if (area < bestArea) {
+                    best = index;
+                    bestArea = area;
+                }
+            });
+            if (best < 0) return [cluster];
+            const bucket = buckets.get(best);
+            if (bucket) bucket.push(line);
+            else buckets.set(best, [line]);
+        }
+        return buckets.size > 1 ? [...buckets.values()] : [cluster];
+    });
 }

@@ -289,8 +289,14 @@ function makeBox(
     style.zIndex = '2';
 
     if (item.vertical) {
+        // A flex container swaps its axes in vertical writing mode, which can
+        // leave a short column at the left edge. A grid centres the text on both
+        // axes, so a lone vertical ellipsis sits in the middle of its balloon.
         style.writingMode = 'vertical-rl';
         style.textOrientation = 'mixed';
+        style.display = 'grid';
+        style.placeItems = 'center';
+        style.textAlign = 'center';
     }
 
     const boxWidth = Math.max(1, item.width * scale);

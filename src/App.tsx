@@ -50,6 +50,7 @@ type GroupStroke = {
     maskBox?: { x: number; y: number; width: number; height: number };
     rectangle?: boolean;
     fontSize?: number;
+    vertical?: boolean;
 };
 function seconds(ms: number): string {
     return `${(ms / 1000).toFixed(1)} s`;
@@ -422,7 +423,7 @@ export default function App() {
 
             const regions = current.map((group, index) => ({
                 id: `r${index + 1}`,
-                direction: (group.height > group.width * 1.3 ? 'v' : 'h') as 'v' | 'h',
+                direction: (group.vertical ?? (group.height > group.width * 1.3) ? 'v' : 'h') as 'v' | 'h',
                 lines: group.lines,
             }));
             // If the selected provider has no key but the other one does, use the
@@ -486,7 +487,7 @@ export default function App() {
                     width: layout.width,
                     height: layout.height,
                     text,
-                    vertical: layout.height > layout.width * 1.3,
+                    vertical: group.vertical ?? layout.height > layout.width * 1.3,
                     background: group.background,
                     color: group.color,
                     maskUrl: group.maskUrl,

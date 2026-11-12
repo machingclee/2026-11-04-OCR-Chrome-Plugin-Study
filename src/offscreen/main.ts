@@ -84,6 +84,13 @@ function inkAt(mask: TextMask, pageX: number, pageY: number): number {
     return mask.data[y * DETECTOR_INPUT_SIZE + x];
 }
 
+/** Source direction is more reliable than the shape of a merged group box. */
+function groupVertical(lines: BoxData[], group: { x: number; y: number; width: number; height: number }): boolean {
+    const inside = lines.filter((line) => centreInsideBox(line, group));
+    if (inside.length === 0) return false;
+    return inside.filter((line) => line.direction === 'vertical').length >= inside.length / 2;
+}
+
 /** Original glyph thickness, not the size of the whole group box. */
 function groupFontSize(lines: BoxData[], group: { x: number; y: number; width: number; height: number }): number {
     const sizes: number[] = [];
@@ -295,7 +302,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         }
         grouped.boxes.forEach((box, index) => {
             const text = perGroup[index].filter((value) => value.length > 0);
-            if (text.length > 0) groups.push({ ...box, lines: text, fontSize: groupFontSize(usable, box) });
+            if (text.length > 0) groups.push({ ...box, lines: text, fontSize: groupFontSize(usable, box), vertical: groupVertical(usable, box) });
         });
         for (const line of usable) {
             if (groups.some((group) => centreInsideBox(line, group))) continue;
@@ -307,6 +314,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
                 height: line.height,
                 lines: [line.text],
                 fontSize: groupFontSize(usable, line),
+                vertical: line.direction === 'vertical',
             });
         }
 
@@ -315,7 +323,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         // paragraph that can only be placed in one of them.
         const splitGroups: GroupData[] = [];
         for (const group of groups) {
-            const clusters = splitGroupByColumnGap(group, usable);
+            const clusters = splitGroupByColumnGap(group, usable, detected.blkBoxes);
             if (clusters.length <= 1) {
                 splitGroups.push(group);
                 continue;
@@ -338,6 +346,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
                     ...clusterBox,
                     lines: text,
                     fontSize: groupFontSize(usable, clusterBox),
+                    vertical: groupVertical(usable, clusterBox),
                 });
             }
         }
