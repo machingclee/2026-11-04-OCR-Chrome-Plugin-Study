@@ -755,7 +755,9 @@ function startBatchSelection(): void {
         const menu = document.createElement('div');
         pickMenu = menu;
         menu.id = PICK_MENU_ID;
+        menu.setAttribute('popover', 'manual');
         menu.style.position = 'fixed';
+        menu.style.margin = '0';
         menu.style.left = `${Math.min(x, window.innerWidth - 190)}px`;
         menu.style.top = `${Math.min(y, window.innerHeight - 140)}px`;
         menu.style.width = '180px';
@@ -798,6 +800,11 @@ function startBatchSelection(): void {
         addItem('Translate all', () => { void confirmSelection(); });
         menu.addEventListener('contextmenu', (event) => event.preventDefault());
         document.documentElement.append(menu);
+        try {
+            (menu as HTMLElement & { showPopover?: () => void }).showPopover?.();
+        } catch {
+            // Fall back to the fixed z-index when popover is unavailable.
+        }
     }
 
     function onClick(event: MouseEvent): void {
