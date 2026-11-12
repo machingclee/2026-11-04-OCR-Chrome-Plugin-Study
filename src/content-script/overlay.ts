@@ -395,9 +395,11 @@ function makeBox(
         style.display = 'grid';
         style.placeItems = 'center';
         style.textAlign = 'center';
-        // A trailing ellipsis must not start a second column. Let the fit loop
-        // shrink instead of wrapping it to the left of the text.
-        style.whiteSpace = 'nowrap';
+        // Let the text use the number of columns the balloon has room for.
+        // The word joiner in toVertical keeps a trailing ellipsis with the
+        // preceding glyph instead of forcing the whole label into one column.
+        style.whiteSpace = 'pre-wrap';
+        style.lineBreak = 'strict';
     }
 
     const boxWidth = Math.max(1, item.width * scale);
