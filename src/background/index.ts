@@ -305,9 +305,9 @@ async function readSettings(): Promise<TranslateSettings> {
         translator: translator === 'deepseek' || translator === 'builtin' ? translator : 'gemini',
         deepSeekKey: typeof local[DEEPSEEK_KEY] === 'string' ? local[DEEPSEEK_KEY] : '',
         geminiKey: typeof local[GEMINI_KEY] === 'string' ? local[GEMINI_KEY] : '',
-        font: local[FONT_KEY] === 'serif' ? 'serif' : 'sans',
-        leading: typeof local[LEADING_KEY] === 'number' ? local[LEADING_KEY] : 1.15,
-        weight: local[WEIGHT_KEY] === 'bold' ? 'bold' : 'normal',
+        font: 'sans',
+        leading: 1,
+        weight: 'normal',
     };
 }
 
@@ -370,11 +370,9 @@ async function runTranslation(request: TranslateRequest, sender: chrome.runtime.
             width: detection.imageWidth,
             height: detection.imageHeight,
             items: job.items,
-            fontFamily: settings.font === 'serif'
-                ? '"Songti TC", "Noto Serif CJK TC", serif'
-                : 'system-ui, "PingFang TC", sans-serif',
-            weight: settings.weight,
-            leading: settings.leading,
+            fontFamily: 'system-ui, "PingFang TC", sans-serif',
+            weight: 'normal',
+            leading: 1,
         };
 
         await chrome.scripting.executeScript({

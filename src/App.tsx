@@ -5,12 +5,6 @@ import {
     DETECTION_CACHE_VERSION,
     OCR_MIN_CONFIDENCE,
     GEMINI_KEY,
-    FONT_KEY,
-    LEADING_KEY,
-    LEADING_MAX,
-    LEADING_MIN,
-    WEIGHT_KEY,
-    type FontChoice,
     TRANSLATOR_KEY,
     type TranslatorChoice,
     LAST_RESULT_KEY,
@@ -97,9 +91,6 @@ export default function App() {
     const [geminiKey, setGeminiKey] = useState('');
     const [translator, setTranslator] = useState<TranslatorChoice>('gemini');
     const [dirty, setDirty] = useState(false);
-    const [font, setFont] = useState<FontChoice>('sans');
-    const [leading, setLeading] = useState(1.15);
-    const [weight, setWeight] = useState<'normal' | 'bold'>('normal');
     const [targetToken, setTargetToken] = useState<string | undefined>();
     const settingsLoaded = useRef(false);
     const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
@@ -115,10 +106,7 @@ export default function App() {
                 DEEPSEEK_KEY,
                 GEMINI_KEY,
                 TRANSLATOR_KEY,
-                FONT_KEY,
-                LEADING_KEY,
-                WEIGHT_KEY,
-                LAST_RESULT_KEY,
+                                                    LAST_RESULT_KEY,
             ]),
         ])
             .then(([local]) => {
@@ -129,12 +117,6 @@ export default function App() {
                 if (typeof storedDeepSeek === 'string') setDeepSeekKey(storedDeepSeek);
                 const storedGemini = local[GEMINI_KEY];
                 if (typeof storedGemini === 'string') setGeminiKey(storedGemini);
-                const storedLeading = local[LEADING_KEY];
-                if (typeof storedLeading === 'number') setLeading(storedLeading);
-                const storedWeight = local[WEIGHT_KEY];
-                if (storedWeight === 'normal' || storedWeight === 'bold') setWeight(storedWeight);
-                const storedFont = local[FONT_KEY];
-                if (storedFont === 'sans' || storedFont === 'serif') setFont(storedFont);
                 // Remember the translator. If there is no saved choice yet, prefer
                 // DeepSeek when its key exists; otherwise Gemini.
                 const storedChoice = local[TRANSLATOR_KEY];
@@ -230,9 +212,6 @@ export default function App() {
             [GEMINI_KEY]: geminiKey.trim(),
             [DEEPSEEK_KEY]: deepSeekKey.trim(),
             [TRANSLATOR_KEY]: translator,
-            [FONT_KEY]: font,
-            [LEADING_KEY]: leading,
-            [WEIGHT_KEY]: weight,
         };
         saveQueue.current = saveQueue.current
             .catch(() => undefined)
@@ -244,7 +223,7 @@ export default function App() {
                 setError(`Could not save settings: ${cause instanceof Error ? cause.message : String(cause)}`);
                 setDirty(true);
             });
-    }, [deepSeekKey, font, geminiKey, leading, translator, weight]);
+    }, [deepSeekKey, geminiKey, translator]);
 
     const handleSaveSettings = useCallback(async () => {
         try {
@@ -252,17 +231,14 @@ export default function App() {
                 [GEMINI_KEY]: geminiKey.trim(),
                 [DEEPSEEK_KEY]: deepSeekKey.trim(),
                 [TRANSLATOR_KEY]: translator,
-                [FONT_KEY]: font,
-                [LEADING_KEY]: leading,
-                [WEIGHT_KEY]: weight,
-            });
+                        });
             setDirty(false);
             setStatus('Settings saved.');
         } catch (cause) {
             setError(`Could not save settings: ${cause instanceof Error ? cause.message : String(cause)}`);
             setDirty(true);
         }
-    }, [deepSeekKey, font, geminiKey, leading, translator, weight]);
+    }, [deepSeekKey, geminiKey, translator]);
 
 
     const runDetect = useCallback(async (): Promise<DetectResponse | null> => {
@@ -349,9 +325,9 @@ export default function App() {
                         translator,
                         deepSeekKey,
                         geminiKey,
-                        font,
-                        leading,
-                        weight,
+                        font: 'sans',
+                        leading: 1,
+                        weight: 'normal',
                     },
                 }),
             )) as TranslateResponse | undefined;
@@ -384,13 +360,10 @@ export default function App() {
         }
     }, [
         deepSeekKey,
-        font,
         geminiKey,
         imageUrl,
-        leading,
         targetToken,
         translator,
-        weight,
     ]);
 
     const handleClearOverlay = useCallback(async () => {
@@ -501,50 +474,6 @@ export default function App() {
                             setDirty(true);
                         }}
                     />
-                </label>
-
-                <label>
-                    Line spacing
-                    <input
-                        type="range"
-                        min={LEADING_MIN}
-                        max={LEADING_MAX}
-                        step={0.05}
-                        value={leading}
-                        onChange={(event) => {
-                            setLeading(Number(event.target.value));
-                            setDirty(true);
-                        }}
-                    />
-                    <span className="hint">{leading.toFixed(2)}</span>
-                </label>
-
-                <label>
-                    Weight
-                    <select
-                        value={weight}
-                        onChange={(event) => {
-                            setWeight(event.target.value as 'normal' | 'bold');
-                            setDirty(true);
-                        }}
-                    >
-                        <option value="normal">Normal</option>
-                        <option value="bold">Bold</option>
-                    </select>
-                </label>
-
-                <label>
-                    Lettering font
-                    <select
-                        value={font}
-                        onChange={(event) => {
-                            setFont(event.target.value as FontChoice);
-                            setDirty(true);
-                        }}
-                    >
-                        <option value="sans">Sans (PingFang)</option>
-                        <option value="serif">Serif (Songti)</option>
-                    </select>
                 </label>
 
                 <span />

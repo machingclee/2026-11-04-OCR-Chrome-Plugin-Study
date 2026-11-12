@@ -370,7 +370,9 @@ function makeBox(
     style.color = item.color ?? '#111111';
     style.fontFamily = request.fontFamily;
     style.fontWeight = request.weight;
-    style.lineHeight = String(request.leading);
+    style.lineHeight = '1';
+    style.letterSpacing = '0';
+    style.wordSpacing = '0';
     style.whiteSpace = 'pre-wrap';
     style.wordBreak = 'break-word';
     style.pointerEvents = 'none';
@@ -538,7 +540,7 @@ function apply(request: OverlayRequest): OverlayResponse {
         layer.appendChild(makeBox(item, request, width, height, scale));
         count += 1;
     }
-    fitBoxes(layer, request.leading);
+    fitBoxes(layer, 1);
     watchTarget(target);
 
     return { ok: true, count };
