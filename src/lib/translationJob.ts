@@ -170,13 +170,9 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
                 && x >= group.x && x <= group.x + group.width
                 && y >= group.y && y <= group.y + group.height;
         });
-        const verticalLines = linesInGroup.filter((line) => line.direction === 'vertical').length;
-        const horizontalLines = linesInGroup.filter((line) => line.direction === 'horizontal').length;
-        const vertical = verticalLines !== horizontalLines
-            ? verticalLines > horizontalLines
-            : balloon
-                ? balloon.height > balloon.width * 1.15 || group.vertical === true
-                : group.vertical ?? group.height > group.width * 1.3;
+        // Manga dialogue is vertical. Force every translated label to the
+        // vertical writing mode so a wide balloon cannot flip it horizontal.
+        const vertical = true;
 
         let minX = Number.POSITIVE_INFINITY;
         let minY = Number.POSITIVE_INFINITY;

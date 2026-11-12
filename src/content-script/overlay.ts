@@ -337,7 +337,7 @@ function makeBox(
     style.display = 'flex';
     style.alignItems = 'center';
     style.justifyContent = 'center';
-    style.overflow = 'visible';
+    style.overflow = 'hidden';
     style.padding = '1px 2px';
     style.textAlign = 'center';
     if (item.patch) {
@@ -463,9 +463,9 @@ function fitBoxes(layer: HTMLElement, leading: number): void {
 
     for (const boxes of groups.values()) {
         const source = Number.parseFloat(boxes[0].style.fontSize) || 12;
-        // Keep the source glyph size. A long translation clips at the
-        // detected box rather than shrinking below the comic's lettering.
-        const floor = source;
+        // Fit the translation inside the detected box. The group keeps one
+        // shared size, and the floor prevents an unreadable collapse.
+        const floor = Math.max(7, Math.round(source * 0.7));
         let size = source;
         while (size > floor && boxes.some((box) => !textFits(box) || !estimatedFits(box, size, leading))) {
             size -= 1;
