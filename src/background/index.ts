@@ -26,6 +26,7 @@ import type {
 import { translateGroups } from '../lib/translationJob';
 
 let offscreenReady: Promise<void> | null = null;
+let translationQueue: Promise<void> = Promise.resolve();
 
 
 // this file is the context of service worker
@@ -45,7 +46,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     }
 
     if (request.type === 'translate') {
-        runTranslation(request, sender).then((response) => {
+        enqueueTranslation(() => runTranslation(request, sender)).then((response) => {
             try {
                 sendResponse(response);
             } catch {
@@ -61,6 +62,34 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
 chrome.runtime.onInstalled.addListener(() => {
     offscreenReady = null;
 });
+
+chrome.commands.onCommand.addListener((command) => {
+    if (command !== 'start-selection') return;
+    void startSelectionMode();
+});
+
+async function startSelectionMode(): Promise<void> {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) return;
+    try {
+        await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: [CONTENT_SCRIPT_FILE],
+        });
+        await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            world: 'ISOLATED',
+            func: () => {
+                const picker = (globalThis as unknown as {
+                    __comicTranslatorPicker?: { startSelection?: () => void };
+                }).__comicTranslatorPicker;
+                picker?.startSelection?.();
+            },
+        });
+    } catch (cause) {
+        console.warn('Could not start selection mode.', cause);
+    }
+}
 
 async function runDetection(request: DetectRequest): Promise<DetectResponse> {
     if (typeof request.imageUrl !== 'string') {
@@ -119,6 +148,12 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
 }
 
 
+function enqueueTranslation<T>(job: () => Promise<T>): Promise<T> {
+    const next = translationQueue.then(job, job);
+    translationQueue = next.then(() => undefined, () => undefined);
+    return next;
+}
+
 async function readSettings(): Promise<TranslateSettings> {
     const local = await chrome.storage.local.get([
         DEEPSEEK_KEY,
@@ -154,11 +189,16 @@ async function runTranslation(request: TranslateRequest, sender: chrome.runtime.
 
     try {
         const tabId = await resolveTabId(request, sender);
+        let tabPageUrl = request.tabPageUrl;
+        if (!tabPageUrl) {
+            const tab = await chrome.tabs.get(tabId).catch(() => null);
+            tabPageUrl = tab?.url?.startsWith('http') ? tab.url : undefined;
+        }
         const detection = await runDetection({
             target: SERVICE_WORKER_TARGET,
             type: 'detect',
             imageUrl: request.imageUrl,
-            tabPageUrl: request.tabPageUrl,
+            tabPageUrl,
         });
         if (!detection.ok) return detection;
 
