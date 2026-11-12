@@ -431,7 +431,7 @@ export default function App() {
     }, [recording]);
 
     return (
-        <main className={`mx-auto flex flex-col gap-4 rounded-md bg-[#f4f1ec] p-4 text-slate-900 ${view === 'debug' ? 'w-[720px]' : 'w-[480px]'}`}>
+        <main className={`mx-auto flex flex-col gap-3 rounded-md bg-[#f4f1ec] p-3 text-slate-900 ${view === 'debug' ? 'w-[720px]' : 'w-[480px]'}`}>
             <div className="flex self-start rounded-md bg-[#e9e3da] p-1">
                 <button
                     type="button"
@@ -449,7 +449,7 @@ export default function App() {
                 </button>
             </div>
 
-            <header className="rounded-md border border-[#e7dfd4] bg-white p-4 shadow-sm">
+            <header className="rounded-md border border-[#e7dfd4] bg-white p-3 shadow-sm">
                 <div className="flex items-start justify-between gap-4">
                     <div>
                         <h1 className="text-lg font-semibold tracking-tight">Comic Translator</h1>
@@ -496,7 +496,7 @@ export default function App() {
                         </button>
                     </div>
                 ) : (
-                    <div className="mt-4 rounded-md border border-[#ded2c4] bg-[#f3eee8] px-4 py-3 text-sm text-[#5f4a38]">
+                    <div className="mt-3 rounded-md border border-[#ded2c4] bg-[#f3eee8] px-3 py-2 text-sm text-[#5f4a38]">
                         Press{' '}
                         <button
                             type="button"
@@ -517,7 +517,7 @@ export default function App() {
                 </div>
             ) : null}
 
-            <section className="rounded-md border border-[#e7dfd4] bg-white p-4 shadow-sm">
+            <section className="rounded-md border border-[#e7dfd4] bg-white p-3 shadow-sm">
                 <div className="flex items-center justify-between gap-3">
                     <h2 className="text-sm font-semibold">Translation settings</h2>
                     <div className={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium ${dirty ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
@@ -526,7 +526,7 @@ export default function App() {
                     </div>
                 </div>
 
-                <div className="mt-3 grid grid-cols-2 gap-3">
+                <div className="mt-2 grid grid-cols-2 gap-2">
                     <label className="col-span-2 flex flex-col gap-1 text-xs font-medium text-slate-600">
                         Translator
                         <select
@@ -571,9 +571,6 @@ export default function App() {
                             }}
                             className="rounded border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#b08a68] focus:ring-2 focus:ring-[#eadfd2]"
                         />
-                        <span className="text-[11px] font-normal leading-4 text-slate-500">
-                            Used for the vision SFX check when Gemini is selected. DeepSeek uses its own vision model.
-                        </span>
                     </label>
 
                     <label className={`col-span-2 flex flex-col gap-1 text-xs font-medium text-slate-600 ${translator === 'deepseek' ? '' : 'hidden'}`}>
@@ -650,7 +647,7 @@ export default function App() {
             ) : null}
 
             {groups.length > 0 ? (
-                <section className={`rounded-md border border-[#e7dfd4] bg-white p-4 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
+                <section className={`rounded-md border border-[#e7dfd4] bg-white p-3 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
                     <h2 className="text-sm font-semibold">Reading groups</h2>
                     <ol className="mt-2 space-y-2">
                         {groups.map((group, index) => (
@@ -670,7 +667,7 @@ export default function App() {
             ) : null}
 
             {previews.length > 0 ? (
-                <section className={`rounded-md border border-[#e7dfd4] bg-white p-4 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
+                <section className={`rounded-md border border-[#e7dfd4] bg-white p-3 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
                     <h2 className="text-sm font-semibold">Text regions</h2>
                     <ol className="mt-2 flex gap-3 overflow-x-auto pb-1">
                         {boxes.map((box, index) => (
