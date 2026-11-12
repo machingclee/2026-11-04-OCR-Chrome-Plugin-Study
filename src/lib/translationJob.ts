@@ -181,21 +181,24 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
                 centreX >= bubble.x && centreX <= bubble.x + bubble.width
                 && centreY >= bubble.y && centreY <= bubble.y + bubble.height)
             : undefined;
-        const vertical = balloon
-            ? balloon.height > balloon.width * 1.15 || group.vertical === true
-            : group.vertical ?? group.height > group.width * 1.3;
+        const linesInGroup = boxes.filter((line) => {
+            const x = line.x + line.width / 2;
+            const y = line.y + line.height / 2;
+            return line.text.trim().length > 0
+                && x >= group.x && x <= group.x + group.width
+                && y >= group.y && y <= group.y + group.height;
+        });
+        const verticalLines = linesInGroup.filter((line) => line.direction === 'vertical').length;
+        const horizontalLines = linesInGroup.filter((line) => line.direction === 'horizontal').length;
+        const vertical = verticalLines !== horizontalLines
+            ? verticalLines > horizontalLines
+            : balloon
+                ? balloon.height > balloon.width * 1.15 || group.vertical === true
+                : group.vertical ?? group.height > group.width * 1.3;
 
-        const lineBoxes = boxes
-            .filter((line) => {
-                const x = line.x + line.width / 2;
-                const y = line.y + line.height / 2;
-                return line.text.trim().length > 0
-                    && x >= group.x && x <= group.x + group.width
-                    && y >= group.y && y <= group.y + group.height;
-            })
-            .sort((left, right) => vertical
-                ? (right.x + right.width / 2) - (left.x + left.width / 2)
-                : (left.y + left.height / 2) - (right.y + right.height / 2));
+        const lineBoxes = linesInGroup.sort((left, right) => vertical
+            ? (right.x + right.width / 2) - (left.x + left.width / 2)
+            : (left.y + left.height / 2) - (right.y + right.height / 2));
 
         const detected = lineBoxes.length > 0 ? lineBoxes : [{
             x: group.x,
