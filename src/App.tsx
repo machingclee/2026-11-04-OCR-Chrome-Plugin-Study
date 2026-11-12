@@ -172,8 +172,6 @@ export default function App() {
                 PICKED_IMAGE_URL_KEY,
                 PICKED_IMAGE_TARGET_KEY,
                 DEEPSEEK_KEY,
-                DETECTION_CACHE_VERSION,
-    OCR_MIN_CONFIDENCE,
                 GEMINI_KEY,
                 TRANSLATOR_KEY,
                 FONT_KEY,
