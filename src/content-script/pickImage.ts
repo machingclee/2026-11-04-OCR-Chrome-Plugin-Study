@@ -194,6 +194,14 @@ function findAt(doc: Document, x: number, y: number, offsetX: number, offsetY: n
     return null;
 }
 
+const PAGE_EVENTS = ['auxclick', 'contextmenu', 'dragstart'] as const;
+
+function swallowPageEvent(event: Event): void {
+    if ((event.target as Element | null)?.closest('#comic-translator-pick-confirm')) return;
+    event.preventDefault();
+    event.stopPropagation();
+}
+
 function start(): void {
     // A new pick replaces the previous translation overlay.
     clearAll();
@@ -245,6 +253,7 @@ function start(): void {
         window.removeEventListener('click', onClick, true);
         window.removeEventListener('mousemove', onMove, true);
         window.removeEventListener('keydown', onKey, true);
+        for (const type of PAGE_EVENTS) window.removeEventListener(type, swallowPageEvent, true);
         shield.remove();
         box.remove();
         window.__comicTranslatorPickerActive = false;
@@ -421,6 +430,7 @@ function start(): void {
     window.addEventListener('click', onClick, true);
     window.addEventListener('mousemove', onMove, true);
     window.addEventListener('keydown', onKey, true);
+    for (const type of PAGE_EVENTS) window.addEventListener(type, swallowPageEvent, true);
     showToast('Pick mode is on. Click an image, or press Escape.');
 }
 
@@ -598,6 +608,7 @@ function startBatchSelection(): void {
         window.removeEventListener('keydown', onKey, true);
         window.removeEventListener('scroll', redrawMarks, true);
         window.removeEventListener('resize', redrawMarks);
+        for (const type of PAGE_EVENTS) window.removeEventListener(type, swallowPageEvent, true);
         shield.remove();
         hover.remove();
         bar?.remove();
@@ -686,6 +697,7 @@ function startBatchSelection(): void {
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('scroll', redrawMarks, true);
     window.addEventListener('resize', redrawMarks);
+    for (const type of PAGE_EVENTS) window.addEventListener(type, swallowPageEvent, true);
     makeBar();
     redrawMarks();
     showToast('Selection mode: click images to select, then use the tick bar. Escape cancels.');
