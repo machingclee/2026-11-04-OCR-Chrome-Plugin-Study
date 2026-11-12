@@ -60,11 +60,11 @@ function skipAsNonDialogue(
     const kanaOnly = /^[\u3040-\u30FF\u30FC]+$/u.test(normalised);
     const shortSide = Math.min(line.width, line.height);
 
-    // A huge kana run is a sound effect, not dialogue. A real balloon is much
-    // larger than its text; a false bubble around SFX barely exceeds the glyphs.
+    // A huge kana run is a sound effect, not dialogue. This stays true when the
+    // bubble model mistakes the SFX for a balloon, which is what produced the
+    // large white patch and the translated SFX.
     if (kanaOnly && normalised.length <= 6 && medianThickness > 0 && shortSide > medianThickness * 2.2) {
-        const fill = bubble ? (bubble.width * bubble.height) / Math.max(1, line.width * line.height) : 0;
-        if (fill < 2.5) return true;
+        return true;
     }
 
     // Short kana-only text outside every balloon is usually OCR noise from a
