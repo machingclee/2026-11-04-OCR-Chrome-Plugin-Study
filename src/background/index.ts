@@ -92,11 +92,11 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 chrome.commands.onCommand.addListener((command) => {
-    if (command !== 'start-selection') return;
-    void startSelectionMode();
+    if (command !== 'pick-image') return;
+    void startPickMode();
 });
 
-async function startSelectionMode(): Promise<void> {
+async function startPickMode(): Promise<void> {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return;
     try {
@@ -109,9 +109,9 @@ async function startSelectionMode(): Promise<void> {
             world: 'ISOLATED',
             func: () => {
                 const picker = (globalThis as unknown as {
-                    __comicTranslatorPicker?: { startSelection?: () => void };
+                    __comicTranslatorPicker?: { start?: () => void };
                 }).__comicTranslatorPicker;
-                picker?.startSelection?.();
+                picker?.start?.();
             },
         });
     } catch (cause) {

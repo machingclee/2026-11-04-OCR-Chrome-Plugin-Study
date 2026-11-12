@@ -91,6 +91,7 @@ export default function App() {
     const [geminiKey, setGeminiKey] = useState('');
     const [translator, setTranslator] = useState<TranslatorChoice>('gemini');
     const [dirty, setDirty] = useState(false);
+    const [view, setView] = useState<'production' | 'debug'>('production');
     const [targetToken, setTargetToken] = useState<string | undefined>();
     const settingsLoaded = useRef(false);
     const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
@@ -380,6 +381,23 @@ export default function App() {
 
     return (
         <main className="mx-auto flex min-h-[560px] w-[720px] flex-col gap-4 bg-slate-100 p-4 text-slate-900">
+            <div className="flex self-start rounded-xl bg-slate-200 p-1">
+                <button
+                    type="button"
+                    onClick={() => setView('production')}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${view === 'production' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                    Production
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setView('debug')}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${view === 'debug' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                    Debug
+                </button>
+            </div>
+
             <header className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex items-start justify-between gap-4">
                     <div>
@@ -389,42 +407,48 @@ export default function App() {
                     <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-500">v1.0.5</span>
                 </div>
 
-                <div className="mt-4 grid grid-cols-2 gap-2">
-                    <button
-                        type="button"
-                        onClick={handlePick}
-                        className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                        Pick an image
-                    </button>
-                    <button
-                        type="button"
-                        onClick={handleDetect}
-                        disabled={!imageUrl || busy}
-                        data-busy={busy}
-                        title={imageUrl ? undefined : 'Pick an image on the page first.'}
-                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                        {busy ? 'Detecting...' : 'Detect boxes'}
-                    </button>
-                    <button
-                        type="button"
-                        onClick={handleTranslate}
-                        disabled={translating || !imageUrl}
-                        title="Translation runs in the background worker."
-                        className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                        {translating ? 'Translating...' : 'Translate page'}
-                    </button>
-                    <button
-                        type="button"
-                        onClick={handleClearOverlay}
-                        disabled={!imageUrl}
-                        className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                        Clear overlay
-                    </button>
-                </div>
+                {view === 'debug' ? (
+                    <div className="mt-4 grid grid-cols-2 gap-2">
+                        <button
+                            type="button"
+                            onClick={handlePick}
+                            className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            Pick an image
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleDetect}
+                            disabled={!imageUrl || busy}
+                            data-busy={busy}
+                            title={imageUrl ? undefined : 'Pick an image on the page first.'}
+                            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            {busy ? 'Detecting...' : 'Detect boxes'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleTranslate}
+                            disabled={translating || !imageUrl}
+                            title="Translation runs in the background worker."
+                            className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            {translating ? 'Translating...' : 'Translate page'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleClearOverlay}
+                            disabled={!imageUrl}
+                            className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            Clear overlay
+                        </button>
+                    </div>
+                ) : (
+                    <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                        Press <kbd className="rounded border border-blue-200 bg-white px-1.5 py-0.5 font-mono text-xs">⌥Q</kbd> on macOS or <kbd className="rounded border border-blue-200 bg-white px-1.5 py-0.5 font-mono text-xs">Alt+Q</kbd> on Windows, select an image, then click the check mark.
+                    </div>
+                )}
             </header>
 
             {error ? (
@@ -495,7 +519,7 @@ export default function App() {
             </section>
 
             {imageUrl ? (
-                <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                <section className={`rounded-2xl border border-slate-200 bg-white p-3 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
                     <div className="mb-2 flex items-center justify-between">
                         <h2 className="text-sm font-semibold">Page preview</h2>
                         <span className="text-xs text-slate-500">{boxes.length} boxes</span>
@@ -552,7 +576,7 @@ export default function App() {
             ) : null}
 
             {groups.length > 0 ? (
-                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <section className={`rounded-2xl border border-slate-200 bg-white p-4 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
                     <h2 className="text-sm font-semibold">Reading groups</h2>
                     <ol className="mt-2 space-y-2">
                         {groups.map((group, index) => (
@@ -572,7 +596,7 @@ export default function App() {
             ) : null}
 
             {previews.length > 0 ? (
-                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <section className={`rounded-2xl border border-slate-200 bg-white p-4 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
                     <h2 className="text-sm font-semibold">Text regions</h2>
                     <ol className="mt-2 flex gap-3 overflow-x-auto pb-1">
                         {boxes.map((box, index) => (

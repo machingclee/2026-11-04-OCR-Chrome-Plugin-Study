@@ -5,7 +5,7 @@ import {
 } from '../shared/constants';
 import { clearAll } from './overlay';
 import serviceWorkerRequestFactory from '../shared/factories/serviceWorkerRequestFactory';
-import type { BatchProgressMessage, BatchState, TranslateBatchResponse } from '../shared/types';
+import type { BatchProgressMessage, BatchState, TranslateBatchResponse, TranslateResponse } from '../shared/types';
 import {
     BATCH_BAR_ID,
     BATCH_MARK_ATTR,
@@ -230,7 +230,10 @@ function start(): void {
         box.style.height = `${rect.height}px`;
     };
 
+    let confirmButton: HTMLButtonElement | null = null;
     const stop = (): void => {
+        confirmButton?.remove();
+        confirmButton = null;
         shield.removeEventListener('click', onClick);
         window.removeEventListener('click', onClick, true);
         window.removeEventListener('mousemove', onMove, true);
@@ -246,6 +249,7 @@ function start(): void {
     }
 
     function onClick(event: MouseEvent): void {
+        if ((event.target as Element).closest('#comic-translator-pick-confirm')) return;
         event.preventDefault();
         event.stopPropagation();
 
@@ -273,17 +277,65 @@ function start(): void {
         const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
         hit.element.setAttribute(OVERLAY_TARGET_ATTRIBUTE, token);
 
+        const picked = hit;
         chrome.storage.local
             .set({
-                [PICKED_IMAGE_URL_KEY]: hit.url,
+                [PICKED_IMAGE_URL_KEY]: picked.url,
                 [PICKED_IMAGE_TARGET_KEY]: token,
             })
-            .then(() => showToast(`Picked ${hit.url}`))
+            .then(() => {
+                confirmButton?.remove();
+                const button = document.createElement('button');
+                confirmButton = button;
+                button.id = 'comic-translator-pick-confirm';
+                button.type = 'button';
+                button.title = 'Translate this image';
+                button.textContent = '✓';
+                const size = 44;
+                const margin = 8;
+                const left = Math.min(window.innerWidth - size - margin, Math.max(margin, picked.rect.right - size - margin));
+                const top = Math.min(window.innerHeight - size - margin, Math.max(margin, picked.rect.bottom - size - margin));
+                button.style.position = 'fixed';
+                button.style.left = `${left}px`;
+                button.style.top = `${top}px`;
+                button.style.width = `${size}px`;
+                button.style.height = `${size}px`;
+                button.style.borderRadius = '9999px';
+                button.style.border = '1px solid rgba(255,255,255,0.8)';
+                button.style.background = '#2563eb';
+                button.style.color = '#fff';
+                button.style.font = '700 22px/1 system-ui, sans-serif';
+                button.style.zIndex = '2147483647';
+                button.style.cursor = 'pointer';
+                button.style.boxShadow = '0 8px 24px rgba(15,23,42,0.35)';
+                button.addEventListener('click', (clickEvent) => {
+                    clickEvent.preventDefault();
+                    clickEvent.stopPropagation();
+                    button.disabled = true;
+                    button.textContent = '…';
+                    void chrome.runtime.sendMessage(
+                        serviceWorkerRequestFactory.ofTranslation({
+                            imageUrl: picked.url,
+                            token,
+                            tabPageUrl: location.href,
+                        }),
+                    ).then((response: TranslateResponse | undefined) => {
+                        if (!response?.ok) throw new Error(response?.error ?? 'The background worker sent no answer.');
+                        showToast('Translating this image.');
+                        stop();
+                    }).catch((cause: unknown) => {
+                        button.disabled = false;
+                        button.textContent = '✓';
+                        showToast(`Could not translate: ${cause instanceof Error ? cause.message : String(cause)}`);
+                    });
+                });
+                document.documentElement.append(button);
+                showToast('Image picked. Click the check mark to translate it.');
+            })
             .catch((cause: unknown) => {
                 const message = cause instanceof Error ? cause.message : String(cause);
                 showToast(`Could not save the URL: ${message}`);
             });
-        stop();
     }
 
     function onKey(event: KeyboardEvent): void {

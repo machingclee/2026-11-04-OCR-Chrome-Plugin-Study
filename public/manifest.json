@@ -17,12 +17,12 @@
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },
   "commands": {
-    "start-selection": {
+    "pick-image": {
       "suggested_key": {
-        "default": "Ctrl+Shift+Y",
-        "mac": "Command+Shift+Y"
+        "default": "Alt+Q",
+        "mac": "Alt+Q"
       },
-      "description": "Select comic images to translate"
+      "description": "Pick one comic image to translate"
     }
   },
   "action": {
