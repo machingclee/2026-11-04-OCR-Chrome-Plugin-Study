@@ -537,7 +537,9 @@ export default function App() {
                         centreX >= bubble.x && centreX <= bubble.x + bubble.width
                         && centreY >= bubble.y && centreY <= bubble.y + bubble.height)
                     : undefined;
-                const vertical = group.vertical ?? group.height > group.width * 1.3;
+                const vertical = balloon
+                    ? balloon.height > balloon.width * 1.15 || group.vertical === true
+                    : group.vertical ?? group.height > group.width * 1.3;
                 let layout = tight;
                 if (balloon) {
                     // Keep the translated text inside the detected line area. The
