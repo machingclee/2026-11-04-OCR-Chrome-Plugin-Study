@@ -47,8 +47,17 @@ function insideBalloon(line: BoxData, balloons: { x: number; y: number; width: n
 }
 
 function skipAsNonDialogue(line: BoxData, balloons: { x: number; y: number; width: number; height: number }[]): boolean {
-    if (isUiLine(line.text)) return true;
-    return isSfxLine(line.text) && !insideBalloon(line, balloons);
+    const text = line.text.trim();
+    if (text.length === 0) return false;
+    if (isUiLine(text)) return true;
+    const outside = !insideBalloon(line, balloons);
+    if (isSfxLine(text) && outside) return true;
+    // Short kana-only text outside every balloon is usually OCR noise from a
+    // sound effect or artwork. Kanji or mixed script outside a balloon can be
+    // narration or a caption, so keep it even when the OCR confidence is low.
+    const kanaOnly = /^[\u3040-\u30FF\u30FC・。、…！？!?]+$/u.test(text);
+    if (outside && kanaOnly && text.length <= 8 && line.confidence < 0.7) return true;
+    return false;
 }
 
 /** Whether a line centre sits inside a group box. */
