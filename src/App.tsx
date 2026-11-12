@@ -380,7 +380,7 @@ export default function App() {
     }, []);
 
     return (
-        <main className="mx-auto flex min-h-[560px] w-[720px] flex-col gap-4 bg-slate-100 p-4 text-slate-900">
+        <main className="mx-auto flex w-[720px] flex-col gap-4 rounded-2xl bg-slate-100 p-4 text-slate-900">
             <div className="flex self-start rounded-xl bg-slate-200 p-1">
                 <button
                     type="button"

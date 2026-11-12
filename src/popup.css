@@ -2,14 +2,21 @@
 @tailwind components;
 @tailwind utilities;
 
+html,
+body {
+  background: transparent;
+}
+
 body {
   width: 720px;
-  min-height: 560px;
   max-height: 600px;
   overflow-y: auto;
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+  border-radius: 14px;
+  overflow-x: hidden;
+  background: #f1f5f9;
   font-family: ui-sans-serif, system-ui, sans-serif;
 }
 
