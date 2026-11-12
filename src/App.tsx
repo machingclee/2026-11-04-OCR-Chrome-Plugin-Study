@@ -55,9 +55,14 @@ function seconds(ms: number): string {
     return `${(ms / 1000).toFixed(1)} s`;
 }
 
-function stageSummary(timings?: DetectTimings): string {
+function stageBreakdown(timings?: DetectTimings): string {
     if (!timings) return '';
-    return `; detect ${seconds(timings.detect)}, OCR ${seconds(timings.ocr)}, bubbles ${seconds(timings.bubble)}`;
+    return `detect ${seconds(timings.detect)}, OCR ${seconds(timings.ocr)}, bubbles ${seconds(timings.bubble)}`;
+}
+
+function stageSummary(timings?: DetectTimings): string {
+    const breakdown = stageBreakdown(timings);
+    return breakdown.length > 0 ? `; ${breakdown}` : '';
 }
 
 type LastResult = {
@@ -127,6 +132,11 @@ export default function App() {
     const [error, setError] = useState<string | null>(null);
     const [bubbles, setBubbles] = useState<BubbleStroke[]>([]);
     const [groups, setGroups] = useState<GroupStroke[]>([]);
+    const [detection, setDetection] = useState<{
+        ms: number;
+        timings?: DetectTimings;
+        reused: boolean;
+    } | null>(null);
     const [translated, setTranslated] = useState<RegionAnswer[] | null>(null);
     const [translating, setTranslating] = useState(false);
     const [deepSeekKey, setDeepSeekKey] = useState('');
@@ -203,6 +213,11 @@ export default function App() {
                     setPreviews(Array.isArray(lastResult.previews) ? lastResult.previews : []);
                     setBubbles(Array.isArray(lastResult.bubbles) ? lastResult.bubbles : []);
                     setGroups(Array.isArray(lastResult.groups) ? lastResult.groups : []);
+                    setDetection({
+                        ms: lastResult.ms,
+                        timings: lastResult.timings,
+                        reused: true,
+                    });
                     const previousRun = lastResult.warm === undefined
                         ? 'previous run'
                         : `previous ${lastResult.warm ? 'warm' : 'cold'} run`;
@@ -212,6 +227,7 @@ export default function App() {
                     return;
                 }
 
+                setDetection(null);
                 setStatus('Picked from the page. Run the detector to find boxes.');
             })
             .catch(() => setError('Cannot read the stored state.'));
@@ -296,6 +312,7 @@ export default function App() {
         setError(null);
         setBoxes([]);
         setPreviews([]);
+        setDetection(null);
         setStatus('Asking the background worker.');
 
         try {
@@ -314,6 +331,7 @@ export default function App() {
             const vertical = response.boxes.filter((box) => box.direction === 'vertical').length;
             const ruby = response.boxes.reduce((sum, box) => sum + box.ruby.length, 0);
             const read = response.boxes.filter((box) => box.text.length > 0).length;
+            setDetection({ ms: response.ms, timings: response.timings, reused: false });
             setStatus(
                 `${response.boxes.length} lines (${vertical} vertical, ${ruby} ruby), ${read} read, ${response.bubbles?.length ?? 0} balloons, ${response.groupedLines} grouped, image ${response.imageWidth}x${response.imageHeight}, ${seconds(response.ms)} (${response.warm ? 'reused session' : 'cold session'}${stageSummary(response.timings)}).`,
             );
@@ -367,8 +385,9 @@ export default function App() {
             let pageWidth = size.width;
             let pageHeight = size.height;
             // A detection run updates the state asynchronously, so the balloons
-            // for this pass must come from the answer, not from the state.
+            // and timing for this pass must come from the answer, not from the state.
             let balloons = bubbles;
+            let detectionInfo = detection;
             if (current.length === 0) {
                 const detected = await runDetect();
                 if (!detected || !detected.ok) throw new Error('The detection pass failed.');
@@ -377,6 +396,11 @@ export default function App() {
                 currentBoxes = detected.boxes;
                 pageWidth = detected.imageWidth;
                 pageHeight = detected.imageHeight;
+                detectionInfo = {
+                    ms: detected.ms,
+                    timings: detected.timings,
+                    reused: false,
+                };
             }
             if (current.length === 0) throw new Error('No text was found on this page.');
             if (pageWidth <= 0 || pageHeight <= 0) {
@@ -515,8 +539,11 @@ export default function App() {
             }
 
             const withBalloon = countWithBalloon(current, balloons);
+            const detectionStatus = detectionInfo
+                ? `; ${detectionInfo.reused ? 'previous detection' : 'detection'} ${seconds(detectionInfo.ms)}${detectionInfo.timings ? ` (${stageBreakdown(detectionInfo.timings)})` : ''}`
+                : '';
             setStatus(
-                `Overlaid ${placed.count} translated boxes with ${used} on the page (${balloons.length} balloons, ${withBalloon} groups inside one)${skipped ? `; left ${skipped} UI/name/SFX regions untouched` : ''}${bubbleError ? `; balloon error: ${bubbleError}` : ''}.`,
+                `Overlaid ${placed.count} translated boxes with ${used} on the page (${balloons.length} balloons, ${withBalloon} groups inside one)${detectionStatus}${skipped ? `; left ${skipped} UI/name/SFX regions untouched` : ''}${bubbleError ? `; balloon error: ${bubbleError}` : ''}.`,
             );
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));
@@ -527,6 +554,7 @@ export default function App() {
         boxes,
         bubbles,
         deepSeekKey,
+        detection,
         font,
         geminiKey,
         groups,
