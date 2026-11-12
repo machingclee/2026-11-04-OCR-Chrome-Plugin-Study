@@ -205,6 +205,10 @@ if (!guardScope.__comicTranslatorMousedownGuard) {
     window.addEventListener('mousedown', (event) => {
         if (!document.documentElement.hasAttribute(PICKING_ATTR)) return;
         if (event.type === 'contextmenu') return;
+        if (event.button === 2) {
+            event.stopImmediatePropagation();
+            return;
+        }
         const target = event.target as Element | null;
         if (target?.closest('#comic-translator-pick-confirm, #comic-translator-batch-bar, [data-comic-translator-mark]')) return;
         event.preventDefault();
@@ -214,6 +218,7 @@ if (!guardScope.__comicTranslatorMousedownGuard) {
 
 function swallowPageEvent(event: Event): void {
     if ((event.target as Element | null)?.closest('#comic-translator-pick-confirm, #comic-translator-batch-bar, [data-comic-translator-mark]')) return;
+    if (event instanceof MouseEvent && event.button === 2) return;
     event.preventDefault();
     event.stopPropagation();
 }
