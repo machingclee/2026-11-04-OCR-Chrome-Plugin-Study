@@ -563,6 +563,16 @@ function startBatchSelection(): void {
             badge.style.color = '#fff';
             badge.style.font = '600 11px/22px system-ui, sans-serif';
             badge.style.textAlign = 'center';
+            badge.style.pointerEvents = 'auto';
+            badge.style.cursor = 'pointer';
+            badge.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                item.element.removeAttribute(OVERLAY_TARGET_ATTRIBUTE);
+                const at = selection.indexOf(item);
+                if (at >= 0) selection.splice(at, 1);
+                redrawMarks();
+            });
             outline.append(badge);
             marks?.append(outline);
         });
