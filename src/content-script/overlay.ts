@@ -388,7 +388,9 @@ function makeBox(
         // mixed rotates the vertical ellipsis back into horizontal dots.
         style.textOrientation = 'upright';
         style.display = 'grid';
-        style.placeItems = 'center';
+        // Vertical writing swaps the grid axes: align centre across the
+        // column, but start at the top so short columns do not float down.
+        style.placeItems = 'center start';
         style.textAlign = 'center';
         // Let the text use the number of columns the balloon has room for.
         // The word joiner in toVertical keeps a trailing ellipsis with the
