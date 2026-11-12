@@ -321,8 +321,9 @@ function makeBox(
     height: number,
     scale: number,
 ): HTMLElement {
-    const box = document.createElement('div');
+    const box = document.createElement('span');
     box.setAttribute(BOX_ATTR, 'true');
+    box.setAttribute('data-comic-translator-label', 'true');
     box.textContent = item.text;
 
     const style = box.style;
