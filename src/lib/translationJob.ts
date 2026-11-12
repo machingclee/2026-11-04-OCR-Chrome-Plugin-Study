@@ -255,9 +255,20 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
             });
         };
 
+        // Align tops only within the same detected text band. Two lobes can
+        // have very different tops, so one shared top for the whole group would
+        // move one lobe's columns into the other.
+        const tops = new Map<typeof sortedLines[number], number>();
+        const byTop = [...sortedLines].sort((left, right) => left.y - right.y);
+        let bandTop = byTop[0]?.y ?? 0;
+        for (const line of byTop) {
+            if (line.y - bandTop > Math.max(4, font * 0.8)) bandTop = line.y;
+            tops.set(line, bandTop);
+        }
+
         if (columns.length > 1 && columns.length <= sortedLines.length) {
             sortedLines.slice(0, columns.length).forEach((line, columnIndex) => {
-                push(line, columns[columnIndex]);
+                push({ ...line, y: tops.get(line) ?? line.y }, columns[columnIndex]);
             });
         } else {
             push(tight, columns.join(''));
