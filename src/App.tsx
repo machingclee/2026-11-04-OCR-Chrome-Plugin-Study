@@ -475,8 +475,10 @@ export default function App() {
             const placements: Array<{
                 group: GroupStroke;
                 text: string;
+                vertical: boolean;
                 layout: GroupStroke;
                 tight: GroupStroke;
+                balloon?: BubbleStroke;
             }> = [];
             let skipped = 0;
             current.forEach((group, index) => {
@@ -491,14 +493,42 @@ export default function App() {
                     return;
                 }
                 const tight = tightenBox(group, currentBoxes);
-                // A balloon is the text container. A block is not: filling a
-                // block box would cover the panel, so its lines define the area.
-                placements.push({
-                    group,
-                    text,
-                    layout: group.balloon ? group : tight,
-                    tight,
-                });
+                const centreX = group.x + group.width / 2;
+                const centreY = group.y + group.height / 2;
+                const balloon = group.balloon
+                    ? bubbles.find((bubble) =>
+                        centreX >= bubble.x && centreX <= bubble.x + bubble.width
+                        && centreY >= bubble.y && centreY <= bubble.y + bubble.height)
+                    : undefined;
+                const vertical = group.vertical ?? group.height > group.width * 1.3;
+                let layout = tight;
+                if (balloon) {
+                    // Vertical text gets the balloon width for centring, but its
+                    // top and bottom stay inside the detected line box and the
+                    // bubble. Horizontal text mirrors the rule on the x axis.
+                    if (vertical) {
+                        const top = Math.max(tight.y, balloon.y);
+                        const bottom = Math.min(tight.y + tight.height, balloon.y + balloon.height);
+                        layout = {
+                            ...tight,
+                            x: balloon.x,
+                            width: balloon.width,
+                            y: top,
+                            height: Math.max(1, bottom - top),
+                        };
+                    } else {
+                        const left = Math.max(tight.x, balloon.x);
+                        const right = Math.min(tight.x + tight.width, balloon.x + balloon.width);
+                        layout = {
+                            ...tight,
+                            y: balloon.y,
+                            height: balloon.height,
+                            x: left,
+                            width: Math.max(1, right - left),
+                        };
+                    }
+                }
+                placements.push({ group, text, vertical, layout, tight, balloon });
             });
 
             // Two balloons can overlap, or one merged balloon can be split into
@@ -519,30 +549,21 @@ export default function App() {
                 }
             }
 
-            const items: OverlayItem[] = placements.map(({ group, text, layout }) => {
-                const centreX = group.x + group.width / 2;
-                const centreY = group.y + group.height / 2;
-                const balloon = group.balloon
-                    ? bubbles.find((bubble) =>
-                        centreX >= bubble.x && centreX <= bubble.x + bubble.width
-                        && centreY >= bubble.y && centreY <= bubble.y + bubble.height)
-                    : undefined;
-                return {
-                    x: layout.x,
-                    y: layout.y,
-                    width: layout.width,
-                    height: layout.height,
-                    text,
-                    vertical: group.vertical ?? layout.height > layout.width * 1.3,
-                    background: group.background,
-                    color: group.color,
-                    maskUrl: group.maskUrl,
-                    maskBox: group.maskBox,
-                    rectangle: group.rectangle,
-                    fontSize: group.fontSize,
-                    clip: balloon?.outline,
-                };
-            });
+            const items: OverlayItem[] = placements.map(({ group, text, vertical, layout, balloon }) => ({
+                x: layout.x,
+                y: layout.y,
+                width: layout.width,
+                height: layout.height,
+                text,
+                vertical,
+                background: group.background,
+                color: group.color,
+                maskUrl: group.maskUrl,
+                maskBox: group.maskBox,
+                rectangle: group.rectangle,
+                fontSize: group.fontSize,
+                clip: balloon?.outline,
+            }));
             if (items.length === 0) throw new Error('The translation returned no dialogue to place.');
             setTranslated(out);
 
