@@ -102,7 +102,7 @@ export default function App() {
     const [translator, setTranslator] = useState<TranslatorChoice>('gemini');
     const [dirty, setDirty] = useState(false);
     const [view, setView] = useState<'production' | 'debug'>('production');
-    const [shortcut, setShortcut] = useState('Alt+Q');
+    const [shortcut, setShortcut] = useState('Alt+T');
     const [recording, setRecording] = useState(false);
 
     useEffect(() => {
@@ -541,7 +541,7 @@ export default function App() {
                         >
                             {recording ? 'Press keys...' : formatShortcut(shortcut)}
                         </button>{' '}
-                        to pick an image, then click the check mark. Option+Q on macOS is the same as Alt+Q on Windows.
+                        to pick an image, then click the check mark. Option+T on macOS is the same as Alt+T on Windows.
                     </div>
                 )}
             </header>
@@ -590,7 +590,7 @@ export default function App() {
                             {recording ? 'Press a shortcut...' : shortcut || 'Not set'}
                         </button>
                         <span className="text-[11px] font-normal leading-4 text-slate-500">
-                            Click, then press the new key combination. On macOS, Option+Q is recorded as Alt+Q.
+                            Click, then press the new key combination. On macOS, Option+T is recorded as Alt+T.
                         </span>
                     </label>
 

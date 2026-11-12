@@ -19,8 +19,8 @@
   "commands": {
     "pick-image": {
       "suggested_key": {
-        "default": "Alt+Q",
-        "mac": "Alt+Q"
+        "default": "Alt+T",
+        "mac": "Alt+T"
       },
       "description": "Pick one comic image to translate"
     }
