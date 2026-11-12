@@ -2,9 +2,9 @@ import { detectBoxes, isSessionReady } from '../lib/detector';
 import { detectBubbles } from '../lib/bubble';
 import { cropPreviews } from '../lib/regions';
 import { expandToInk } from '../lib/expand';
-import { groupByRegion, toOrderedTextLines } from '../lib/readingOrder';
+import { groupByRegion, splitGroupByColumnGap, toOrderedTextLines } from '../lib/readingOrder';
 import { recognizeLine } from '../lib/ocr/recognize';
-import { OFFSCREEN_TARGET } from '../shared/constants';
+import { DETECTOR_INPUT_SIZE, OFFSCREEN_TARGET } from '../shared/constants';
 import type {
     BoxData,
     DetectResponse,
@@ -12,10 +12,43 @@ import type {
     IncomingMessage,
     OffscreenDetectRequest,
 } from '../shared/types';
+import type { TextMask } from '../lib/types';
 import serviceWorkerResponseFactory from '../shared/factories/serviceWorkerResponseFactory';
 
 /** Each crop is a data url in storage, so the strip stops at this many. */
 const MAX_PREVIEWS = 30;
+
+/** Phone/UI strings that must not be sent to the translator as dialogue. */
+const UI_LINE = /^(?:(?:上午|下午|午前|午後)\s*)?\d{1,2}:\d{2}$|^(?:未接來電|購買次數|搜尋|訊號|電量|Wi-?Fi|LTE|5G|4G)$/i;
+
+function isUiLine(text: string): boolean {
+    return text.trim().length > 0 && UI_LINE.test(text.trim());
+}
+
+/** Repeated kana outside a balloon is almost always a sound effect. */
+const KANA_ONLY = /^[\u3040-\u30FF\u30FC]+$/u;
+
+function isSfxLine(text: string): boolean {
+    const compact = text.replace(/\s+/g, '');
+    if (compact.length === 0 || compact.length > 6 || !KANA_ONLY.test(compact)) return false;
+    const characters = [...compact].filter((character) => character !== 'ッ' && character !== 'ン' && character !== 'ー');
+    if (characters.length === 0) return false;
+    const unique = new Set(characters);
+    return unique.size === 1 || characters[0] === characters[characters.length - 1];
+}
+
+function insideBalloon(line: BoxData, balloons: { x: number; y: number; width: number; height: number }[]): boolean {
+    const x = line.x + line.width / 2;
+    const y = line.y + line.height / 2;
+    return balloons.some((balloon) =>
+        x >= balloon.x && x <= balloon.x + balloon.width
+        && y >= balloon.y && y <= balloon.y + balloon.height);
+}
+
+function skipAsNonDialogue(line: BoxData, balloons: { x: number; y: number; width: number; height: number }[]): boolean {
+    if (isUiLine(line.text)) return true;
+    return isSfxLine(line.text) && !insideBalloon(line, balloons);
+}
 
 /** Whether a line centre sits inside a group box. */
 function centreInsideBox(box: { x: number; y: number; width: number; height: number }, group: { x: number; y: number; width: number; height: number }): boolean {
@@ -23,6 +56,168 @@ function centreInsideBox(box: { x: number; y: number; width: number; height: num
     const y = box.y + box.height / 2;
     return x >= group.x && x <= group.x + group.width && y >= group.y && y <= group.y + group.height;
 }
+type Rect = { x: number; y: number; width: number; height: number };
+
+/** The area the OCR lines of one group actually occupy. */
+function unionOfLines(group: GroupData, lines: BoxData[]): Rect {
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    for (const line of lines) {
+        if (!centreInsideBox(line, group)) continue;
+        minX = Math.min(minX, line.x);
+        minY = Math.min(minY, line.y);
+        maxX = Math.max(maxX, line.x + line.width);
+        maxY = Math.max(maxY, line.y + line.height);
+    }
+    if (!Number.isFinite(minX) || maxX <= minX || maxY <= minY) return group;
+    return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+/** Read the seg value that belongs to one page pixel. */
+function inkAt(mask: TextMask, pageX: number, pageY: number): number {
+    const x = Math.round(pageX * mask.scale + mask.padX);
+    const y = Math.round(pageY * mask.scale + mask.padY);
+    if (x < 0 || y < 0 || x >= DETECTOR_INPUT_SIZE || y >= DETECTOR_INPUT_SIZE) return 0;
+    return mask.data[y * DETECTOR_INPUT_SIZE + x];
+}
+
+/** Original glyph thickness, not the size of the whole group box. */
+function groupFontSize(lines: BoxData[], group: { x: number; y: number; width: number; height: number }): number {
+    const sizes: number[] = [];
+    for (const line of lines) {
+        if (!centreInsideBox(line, group)) continue;
+        const thickness = line.lineThickness && line.lineThickness > 0
+            ? line.lineThickness
+            : Math.min(line.width, line.height);
+        if (thickness >= 4) sizes.push(thickness);
+    }
+    if (sizes.length === 0) return 0;
+    sizes.sort((left, right) => left - right);
+    return Math.max(6, Math.round(sizes[sizes.length >> 1] * 0.9));
+}
+
+function median(values: number[]): number {
+    if (values.length === 0) return 255;
+    values.sort((left, right) => left - right);
+    return values[values.length >> 1];
+}
+
+/**
+ * Give each label the colour of the paper just outside its text. A flat patch
+ * of the right tone disappears into a balloon or a screentone much better than
+ * a pure white sticker. This is sampling only; it does not change the image.
+ */
+function paintGroupColours(
+    bitmap: ImageBitmap,
+    groups: GroupData[],
+    lines: BoxData[],
+    textMask: TextMask | null,
+): void {
+    if (groups.length === 0) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) return;
+    context.drawImage(bitmap, 0, 0);
+    const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+
+    for (const group of groups) {
+        group.rectangle = !textMask;
+        const rect = unionOfLines(group, lines);
+        const growX = Math.max(2, Math.round(rect.width * 0.08));
+        const growY = Math.max(2, Math.round(rect.height * 0.08));
+        const x0 = Math.max(0, Math.floor(rect.x - growX));
+        const y0 = Math.max(0, Math.floor(rect.y - growY));
+        const x1 = Math.min(bitmap.width - 1, Math.ceil(rect.x + rect.width + growX));
+        const y1 = Math.min(bitmap.height - 1, Math.ceil(rect.y + rect.height + growY));
+        if (x1 <= x0 || y1 <= y0) continue;
+
+        const reds: number[] = [];
+        const greens: number[] = [];
+        const blues: number[] = [];
+        const take = (x: number, y: number): void => {
+            const offset = (y * bitmap.width + x) * 4;
+            reds.push(pixels[offset]);
+            greens.push(pixels[offset + 1]);
+            blues.push(pixels[offset + 2]);
+        };
+        for (let x = x0; x <= x1; x += 1) {
+            take(x, y0);
+            take(x, y1);
+        }
+        for (let y = y0 + 1; y < y1; y += 1) {
+            take(x0, y);
+            take(x1, y);
+        }
+
+        const red = median(reds);
+        const green = median(greens);
+        const blue = median(blues);
+        group.background = `rgb(${red}, ${green}, ${blue})`;
+        group.color = red * 0.299 + green * 0.587 + blue * 0.114 >= 140 ? '#111111' : '#ffffff';
+
+        if (!textMask) continue;
+        // The seg mask is the source of truth for glyphs, not the line box.
+        // A box that spills outside a balloon therefore cannot paint the paper
+        // outside it: only pixels the detector calls ink are in this image.
+        const pad = 1;
+        const mx0 = Math.max(0, Math.floor(rect.x - pad));
+        const my0 = Math.max(0, Math.floor(rect.y - pad));
+        const mx1 = Math.min(bitmap.width, Math.ceil(rect.x + rect.width + pad));
+        const my1 = Math.min(bitmap.height, Math.ceil(rect.y + rect.height + pad));
+        const cropWidth = mx1 - mx0;
+        const cropHeight = my1 - my0;
+        if (cropWidth <= 0 || cropHeight <= 0) continue;
+
+        const marked = new Uint8Array(cropWidth * cropHeight);
+        let inkPixels = 0;
+        for (let y = 0; y < cropHeight; y += 1) {
+            for (let x = 0; x < cropWidth; x += 1) {
+                if (inkAt(textMask, mx0 + x + 0.5, my0 + y + 0.5) < 0.3) continue;
+                marked[y * cropWidth + x] = 1;
+                inkPixels += 1;
+            }
+        }
+        if (inkPixels === 0) continue;
+
+        // Grow by two page pixels to cover the anti-aliased edge of a stroke.
+        const grown = new Uint8Array(marked.length);
+        for (let y = 0; y < cropHeight; y += 1) {
+            for (let x = 0; x < cropWidth; x += 1) {
+                if (marked[y * cropWidth + x] === 0) continue;
+                const top = Math.max(0, y - 2);
+                const bottom = Math.min(cropHeight - 1, y + 2);
+                const left = Math.max(0, x - 2);
+                const right = Math.min(cropWidth - 1, x + 2);
+                for (let ny = top; ny <= bottom; ny += 1) {
+                    grown.fill(1, ny * cropWidth + left, ny * cropWidth + right + 1);
+                }
+            }
+        }
+
+        const maskCanvas = document.createElement('canvas');
+        maskCanvas.width = cropWidth;
+        maskCanvas.height = cropHeight;
+        const maskContext = maskCanvas.getContext('2d');
+        if (!maskContext) continue;
+        const maskImage = maskContext.createImageData(cropWidth, cropHeight);
+        for (let index = 0; index < grown.length; index += 1) {
+            if (grown[index] === 0) continue;
+            const offset = index * 4;
+            maskImage.data[offset] = red;
+            maskImage.data[offset + 1] = green;
+            maskImage.data[offset + 2] = blue;
+            maskImage.data[offset + 3] = 255;
+        }
+        maskContext.putImageData(maskImage, 0, 0);
+        group.maskUrl = maskCanvas.toDataURL('image/png');
+        group.maskBox = { x: mx0, y: my0, width: cropWidth, height: cropHeight };
+    }
+}
+
 async function runDetection(request: OffscreenDetectRequest): Promise<DetectResponse> {
     const started = performance.now();
     const warm = isSessionReady();
@@ -60,39 +255,6 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             ...expandToInk(line, detected.mask),
         }));
 
-        // The boxes are good, so the erase is simply a white fill of each one.
-        // Balloon interiors are paper, so this is what a letterer would do: lift
-        // the old text off the page, then set the new text in the same place.
-        let erasedUrl: string | null = null;
-        {
-            const canvas = document.createElement('canvas');
-            canvas.width = bitmap.width;
-            canvas.height = bitmap.height;
-            const context = canvas.getContext('2d');
-            if (context) {
-                context.drawImage(bitmap, 0, 0);
-                context.fillStyle = '#ffffff';
-                const pad = 2;
-                for (const line of lines) {
-                    context.fillRect(
-                        line.x - pad,
-                        line.y - pad,
-                        line.width + pad * 2,
-                        line.height + pad * 2,
-                    );
-                    for (const ruby of line.ruby) {
-                        context.fillRect(
-                            ruby.x - pad,
-                            ruby.y - pad,
-                            ruby.width + pad * 2,
-                            ruby.height + pad * 2,
-                        );
-                    }
-                }
-                erasedUrl = canvas.toDataURL('image/webp', 0.92);
-            }
-        }
-
         const collected: BoxData[] = [];
         for (const line of lines) {
             const recognised = await recognizeLine(bitmap, line, line.direction === 'vertical').catch(
@@ -101,9 +263,11 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             collected.push({ ...line, text: recognised.text, confidence: recognised.confidence });
         }
 
+        const usable = collected.filter((line) => !skipAsNonDialogue(line, balloonList));
+
         const groups: GroupData[] = [];
         const perGroup: string[][] = grouped.boxes.map(() => []);
-        for (const line of collected) {
+        for (const line of usable) {
             for (let index = 0; index < grouped.boxes.length; index += 1) {
                 if (!centreInsideBox(line, grouped.boxes[index])) continue;
                 perGroup[index].push(line.text);
@@ -112,13 +276,54 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         }
         grouped.boxes.forEach((box, index) => {
             const text = perGroup[index].filter((value) => value.length > 0);
-            if (text.length > 0) groups.push({ ...box, lines: text });
+            if (text.length > 0) groups.push({ ...box, lines: text, fontSize: groupFontSize(usable, box) });
         });
-        for (const line of collected) {
+        for (const line of usable) {
             if (groups.some((group) => centreInsideBox(line, group))) continue;
             if (line.text.length === 0) continue;
-            groups.push({ x: line.x, y: line.y, width: line.width, height: line.height, lines: [line.text] });
+            groups.push({
+                x: line.x,
+                y: line.y,
+                width: line.width,
+                height: line.height,
+                lines: [line.text],
+                fontSize: groupFontSize(usable, line),
+            });
         }
+
+        // A merged balloon region can hold two physical balloons. Split by the
+        // gap between columns before translation, or the two speeches become one
+        // paragraph that can only be placed in one of them.
+        const splitGroups: GroupData[] = [];
+        for (const group of groups) {
+            const clusters = splitGroupByColumnGap(group, usable);
+            if (clusters.length <= 1) {
+                splitGroups.push(group);
+                continue;
+            }
+            for (const cluster of clusters) {
+                const text = cluster.map((line) => line.text).filter((value) => value.length > 0);
+                if (text.length === 0) continue;
+                let minX = Number.POSITIVE_INFINITY;
+                let minY = Number.POSITIVE_INFINITY;
+                let maxX = Number.NEGATIVE_INFINITY;
+                let maxY = Number.NEGATIVE_INFINITY;
+                for (const line of cluster) {
+                    minX = Math.min(minX, line.x);
+                    minY = Math.min(minY, line.y);
+                    maxX = Math.max(maxX, line.x + line.width);
+                    maxY = Math.max(maxY, line.y + line.height);
+                }
+                const clusterBox = { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+                splitGroups.push({
+                    ...clusterBox,
+                    lines: text,
+                    fontSize: groupFontSize(usable, clusterBox),
+                });
+            }
+        }
+
+        paintGroupColours(bitmap, splitGroups, usable, detected.mask);
 
         const previews = cropPreviews(bitmap, collected.slice(0, MAX_PREVIEWS));
 
@@ -129,9 +334,8 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             imageWidth: bitmap.width,
             imageHeight: bitmap.height,
             groupedLines: grouped.lines.length,
-            groups,
+            groups: splitGroups,
             bubbleError,
-            erasedUrl,
             bubbles: balloonList.map((bubble) => ({
                 x: bubble.x,
                 y: bubble.y,

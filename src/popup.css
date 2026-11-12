@@ -1,6 +1,6 @@
 /* Chrome caps an action popup at 800 by 600, so the page fills that box. */
 body {
-  width: 1800px;
+  width: 720px;
   min-height: 560px;
   max-height: 600px;
   overflow-y: auto;
@@ -97,105 +97,15 @@ button[data-busy='true'] {
   color: #333;
 }
 
+.toggle {
+  display: block;
+  margin: 0 0 8px;
+  color: #444;
+}
 
 .bubble {
   position: absolute;
   box-sizing: border-box;
   border: 1px dashed #2f7bd8;
   pointer-events: none;
-}
-
-.typeset {
-  position: absolute;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px;
-  background: #ffffff;
-  color: #1a1a1a;
-  line-height: 1.25;
-  text-align: center;
-  writing-mode: horizontal-tb;
-  pointer-events: none;
-  overflow: hidden;
-}
-
-.typeset[data-vertical='true'] {
-  writing-mode: vertical-rl;
-  text-align: start;
-}
-
-.keys {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 6px 10px;
-  font-size: 12px;
-  align-items: center;
-}
-
-.keys label {
-  display: contents;
-}
-
-.keys select,
-.keys input {
-  padding: 4px 6px;
-  font-family: inherit;
-  font-size: 12px;
-}
-
-.keys .save {
-  justify-self: start;
-}
-
-.groups ol {
-  margin: 0;
-  padding-left: 18px;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.groups .source {
-  margin: 0;
-  color: #6a6a6a;
-}
-
-.groups .target {
-  margin: 0 0 6px;
-}
-
-.keys .hint {
-  font-variant-numeric: tabular-nums;
-  color: #4a4a4a;
-}
-
-.debug {
-  font-size: 12px;
-}
-
-.debug-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px;
-}
-
-.debug-grid figure {
-  margin: 0;
-}
-
-.debug-grid img {
-  width: 100%;
-  border: 1px solid #ccc;
-}
-
-.debug-grid figcaption {
-  text-align: center;
-  color: #555;
-}
-
-.download {
-  display: inline-block;
-  margin: 4px 0 8px;
-  font-size: 12px;
 }

@@ -352,3 +352,56 @@ export function toOrderedTextLines(
     const merged = mergeAligned(dropNoise(kept));
     return orderForReading(separateRuby(toTextLines(merged)));
 }
+
+/**
+ * A balloon detector can merge two touching balloons into one region. The
+ * columns inside one balloon sit almost edge to edge, while two balloons leave
+ * a gap. Split a vertical group wherever that gap is clearly wider than the
+ * stroke thickness, so each balloon is translated and placed on its own.
+ */
+export function splitGroupByColumnGap<T extends {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    direction?: 'vertical' | 'horizontal';
+}>(
+    group: { x: number; y: number; width: number; height: number },
+    lines: T[],
+): T[][] {
+    const inside = lines.filter((line) => {
+        const centreX = line.x + line.width / 2;
+        const centreY = line.y + line.height / 2;
+        return centreX >= group.x && centreX <= group.x + group.width
+            && centreY >= group.y && centreY <= group.y + group.height;
+    });
+    if (inside.length < 2) return inside.length > 0 ? [inside] : [];
+
+    const vertical = inside.filter((line) =>
+        (line.direction ?? (line.height >= line.width ? 'vertical' : 'horizontal')) === 'vertical',
+    ).length;
+    if (vertical < inside.length / 2) return [inside];
+
+    // Japanese vertical text reads right to left, so a right-to-left sort makes
+    // both the gaps and the resulting cluster order meaningful.
+    const ordered = [...inside].sort(
+        (a, b) => (b.x + b.width / 2) - (a.x + a.width / 2),
+    );
+
+    const clusters: T[][] = [];
+    let current: T[] = [ordered[0]];
+    for (let index = 1; index < ordered.length; index += 1) {
+        const previous = current[current.length - 1];
+        const next = ordered[index];
+        const gap = previous.x - (next.x + next.width);
+        const thickness = Math.min(previous.width, next.width);
+        if (gap > Math.max(thickness * 1.6, 12)) {
+            clusters.push(current);
+            current = [next];
+        } else {
+            current.push(next);
+        }
+    }
+    clusters.push(current);
+    return clusters;
+}

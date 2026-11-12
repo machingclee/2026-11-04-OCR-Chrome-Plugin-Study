@@ -54,7 +54,58 @@ export type GroupData = {
     width: number;
     height: number;
     lines: string[];
+    /** Median colour of the paper around this group, as a CSS colour. */
+    background?: string;
+    /** A text colour that contrasts with the background. */
+    color?: string;
+    /** Glyph-shaped label image; painted pixels come from the seg mask. */
+    maskUrl?: string;
+    /** Where that image sits inside the group, in image pixels. */
+    maskBox?: { x: number; y: number; width: number; height: number };
+    /** Fall back to a rectangular fill only when no seg mask exists at all. */
+    rectangle?: boolean;
+    /** Original glyph thickness in image pixels, used for the label font size. */
+    fontSize?: number;
 };
+
+/** One absolutely positioned translation, in the image's own pixels. */
+export type OverlayItem = {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    text: string;
+    vertical: boolean;
+    /** Label colour sampled from the paper; defaults to white. */
+    background?: string;
+    color?: string;
+    /** Glyph-shaped label image; when present it replaces the rectangular fill. */
+    maskUrl?: string;
+    maskBox?: { x: number; y: number; width: number; height: number };
+    /** Only true when the detector supplied no seg mask. */
+    rectangle?: boolean;
+    /** Original glyph thickness in image pixels, used for the label font size. */
+    fontSize?: number;
+};
+
+/** Popup to content script: place these boxes over the picked image. */
+export type OverlayRequest = {
+    /** The token stored when the image was picked. */
+    token?: string;
+    imageUrl: string;
+    /** Natural image size; every item coordinate is in this space. */
+    width: number;
+    height: number;
+    items: OverlayItem[];
+    fontFamily: string;
+    weight: 'normal' | 'bold';
+    leading: number;
+};
+
+/** Content script to popup. */
+export type OverlayResponse =
+    | { ok: true; count: number }
+    | { ok: false; error: string };
 
 /** Service worker to offscreen document. */
 export type OffscreenDetectRequest = {
@@ -93,7 +144,6 @@ export type DetectResponse =
           imageHeight: number;
           groupedLines: number;
           groups: GroupData[];
-          erasedUrl: string | null;
           bubbleError: string | null;
           bubbles: BubbleData[];
       }

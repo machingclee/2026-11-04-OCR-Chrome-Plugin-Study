@@ -1,4 +1,9 @@
-import { PICKED_IMAGE_URL_KEY } from '../shared/constants';
+import {
+    OVERLAY_TARGET_ATTRIBUTE,
+    PICKED_IMAGE_TARGET_KEY,
+    PICKED_IMAGE_URL_KEY,
+} from '../shared/constants';
+import { clearAll } from './overlay';
 import { HIGHLIGHT_ID, IMAGE_URL_PATTERN, SHIELD_ID, TOAST_ID } from './constants';
 
 
@@ -8,7 +13,7 @@ declare global {
     }
 }
 
-type Hit = { url: string; rect: DOMRect };
+type Hit = { url: string; rect: DOMRect; element: HTMLElement };
 
 function showToast(message: string): void {
     document.getElementById(TOAST_ID)?.remove();
@@ -152,16 +157,20 @@ function findAt(doc: Document, x: number, y: number, offsetX: number, offsetY: n
         const image = containedImage(element, x, y);
         if (image) {
             const rect = image.getBoundingClientRect();
-            return { url: imageUrl(image), rect: shift(rect, offsetX, offsetY) };
+            return { url: imageUrl(image), rect: shift(rect, offsetX, offsetY), element: image };
         }
 
         const background = containedBackground(element, x, y);
-        if (background) return { url: background.url, rect: shift(background.box.getBoundingClientRect(), offsetX, offsetY) };
+        if (background) return {
+            url: background.url,
+            rect: shift(background.box.getBoundingClientRect(), offsetX, offsetY),
+            element: background.box,
+        };
 
         const link = element.closest('a');
         if (link instanceof HTMLAnchorElement && IMAGE_URL_PATTERN.test(link.href)) {
             const rect = link.getBoundingClientRect();
-            return { url: link.href, rect: shift(rect, offsetX, offsetY) };
+            return { url: link.href, rect: shift(rect, offsetX, offsetY), element: link };
         }
     }
 
@@ -169,6 +178,9 @@ function findAt(doc: Document, x: number, y: number, offsetX: number, offsetY: n
 }
 
 function start(): void {
+    // A new pick replaces the previous translation overlay.
+    clearAll();
+
     const shield = document.createElement('div');
     shield.id = SHIELD_ID;
     shield.style.position = 'fixed';
@@ -235,8 +247,20 @@ function start(): void {
             return;
         }
 
+        // The URL alone is ambiguous when a page repeats the same thumbnail.
+        // Mark the exact element so the overlay lands on the one that was picked.
+        const owner = hit.element.ownerDocument;
+        owner.querySelectorAll(`[${OVERLAY_TARGET_ATTRIBUTE}]`).forEach((node) => {
+            node.removeAttribute(OVERLAY_TARGET_ATTRIBUTE);
+        });
+        const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        hit.element.setAttribute(OVERLAY_TARGET_ATTRIBUTE, token);
+
         chrome.storage.local
-            .set({ [PICKED_IMAGE_URL_KEY]: hit.url })
+            .set({
+                [PICKED_IMAGE_URL_KEY]: hit.url,
+                [PICKED_IMAGE_TARGET_KEY]: token,
+            })
             .then(() => showToast(`Picked ${hit.url}`))
             .catch((cause: unknown) => {
                 const message = cause instanceof Error ? cause.message : String(cause);
@@ -256,9 +280,17 @@ function start(): void {
     showToast('Pick mode is on. Click an image, or press Escape.');
 }
 
-if (!window.__comicTranslatorPickerActive) {
-    window.__comicTranslatorPickerActive = true;
-    start();
-}
+// The same bundle is injected for the overlay, so the popup starts the picker
+// explicitly through this handle; importing the bundle must not open pick mode.
+const pickerScope = window as unknown as {
+    __comicTranslatorPicker?: { start: () => void };
+};
+pickerScope.__comicTranslatorPicker = {
+    start: () => {
+        if (window.__comicTranslatorPickerActive) return;
+        window.__comicTranslatorPickerActive = true;
+        start();
+    },
+};
 
 export { };

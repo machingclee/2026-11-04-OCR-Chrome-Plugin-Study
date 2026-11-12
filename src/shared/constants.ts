@@ -12,11 +12,15 @@ export const OFFSCREEN_HTML = 'offscreen.html';
 export const SERVICE_WORKER_TARGET = 'service-worker';
 export const OFFSCREEN_TARGET = 'offscreen';
 
-/** File injected into the page when the user picks an image. */
+/** File injected into the page when the user picks an image or applies overlays. */
 export const CONTENT_SCRIPT_FILE = 'pickImage.js';
 
 /** Storage key that carries a picked image URL from the content script. */
 export const PICKED_IMAGE_URL_KEY = 'pickedImageUrl';
+/** Marks the exact image element that was picked, so a duplicate URL is unambiguous. */
+export const PICKED_IMAGE_TARGET_KEY = 'pickedImageTarget';
+/** Attribute that carries the pick token on that element. */
+export const OVERLAY_TARGET_ATTRIBUTE = 'data-comic-translator-target';
 
 /** Last successful result, readable by the popup after it reopens. */
 
