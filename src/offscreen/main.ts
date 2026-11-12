@@ -39,25 +39,38 @@ function isSfxLine(text: string): boolean {
     return unique.size === 1 || characters[0] === characters[characters.length - 1];
 }
 
-function insideBalloon(line: BoxData, balloons: { x: number; y: number; width: number; height: number }[]): boolean {
-    const x = line.x + line.width / 2;
-    const y = line.y + line.height / 2;
-    return balloons.some((balloon) =>
-        x >= balloon.x && x <= balloon.x + balloon.width
-        && y >= balloon.y && y <= balloon.y + balloon.height);
-}
-
-function skipAsNonDialogue(line: BoxData, balloons: { x: number; y: number; width: number; height: number }[]): boolean {
+function skipAsNonDialogue(
+    line: BoxData,
+    balloons: { x: number; y: number; width: number; height: number }[],
+    medianThickness: number,
+): boolean {
     const text = line.text.trim();
     if (text.length === 0) return false;
     if (isUiLine(text)) return true;
-    const outside = !insideBalloon(line, balloons);
+
+    const centreX = line.x + line.width / 2;
+    const centreY = line.y + line.height / 2;
+    const bubble = balloons.find((candidate) =>
+        centreX >= candidate.x && centreX <= candidate.x + candidate.width
+        && centreY >= candidate.y && centreY <= candidate.y + candidate.height);
+    const outside = !bubble;
     if (isSfxLine(text) && outside) return true;
+
+    const normalised = text.replace(/[\s!！?？.…。、・「」『』]/gu, '');
+    const kanaOnly = /^[\u3040-\u30FF\u30FC]+$/u.test(normalised);
+    const shortSide = Math.min(line.width, line.height);
+
+    // A huge kana run is a sound effect, not dialogue. A real balloon is much
+    // larger than its text; a false bubble around SFX barely exceeds the glyphs.
+    if (kanaOnly && normalised.length <= 6 && medianThickness > 0 && shortSide > medianThickness * 2.2) {
+        const fill = bubble ? (bubble.width * bubble.height) / Math.max(1, line.width * line.height) : 0;
+        if (fill < 2.5) return true;
+    }
+
     // Short kana-only text outside every balloon is usually OCR noise from a
     // sound effect or artwork. Kanji or mixed script outside a balloon can be
     // narration or a caption, so keep it even when the OCR confidence is low.
-    const kanaOnly = /^[\u3040-\u30FF\u30FC・。、…！？!?]+$/u.test(text);
-    if (outside && kanaOnly && text.length <= 8 && line.confidence < 0.7) return true;
+    if (outside && kanaOnly && normalised.length <= 8 && line.confidence < 0.7) return true;
     return false;
 }
 
@@ -299,7 +312,12 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         timings.ocr = Math.round(performance.now() - ocrStarted);
         timings.extras = Math.round(performance.now() - started - timings.fetch - timings.detect - timings.group - timings.ocr);
 
-        const usable = collected.filter((line) => !skipAsNonDialogue(line, balloonList));
+        const thicknesses = collected
+            .map((line) => Math.min(line.width, line.height))
+            .filter((size) => size >= 4)
+            .sort((left, right) => left - right);
+        const medianThickness = thicknesses.length > 0 ? thicknesses[thicknesses.length >> 1] : 0;
+        const usable = collected.filter((line) => !skipAsNonDialogue(line, balloonList, medianThickness));
 
         const groups: GroupData[] = [];
         const perGroup: string[][] = grouped.boxes.map(() => []);
