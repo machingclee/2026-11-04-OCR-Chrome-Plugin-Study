@@ -7,7 +7,7 @@ const BOX_ATTR = 'data-comic-translator-box';
 const IMAGE_STYLE_ATTR = 'data-comic-translator-image-style';
 const POSITION_ATTR = 'data-comic-translator-position';
 
-let stopWatching: (() => void) | null = null;
+const stopWatchers = new Map<HTMLElement, () => void>();
 
 type ImageStyle = {
     display: string;
@@ -153,36 +153,69 @@ function attachLayer(element: HTMLElement): HTMLElement {
  * as soon as the node changes, disappears or gets a different source.
  */
 function watchTarget(target: HTMLElement): void {
-    stopWatching?.();
+    stopWatchers.get(target)?.();
 
     if (target instanceof HTMLImageElement) {
         const src = target.getAttribute('src');
         const srcset = target.getAttribute('srcset');
         const changed = (): void => {
             if (!target.isConnected || target.getAttribute('src') !== src || target.getAttribute('srcset') !== srcset) {
-                clearAll();
+                clearTarget(target);
             }
         };
         const observer = new MutationObserver(changed);
         observer.observe(target, { attributes: true, attributeFilter: ['src', 'srcset'] });
         if (target.parentElement) observer.observe(target.parentElement, { childList: true });
-        stopWatching = () => {
+        stopWatchers.set(target, () => {
             observer.disconnect();
-            stopWatching = null;
-        };
+            stopWatchers.delete(target);
+        });
         return;
     }
 
     const background = backgroundUrl(target);
     const changed = (): void => {
-        if (!target.isConnected || backgroundUrl(target) !== background) clearAll();
+        if (!target.isConnected || backgroundUrl(target) !== background) clearTarget(target);
     };
     const observer = new MutationObserver(changed);
     observer.observe(target, { attributes: true, attributeFilter: ['style', 'class'] });
-    stopWatching = () => {
+    stopWatchers.set(target, () => {
         observer.disconnect();
-        stopWatching = null;
-    };
+        stopWatchers.delete(target);
+    });
+}
+
+/** Remove only the overlay attached to this image, not the rest of a batch. */
+function clearTarget(target: HTMLElement): void {
+    stopWatchers.get(target)?.();
+    stopWatchers.delete(target);
+
+    const wrapper = target.closest<HTMLElement>(`[${WRAPPER_ATTR}]`);
+    if (wrapper) {
+        const parent = wrapper.parentNode;
+        for (const child of [...wrapper.children]) {
+            if (child.hasAttribute(LAYER_ATTR)) {
+                child.remove();
+                continue;
+            }
+            if (child instanceof HTMLImageElement) restoreStyle(child);
+            if (child instanceof HTMLPictureElement) {
+                const nested = child.querySelector('img');
+                if (nested) restoreStyle(nested);
+            }
+            parent?.insertBefore(child, wrapper);
+        }
+        wrapper.remove();
+        return;
+    }
+
+    for (const layer of target.querySelectorAll<HTMLElement>(`[${LAYER_ATTR}]`)) {
+        layer.remove();
+    }
+    if (target.hasAttribute(POSITION_ATTR)) {
+        target.style.position = target.getAttribute(POSITION_ATTR) ?? '';
+        target.removeAttribute(POSITION_ATTR);
+    }
 }
 
 /** Let the reader move a label away from the artwork it is covering. */
@@ -382,11 +415,11 @@ function fitBoxes(layer: HTMLElement, leading: number): void {
 }
 
 function apply(request: OverlayRequest): OverlayResponse {
-    clearAll();
     const target = findTarget(request);
     if (!target) {
         return { ok: false, error: 'The picked image is no longer on this page.' };
     }
+    clearTarget(target);
 
     const width = request.width > 0 ? request.width : target.clientWidth;
     const height = request.height > 0 ? request.height : target.clientHeight;
@@ -416,7 +449,8 @@ function apply(request: OverlayRequest): OverlayResponse {
  * overlays left by an earlier injection of this script.
  */
 function clearAll(): void {
-    stopWatching?.();
+    for (const cleanup of [...stopWatchers.values()]) cleanup();
+    stopWatchers.clear();
 
     for (const wrapper of document.querySelectorAll<HTMLElement>(`[${WRAPPER_ATTR}]`)) {
         const parent = wrapper.parentNode;
