@@ -1,5 +1,9 @@
-const MODEL = 'gemini-2.5-flash';
-const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+/**
+ * Fixed free-tier model for the vision check. The translation model stays a
+ * separate, optional choice; this classifier never follows that setting.
+ */
+const VISION_MODEL = 'gemini-2.5-flash';
+const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${VISION_MODEL}:generateContent`;
 
 export type VisionVerdict = 'real_text' | 'sfx' | 'false_positive' | 'uncertain';
 

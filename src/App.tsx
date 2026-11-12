@@ -763,6 +763,9 @@ export default function App() {
                             setDirty(true);
                         }}
                     />
+                    <span className="hint">
+                        Also used for the free Gemini 2.5 Flash vision SFX check when present. Translation can stay on DeepSeek.
+                    </span>
                 </label>
 
                 <label>
