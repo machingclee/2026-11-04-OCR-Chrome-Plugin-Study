@@ -491,14 +491,6 @@ function ensureBoxStyle(): void {
     if (document.getElementById('comic-translator-box-style')) return;
     const style = document.createElement('style');
     style.id = 'comic-translator-box-style';
-    style.textContent = `[${BOX_ATTR}="true"] { height: unset !important; padding-top: 10px !important; }`;
-    document.head.appendChild(style);
-}
-
-function ensureBoxStyle(): void {
-    if (document.getElementById('comic-translator-box-style')) return;
-    const style = document.createElement('style');
-    style.id = 'comic-translator-box-style';
     style.textContent = `[${BOX_ATTR}="true"] { overflow: visible !important; }`;
     document.head.appendChild(style);
 }
