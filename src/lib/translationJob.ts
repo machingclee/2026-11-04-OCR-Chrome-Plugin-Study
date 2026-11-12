@@ -260,7 +260,7 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
             const glyphs = Math.max(1, [...column].length);
             return (vertical ? line.height : line.width) / glyphs;
         });
-        const fittedFont = Math.max(Math.max(6, Math.round(font * 0.9)), Math.min(font, ...fitSizes));
+        const fittedFont = Math.max(6, Math.round(font));
 
         if (columns.length > 1 && columns.length <= sortedLines.length) {
             sortedLines.slice(0, columns.length).forEach((line, columnIndex) => {

@@ -455,7 +455,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             if (context) {
                 context.drawImage(bitmap, 0, 0);
                 const image = context.getImageData(0, 0, canvas.width, canvas.height);
-                let mask = refineMask(usable, detected.mask, canvas.width, canvas.height);
+                let mask = refineMask(detected.detBoxes, detected.mask, canvas.width, canvas.height);
                 let maskPixels = 0;
                 for (const value of mask) if (value === 1) maskPixels += 1;
                 // Use only the refined seg mask. Filling whole detection boxes
