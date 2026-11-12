@@ -111,8 +111,6 @@ export default function App() {
     }, [view]);
     const [targetToken, setTargetToken] = useState<string | undefined>();
     const settingsLoaded = useRef(false);
-    const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
-    const saveVersion = useRef(0);
 
     useEffect(() => {
         // start working when we open this popup again,
@@ -220,29 +218,6 @@ export default function App() {
             setError(cause instanceof Error ? cause.message : String(cause));
         }
     }, []);
-
-    // Persist every setting as it changes. The old flow only wrote the API keys
-    // when Save settings ran, so typing a key and closing the popup lost it.
-    useEffect(() => {
-        if (!settingsLoaded.current) return;
-        const version = saveVersion.current + 1;
-        saveVersion.current = version;
-        const payload = {
-            [GEMINI_KEY]: geminiKey.trim(),
-            [DEEPSEEK_KEY]: deepSeekKey.trim(),
-            [TRANSLATOR_KEY]: translator,
-        };
-        saveQueue.current = saveQueue.current
-            .catch(() => undefined)
-            .then(() => chrome.storage.local.set(payload))
-            .then(() => {
-                if (version === saveVersion.current) setDirty(false);
-            })
-            .catch((cause: unknown) => {
-                setError(`Could not save settings: ${cause instanceof Error ? cause.message : String(cause)}`);
-                setDirty(true);
-            });
-    }, [deepSeekKey, geminiKey, translator]);
 
     const runDetect = useCallback(async (): Promise<DetectResponse | null> => {
         if (!imageUrl) return null;
@@ -428,6 +403,21 @@ export default function App() {
         }).catch(() => undefined);
     }, []);
 
+    const handleSaveSettings = useCallback(async () => {
+        try {
+            await chrome.storage.local.set({
+                [GEMINI_KEY]: geminiKey.trim(),
+                [DEEPSEEK_KEY]: deepSeekKey.trim(),
+                [TRANSLATOR_KEY]: translator,
+            });
+            setDirty(false);
+            setStatus('Settings saved.');
+        } catch (cause) {
+            setError(`Could not save settings: ${cause instanceof Error ? cause.message : String(cause)}`);
+            setDirty(true);
+        }
+    }, [deepSeekKey, geminiKey, translator]);
+
     return (
         <main className={`mx-auto flex flex-col gap-3 rounded-md bg-[#f4f1ec] p-3 text-slate-900 transition-[width] duration-200 ease-out ${view === 'debug' ? 'w-[720px]' : 'w-[480px]'}`}>
             <div className="flex self-start rounded-md bg-[#e9e3da] p-1">
@@ -520,10 +510,15 @@ to pick an image, then click the check mark. Change the binding in chrome://exte
             <section className="rounded-md border border-[#e7dfd4] bg-white p-3 shadow-sm">
                 <div className="flex items-center justify-between gap-3">
                     <h2 className="text-sm font-semibold">Translation settings</h2>
-                    <div className={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium ${dirty ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                    <button
+                        type="button"
+                        onClick={handleSaveSettings}
+                        disabled={!dirty}
+                        className={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition ${dirty ? 'bg-amber-50 text-amber-700 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-700'}`}
+                    >
                         <span className={`h-1.5 w-1.5 rounded-full ${dirty ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-                        {dirty ? 'Unsaved' : 'Saved'}
-                    </div>
+                        {dirty ? 'Save' : 'Saved'}
+                    </button>
                 </div>
 
                 <div className="mt-2 grid grid-cols-2 gap-2">
@@ -532,10 +527,8 @@ to pick an image, then click the check mark. Change the binding in chrome://exte
                         <select
                             value={translator}
                             onChange={(event) => {
-                                const choice = event.target.value as TranslatorChoice;
-                                setTranslator(choice);
+                                setTranslator(event.target.value as TranslatorChoice);
                                 setDirty(true);
-                                void chrome.storage.local.set({ [TRANSLATOR_KEY]: choice });
                             }}
                             className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-[#b08a68] focus:ring-2 focus:ring-[#eadfd2]"
                         >

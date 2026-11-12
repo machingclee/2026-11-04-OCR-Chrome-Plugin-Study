@@ -1,4 +1,4 @@
-import * as ort from 'onnxruntime-web/wasm';
+import * as ort from 'onnxruntime-web/webgpu';
 import {
     DETECTOR_INPUT_SIZE,
     DETECTOR_MIN_AREA,
@@ -9,6 +9,8 @@ import {
 } from '../shared/constants';
 
 ort.env.wasm.numThreads = 1;
+
+const webgpu = typeof navigator !== 'undefined' && 'gpu' in navigator;
 
 import { foldAngle, minAreaRect } from './rect';
 import type { Box, DetectionResult, Prepared, TextBlock } from './types';
@@ -22,13 +24,26 @@ export function isSessionReady(): boolean {
 export function loadDetector(): Promise<ort.InferenceSession> {
     if (!sessionPromise) {
         sessionPromise = ort.InferenceSession.create(chrome.runtime.getURL(DETECTOR_MODEL_PATH), {
-            executionProviders: ['wasm'],
+            executionProviders: webgpu ? ['webgpu', 'wasm'] : ['wasm'],
             graphOptimizationLevel: 'all',
-        }).catch((cause: unknown) => {
-            sessionPromise = null;
-            throw cause;
+        }).catch(async (cause: unknown) => {
+            if (!webgpu) {
+                sessionPromise = null;
+                throw cause;
+            }
+            console.warn('WebGPU detector failed, using WASM.', cause);
+            try {
+                return await ort.InferenceSession.create(chrome.runtime.getURL(DETECTOR_MODEL_PATH), {
+                    executionProviders: ['wasm'],
+                    graphOptimizationLevel: 'all',
+                });
+            } catch (fallbackCause) {
+                sessionPromise = null;
+                throw fallbackCause;
+            }
         });
     }
+    void sessionPromise.then(() => console.info(`Detector provider: ${webgpu ? 'webgpu preferred' : 'wasm'}`));
     return sessionPromise;
 }
 

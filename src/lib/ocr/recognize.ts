@@ -1,22 +1,36 @@
-import * as ort from 'onnxruntime-web/wasm';
+import * as ort from 'onnxruntime-web/webgpu';
 import { OCR_DICT_PATH, OCR_MODEL_PATH } from '../../shared/constants';
 import { loadCharset } from './charset';
 import { decodeCtc } from './decode';
 import { buildOcrInput } from './prepare';
 import type { Box, OcrResult } from '../types';
 
+const webgpu = typeof navigator !== 'undefined' && 'gpu' in navigator;
 let sessionPromise: Promise<ort.InferenceSession> | null = null;
 
 function loadSession(): Promise<ort.InferenceSession> {
     if (!sessionPromise) {
         sessionPromise = ort.InferenceSession.create(chrome.runtime.getURL(OCR_MODEL_PATH), {
-            executionProviders: ['wasm'],
+            executionProviders: webgpu ? ['webgpu', 'wasm'] : ['wasm'],
             graphOptimizationLevel: 'all',
-        }).catch((cause: unknown) => {
-            sessionPromise = null;
-            throw cause;
+        }).catch(async (cause: unknown) => {
+            if (!webgpu) {
+                sessionPromise = null;
+                throw cause;
+            }
+            console.warn('WebGPU OCR failed, using WASM.', cause);
+            try {
+                return await ort.InferenceSession.create(chrome.runtime.getURL(OCR_MODEL_PATH), {
+                    executionProviders: ['wasm'],
+                    graphOptimizationLevel: 'all',
+                });
+            } catch (fallbackCause) {
+                sessionPromise = null;
+                throw fallbackCause;
+            }
         });
     }
+    void sessionPromise.then(() => console.info(`OCR provider: ${webgpu ? 'webgpu preferred' : 'wasm'}`));
     return sessionPromise;
 }
 

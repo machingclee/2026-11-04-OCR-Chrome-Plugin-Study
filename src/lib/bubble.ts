@@ -1,4 +1,4 @@
-import * as ort from 'onnxruntime-web/wasm';
+import * as ort from 'onnxruntime-web/webgpu';
 import {
     BUBBLE_INPUT_SIZE,
     BUBBLE_MASK_THRESHOLD,
@@ -10,15 +10,25 @@ import type { Bubble, BubbleMask, Box } from './types';
 
 if (ort.env?.wasm) ort.env.wasm.numThreads = 1;
 
+const webgpu = typeof navigator !== 'undefined' && 'gpu' in navigator;
+
 let sessionPromise: Promise<ort.InferenceSession> | null = null;
 
 function loadBubble(): Promise<ort.InferenceSession> {
     if (!sessionPromise) {
         sessionPromise = ort.InferenceSession.create(chrome.runtime.getURL(BUBBLE_MODEL_PATH), {
-            executionProviders: ['wasm'],
+            executionProviders: webgpu ? ['webgpu', 'wasm'] : ['wasm'],
             graphOptimizationLevel: 'all',
+        }).catch(async (cause: unknown) => {
+            if (!webgpu) throw cause;
+            console.warn('WebGPU bubble model failed, using WASM.', cause);
+            return ort.InferenceSession.create(chrome.runtime.getURL(BUBBLE_MODEL_PATH), {
+                executionProviders: ['wasm'],
+                graphOptimizationLevel: 'all',
+            });
         });
     }
+    void sessionPromise.then(() => console.info(`Bubble provider: ${webgpu ? 'webgpu preferred' : 'wasm'}`));
     return sessionPromise;
 }
 
