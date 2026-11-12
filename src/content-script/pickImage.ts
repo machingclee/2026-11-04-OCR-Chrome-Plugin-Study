@@ -56,7 +56,7 @@ function isPickerUi(element: Element): boolean {
 }
 
 function isBatchUi(element: Element): boolean {
-    return Boolean(element.closest(`#${BATCH_BAR_ID}`) || element.closest(`[${BATCH_MARK_ATTR}]`));
+    return Boolean(element.closest(`#${BATCH_BAR_ID}`) || element.closest(`[${BATCH_MARK_ATTR}]`) || element.closest('[data-comic-translator-batch-progress]'));
 }
 
 function absoluteUrl(value: string): string {
