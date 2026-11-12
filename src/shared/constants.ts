@@ -25,6 +25,7 @@ export const OVERLAY_TARGET_ATTRIBUTE = 'data-comic-translator-target';
 /** Last successful result, readable by the popup after it reopens. */
 
 export const LAST_RESULT_KEY = 'lastDetection';
+export const BATCH_STATE_KEY = 'translationBatch';
 
 /** Bump only when the stored detection shape changes, not on every build. */
 export const DETECTION_CACHE_VERSION = 'detection-v3';

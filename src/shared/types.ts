@@ -4,7 +4,7 @@ export type MessageTarget =
     | typeof SERVICE_WORKER_TARGET
     | typeof OFFSCREEN_TARGET;
 
-export type MessageType = 'detect' | 'translate' | 'ping';
+export type MessageType = 'detect' | 'translate' | 'translate-batch' | 'batch-progress' | 'cancel-batch' | 'ping';
 
 export type RubyBox = {
     x: number;
@@ -141,6 +141,8 @@ export type PingResponse = { ok: true };
 export type IncomingMessage =
     | DetectRequest
     | TranslateRequest
+    | TranslateBatchRequest
+    | CancelBatchRequest
     | OffscreenDetectRequest
     | OffscreenPing;
 
@@ -216,3 +218,46 @@ export type TranslateResponse =
           timings?: DetectTimings;
       }
     | { ok: false; error: string };
+
+
+export type BatchItem = {
+    imageUrl: string;
+    token?: string;
+};
+
+export type BatchItemState = BatchItem & {
+    status: 'pending' | 'running' | 'done' | 'error';
+    error?: string;
+};
+
+export type BatchState = {
+    id: string;
+    tabId: number;
+    status: 'running' | 'done' | 'cancelled';
+    items: BatchItemState[];
+    createdAt: number;
+    updatedAt: number;
+};
+
+export type TranslateBatchRequest = {
+    target: typeof SERVICE_WORKER_TARGET;
+    type: 'translate-batch';
+    items: BatchItem[];
+    tabId?: number;
+    settings?: TranslateSettings;
+};
+
+export type TranslateBatchResponse =
+    | { ok: true; batchId: string; count: number }
+    | { ok: false; error: string };
+
+export type CancelBatchRequest = {
+    target: typeof SERVICE_WORKER_TARGET;
+    type: 'cancel-batch';
+    batchId: string;
+};
+
+export type BatchProgressMessage = {
+    type: 'batch-progress';
+    state: BatchState;
+};

@@ -5,7 +5,7 @@ import {
 } from '../shared/constants';
 import { clearAll } from './overlay';
 import serviceWorkerRequestFactory from '../shared/factories/serviceWorkerRequestFactory';
-import type { TranslateResponse } from '../shared/types';
+import type { BatchProgressMessage, TranslateBatchResponse } from '../shared/types';
 import {
     BATCH_BAR_ID,
     BATCH_MARK_ATTR,
@@ -489,29 +489,18 @@ function startBatchSelection(): void {
             showToast('Select at least one image.');
             return;
         }
-        const items = selection.slice();
+        const items = selection.map((item) => ({ imageUrl: item.url, token: item.token }));
         finish(true);
-        let done = 0;
-        for (let index = 0; index < items.length; index += 1) {
-            const item = items[index];
-            showToast(`Translating ${index + 1} of ${items.length}...`);
-            try {
-                const response = (await chrome.runtime.sendMessage(
-                    serviceWorkerRequestFactory.ofTranslation({
-                        imageUrl: item.url,
-                        token: item.token,
-                    }),
-                )) as TranslateResponse | undefined;
-                if (!response) throw new Error('The background worker sent no answer.');
-                if (!response.ok) throw new Error(response.error);
-                done += 1;
-                showToast(`Translated ${index + 1} of ${items.length}.`);
-            } catch (cause) {
-                const message = cause instanceof Error ? cause.message : String(cause);
-                showToast(`Image ${index + 1} failed: ${message}`);
-            }
+        try {
+            const response = (await chrome.runtime.sendMessage(
+                serviceWorkerRequestFactory.ofBatch(items),
+            )) as TranslateBatchResponse | undefined;
+            if (!response) throw new Error('The background worker sent no answer.');
+            if (!response.ok) throw new Error(response.error);
+            showToast(`Queued ${response.count} image${response.count === 1 ? '' : 's'}.`);
+        } catch (cause) {
+            showToast(`Could not queue the batch: ${cause instanceof Error ? cause.message : String(cause)}`);
         }
-        showToast(`Finished ${done} of ${items.length} images.`);
     };
 
     function onMove(event: MouseEvent): void {
@@ -591,5 +580,33 @@ pickerScope.__comicTranslatorPicker = {
         startBatchSelection();
     },
 };
+
+const batchWindow = window as unknown as { __comicTranslatorBatchListener?: boolean };
+if (!batchWindow.__comicTranslatorBatchListener) {
+    batchWindow.__comicTranslatorBatchListener = true;
+    chrome.runtime.onMessage.addListener((message: unknown) => {
+        const progress = message as BatchProgressMessage | undefined;
+        if (!progress || progress.type !== 'batch-progress') return false;
+        const state = progress.state;
+        const total = state.items.length;
+        const done = state.items.filter((item) => item.status === 'done').length;
+        if (state.status === 'cancelled') {
+            showToast('Batch cancelled.');
+            return false;
+        }
+        if (state.status === 'done') {
+            showToast(`Batch done: ${done} of ${total} images.`);
+            return false;
+        }
+        const running = state.items.findIndex((item) => item.status === 'running');
+        const failed = state.items.find((item) => item.status === 'error');
+        if (running >= 0) {
+            showToast(`Translating ${running + 1} of ${total}...`);
+        } else if (failed) {
+            showToast(`Image failed: ${failed.error ?? 'unknown error'}`);
+        }
+        return false;
+    });
+}
 
 export { };

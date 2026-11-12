@@ -1,6 +1,7 @@
 import offscreenRequestFactory from '../shared/factories/offscreenRequestFactory';
 import { DETECTION_CACHE_VERSION } from '../shared/constants';
 import {
+    BATCH_STATE_KEY,
     CONTENT_SCRIPT_FILE,
     DEEPSEEK_KEY,
     FONT_KEY,
@@ -19,6 +20,10 @@ import type {
     IncomingMessage,
     OverlayRequest,
     OverlayResponse,
+    BatchState,
+    CancelBatchRequest,
+    TranslateBatchRequest,
+    TranslateBatchResponse,
     TranslateRequest,
     TranslateResponse,
     TranslateSettings,
@@ -27,6 +32,7 @@ import { translateGroups } from '../lib/translationJob';
 
 let offscreenReady: Promise<void> | null = null;
 let translationQueue: Promise<void> = Promise.resolve();
+let batchRunning = false;
 
 
 // this file is the context of service worker
@@ -51,6 +57,28 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
                 sendResponse(response);
             } catch {
                 // The popup may have closed. The overlay already ran.
+            }
+        });
+        return true;
+    }
+
+    if (request.type === 'translate-batch') {
+        startBatch(request, sender).then((response) => {
+            try {
+                sendResponse(response);
+            } catch {
+                // The content script can close during navigation.
+            }
+        });
+        return true;
+    }
+
+    if (request.type === 'cancel-batch') {
+        cancelBatch(request).then((cancelled) => {
+            try {
+                sendResponse({ ok: cancelled });
+            } catch {
+                // The content script can close during navigation.
             }
         });
         return true;
@@ -152,6 +180,113 @@ function enqueueTranslation<T>(job: () => Promise<T>): Promise<T> {
     const next = translationQueue.then(job, job);
     translationQueue = next.then(() => undefined, () => undefined);
     return next;
+}
+
+async function readBatch(): Promise<BatchState | null> {
+    const stored = await chrome.storage.local.get(BATCH_STATE_KEY);
+    const state = stored[BATCH_STATE_KEY];
+    return state && typeof state === 'object' ? state as BatchState : null;
+}
+
+async function saveBatch(state: BatchState): Promise<void> {
+    state.updatedAt = Date.now();
+    await chrome.storage.local.set({ [BATCH_STATE_KEY]: state });
+}
+
+async function notifyBatch(state: BatchState): Promise<void> {
+    await chrome.tabs.sendMessage(
+        state.tabId,
+        { type: 'batch-progress', state } satisfies { type: 'batch-progress'; state: BatchState },
+        { frameId: 0 },
+    ).catch(() => undefined);
+}
+
+async function startBatch(request: TranslateBatchRequest, sender: chrome.runtime.MessageSender): Promise<TranslateBatchResponse> {
+    if (batchRunning) return { ok: false, error: 'Another batch is already running.' };
+    if (!Array.isArray(request.items) || request.items.length === 0) {
+        return { ok: false, error: 'No images were selected.' };
+    }
+    try {
+        const tabId = await resolveTabId(
+            { target: SERVICE_WORKER_TARGET, type: 'translate', imageUrl: request.items[0].imageUrl, tabId: request.tabId },
+            sender,
+        );
+        const state: BatchState = {
+            id: `batch-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            tabId,
+            status: 'running',
+            items: request.items.map((item) => ({
+                imageUrl: item.imageUrl,
+                token: item.token,
+                status: 'pending',
+            })),
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+        };
+        await saveBatch(state);
+        batchRunning = true;
+        void processBatch(state, request.settings);
+        return { ok: true, batchId: state.id, count: state.items.length };
+    } catch (cause) {
+        return { ok: false, error: cause instanceof Error ? cause.message : String(cause) };
+    }
+}
+
+async function cancelBatch(request: CancelBatchRequest): Promise<boolean> {
+    const state = await readBatch();
+    if (!state || state.id !== request.batchId || state.status !== 'running') return false;
+    state.status = 'cancelled';
+    await saveBatch(state);
+    await notifyBatch(state);
+    return true;
+}
+
+async function processBatch(state: BatchState, settings?: TranslateSettings): Promise<void> {
+    batchRunning = true;
+    try {
+        const resolved = settings ?? await readSettings();
+        for (const item of state.items) {
+            const latest = await readBatch();
+            if (!latest || latest.id !== state.id || latest.status === 'cancelled') break;
+            if (item.status === 'done') continue;
+            item.status = 'running';
+            item.error = undefined;
+            await saveBatch(state);
+            await notifyBatch(state);
+
+            const response = await enqueueTranslation(() => runTranslation(
+                {
+                    target: SERVICE_WORKER_TARGET,
+                    type: 'translate',
+                    imageUrl: item.imageUrl,
+                    tabId: state.tabId,
+                    token: item.token,
+                    settings: resolved,
+                },
+                { } as chrome.runtime.MessageSender,
+            ));
+            item.status = response.ok ? 'done' : 'error';
+            item.error = response.ok ? undefined : response.error;
+            await saveBatch(state);
+            await notifyBatch(state);
+        }
+        const finalState = await readBatch();
+        if (finalState?.id === state.id && finalState.status !== 'cancelled') {
+            state.status = 'done';
+            await saveBatch(state);
+            await notifyBatch(state);
+        }
+    } finally {
+        batchRunning = false;
+    }
+}
+
+async function resumeBatch(): Promise<void> {
+    if (batchRunning) return;
+    const state = await readBatch().catch(() => null);
+    if (!state || state.status !== 'running') return;
+    batchRunning = true;
+    await processBatch(state);
 }
 
 async function readSettings(): Promise<TranslateSettings> {
@@ -366,3 +501,5 @@ async function removeRefererRule(): Promise<void> {
 }
 
 
+
+void resumeBatch();
