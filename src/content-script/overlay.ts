@@ -470,15 +470,6 @@ function apply(request: OverlayRequest): OverlayResponse {
     }
     clearTarget(target);
 
-    if (request.erasedUrl) {
-        if (target instanceof HTMLImageElement) {
-            target.removeAttribute('srcset');
-            target.src = request.erasedUrl;
-        } else {
-            target.style.backgroundImage = `url("${request.erasedUrl}")`;
-        }
-    }
-
     const width = request.width > 0 ? request.width : target.clientWidth;
     const height = request.height > 0 ? request.height : target.clientHeight;
     if (width <= 0 || height <= 0) {
@@ -489,6 +480,23 @@ function apply(request: OverlayRequest): OverlayResponse {
     const host = layer.parentElement;
     const renderedWidth = host?.getBoundingClientRect().width ?? width;
     const scale = renderedWidth / width;
+
+    if (request.erasedUrl) {
+        // Keep the original image node. The erased image is a layer inside the
+        // same wrapper, so Clear overlay restores the page without a reload.
+        const erased = document.createElement('img');
+        erased.src = request.erasedUrl;
+        erased.alt = '';
+        erased.style.position = 'absolute';
+        erased.style.inset = '0';
+        erased.style.width = '100%';
+        erased.style.height = '100%';
+        erased.style.objectFit = 'fill';
+        erased.style.pointerEvents = 'none';
+        erased.style.zIndex = '1';
+        erased.setAttribute('data-comic-translator-erased', 'true');
+        layer.appendChild(erased);
+    }
 
     let count = 0;
     for (const item of request.items) {
