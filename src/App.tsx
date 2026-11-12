@@ -444,7 +444,7 @@ export default function App() {
                 </div>
 
                 {view === 'debug' ? (
-                    <div className="mt-4 grid grid-cols-2 gap-2">
+                    <div className="mt-4 grid grid-cols-4 gap-2">
                         <button
                             type="button"
                             onClick={handlePick}
