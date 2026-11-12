@@ -170,9 +170,16 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
                 && x >= group.x && x <= group.x + group.width
                 && y >= group.y && y <= group.y + group.height;
         });
-        // Manga dialogue is vertical. Force every translated label to the
-        // vertical writing mode so a wide balloon cannot flip it horizontal.
-        const vertical = true;
+        const verticalLines = linesInGroup.filter((line) => line.direction === 'vertical').length;
+        const horizontalLines = linesInGroup.filter((line) => line.direction === 'horizontal').length;
+        const vertical = verticalLines !== horizontalLines
+            ? verticalLines > horizontalLines
+            : balloon
+                ? balloon.height > balloon.width * 1.15 || group.vertical === true
+                : group.vertical ?? group.height > group.width * 1.3;
+        const sortedLines = [...linesInGroup].sort((left, right) => vertical
+            ? (right.x + right.width / 2) - (left.x + left.width / 2)
+            : (left.y + left.height / 2) - (right.y + right.height / 2));
 
         let minX = Number.POSITIVE_INFINITY;
         let minY = Number.POSITIVE_INFINITY;
@@ -196,27 +203,41 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
             : 0;
         const font = glyph > 0 ? Math.max(6, Math.round(glyph)) : group.fontSize;
 
-        items.push({
-            x: tight.x,
-            y: tight.y,
-            width: tight.width,
-            height: tight.height,
-            text: vertical ? toVertical(text) : toHorizontal(text),
-            vertical,
-            groupId: index,
-            background: group.background,
-            color: group.color,
-            maskUrl: group.maskUrl,
-            maskBox: group.maskBox,
-            rectangle: group.rectangle,
-            fontSize: font,
-            patch: balloon && !input.inpainted ? {
-                x: tight.x,
-                y: tight.y,
-                width: tight.width,
-                height: tight.height,
-            } : undefined,
-        });
+        const modelColumns = answer?.columns?.filter((value) => value.trim().length > 0) ?? [];
+        const useColumns = modelColumns.length > 1
+            && modelColumns.length === sortedLines.length;
+
+        const push = (line: { x: number; y: number; width: number; height: number }, content: string) => {
+            items.push({
+                x: line.x,
+                y: line.y,
+                width: line.width,
+                height: line.height,
+                text: vertical ? toVertical(content) : toHorizontal(content),
+                vertical,
+                groupId: index,
+                background: group.background,
+                color: group.color,
+                maskUrl: group.maskUrl,
+                maskBox: group.maskBox,
+                rectangle: group.rectangle,
+                fontSize: font,
+                patch: balloon && !input.inpainted ? {
+                    x: line.x,
+                    y: line.y,
+                    width: line.width,
+                    height: line.height,
+                } : undefined,
+            });
+        };
+
+        if (useColumns) {
+            sortedLines.forEach((line, columnIndex) => {
+                push(line, modelColumns[columnIndex].trim());
+            });
+        } else {
+            push(tight, text);
+        }
     });
 
     if (items.length === 0) throw new Error('The translation returned no dialogue to place.');
