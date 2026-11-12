@@ -8,6 +8,7 @@ import {
     TRANSLATOR_KEY,
     type TranslatorChoice,
     LAST_RESULT_KEY,
+    BATCH_STATE_KEY,
     PICKED_IMAGE_TARGET_KEY,
     PICKED_IMAGE_URL_KEY,
 } from './shared/constants';
@@ -125,6 +126,7 @@ export default function App() {
                 GEMINI_KEY,
                 TRANSLATOR_KEY,
                                                     LAST_RESULT_KEY,
+    BATCH_STATE_KEY,
             ]),
         ])
             .then(([local]) => {
@@ -396,6 +398,30 @@ export default function App() {
         }
     }, []);
 
+    const handleResetAll = useCallback(async () => {
+        setError(null);
+        await handleClearOverlay();
+        try {
+            await chrome.storage.local.remove([
+                LAST_RESULT_KEY,
+                PICKED_IMAGE_URL_KEY,
+                PICKED_IMAGE_TARGET_KEY,
+                BATCH_STATE_KEY,
+            ]);
+            setImageUrl(null);
+            setBoxes([]);
+            setPreviews([]);
+            setBubbles([]);
+            setGroups([]);
+            setTranslated(null);
+            setTargetToken(undefined);
+            setSize({ width: 0, height: 0 });
+            setStatus('Cleared all saved results.');
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : String(cause));
+        }
+    }, [handleClearOverlay]);
+
     useEffect(() => {
         void chrome.commands.getAll().then((commands) => {
             const command = commands.find((entry) => entry.name === 'pick-image');
@@ -455,7 +481,16 @@ export default function App() {
                         <h1 className="text-lg font-semibold tracking-tight">Comic Translator</h1>
                         <p className="mt-1 text-sm leading-5 text-slate-600">{status}</p>
                     </div>
-                    <span className="rounded bg-[#ece4d9] px-2.5 py-1 text-xs font-medium text-[#7a5c43]">v1.0.5</span>
+                    <div className="flex items-center gap-2">
+                        <span className="rounded bg-[#ece4d9] px-2.5 py-1 text-xs font-medium text-[#7a5c43]">v1.0.5</span>
+                        <button
+                            type="button"
+                            onClick={handleResetAll}
+                            className="rounded border border-[#ded2c4] bg-white px-2.5 py-1 text-xs font-medium text-[#7a5c43] transition hover:bg-[#f3eee8]"
+                        >
+                            Clear results
+                        </button>
+                    </div>
                 </div>
 
                 {view === 'debug' ? (
