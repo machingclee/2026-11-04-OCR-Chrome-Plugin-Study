@@ -463,6 +463,19 @@ function apply(request: OverlayRequest): OverlayResponse {
     }
     clearTarget(target);
 
+    // An earlier build replaced the image source with the erased PNG. A rebuilt
+    // extension does not replace an already injected content script, so restore
+    // the real page source here before adding the new layer.
+    if (target instanceof HTMLImageElement
+        && request.imageUrl
+        && !request.imageUrl.startsWith('data:')
+        && target.currentSrc.startsWith('data:')) {
+        target.removeAttribute('srcset');
+        target.src = request.imageUrl;
+    }
+    target.style.visibility = 'visible';
+    target.style.opacity = '1';
+
     const width = request.width > 0 ? request.width : target.clientWidth;
     const height = request.height > 0 ? request.height : target.clientHeight;
     if (width <= 0 || height <= 0) {
@@ -470,6 +483,8 @@ function apply(request: OverlayRequest): OverlayResponse {
     }
 
     const layer = target instanceof HTMLImageElement ? wrapImage(target) : attachLayer(target);
+    layer.style.background = 'transparent';
+    layer.style.mixBlendMode = 'normal';
     const host = layer.parentElement;
     const renderedWidth = host?.getBoundingClientRect().width ?? width;
     const scale = renderedWidth / width;
@@ -486,6 +501,8 @@ function apply(request: OverlayRequest): OverlayResponse {
         erased.style.height = '100%';
         erased.style.objectFit = 'fill';
         erased.style.pointerEvents = 'none';
+        erased.style.background = 'transparent';
+        erased.style.mixBlendMode = 'normal';
         erased.style.zIndex = '1';
         erased.setAttribute('data-comic-translator-erased', 'true');
         layer.appendChild(erased);
