@@ -92,6 +92,8 @@ export default function App() {
     const [translator, setTranslator] = useState<TranslatorChoice>('gemini');
     const [dirty, setDirty] = useState(false);
     const [view, setView] = useState<'production' | 'debug'>('production');
+    const [shortcut, setShortcut] = useState('Alt+Q');
+    const [recording, setRecording] = useState(false);
     const [targetToken, setTargetToken] = useState<string | undefined>();
     const settingsLoaded = useRef(false);
     const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
@@ -379,9 +381,40 @@ export default function App() {
         }
     }, []);
 
+    useEffect(() => {
+        void chrome.commands.getAll().then((commands) => {
+            const command = commands.find((entry) => entry.name === 'pick-image');
+            if (command?.shortcut) setShortcut(command.shortcut);
+        }).catch(() => undefined);
+    }, []);
+
+    useEffect(() => {
+        if (!recording) return;
+        const capture = (event: KeyboardEvent): void => {
+            event.preventDefault();
+            event.stopPropagation();
+            const key = event.key;
+            if (['Alt', 'Control', 'Meta', 'Shift'].includes(key)) return;
+            const parts: string[] = [];
+            if (event.altKey) parts.push('Alt');
+            if (event.ctrlKey) parts.push('Ctrl');
+            if (event.metaKey) parts.push('Command');
+            if (event.shiftKey) parts.push('Shift');
+            if (parts.length === 0) return;
+            const combo = [...parts, key.length === 1 ? key.toUpperCase() : key].join('+');
+            setRecording(false);
+            setShortcut(combo);
+            void chrome.commands.update({ name: 'pick-image', shortcut: combo })
+                .then(() => setStatus(`Shortcut set to ${combo}.`))
+                .catch((cause: unknown) => setError(`Could not set shortcut: ${cause instanceof Error ? cause.message : String(cause)}`));
+        };
+        window.addEventListener('keydown', capture, true);
+        return () => window.removeEventListener('keydown', capture, true);
+    }, [recording]);
+
     return (
-        <main className="mx-auto flex w-[720px] flex-col gap-4 rounded-2xl bg-slate-100 p-4 text-slate-900">
-            <div className="flex self-start rounded-xl bg-slate-200 p-1">
+        <main className="mx-auto flex w-[720px] flex-col gap-4 rounded-2xl bg-orange-50 p-4 text-slate-900">
+            <div className="flex self-start rounded-xl bg-orange-100 p-1">
                 <button
                     type="button"
                     onClick={() => setView('production')}
@@ -398,13 +431,13 @@ export default function App() {
                 </button>
             </div>
 
-            <header className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <header className="rounded-2xl border border-orange-100 bg-white p-4 shadow-sm">
                 <div className="flex items-start justify-between gap-4">
                     <div>
                         <h1 className="text-lg font-semibold tracking-tight">Comic Translator</h1>
                         <p className="mt-1 text-sm leading-5 text-slate-600">{status}</p>
                     </div>
-                    <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-500">v1.0.5</span>
+                    <span className="rounded-full bg-orange-100 px-2.5 py-1 text-xs font-medium text-orange-700">v1.0.5</span>
                 </div>
 
                 {view === 'debug' ? (
@@ -412,7 +445,7 @@ export default function App() {
                         <button
                             type="button"
                             onClick={handlePick}
-                            className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="rounded-lg bg-orange-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                             Pick an image
                         </button>
@@ -422,7 +455,7 @@ export default function App() {
                             disabled={!imageUrl || busy}
                             data-busy={busy}
                             title={imageUrl ? undefined : 'Pick an image on the page first.'}
-                            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="rounded-lg border border-orange-200 bg-white px-3 py-2 text-sm font-medium text-orange-800 transition hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                             {busy ? 'Detecting...' : 'Detect boxes'}
                         </button>
@@ -431,7 +464,7 @@ export default function App() {
                             onClick={handleTranslate}
                             disabled={translating || !imageUrl}
                             title="Translation runs in the background worker."
-                            className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="rounded-lg bg-amber-500 px-3 py-2 text-sm font-medium text-white transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                             {translating ? 'Translating...' : 'Translate page'}
                         </button>
@@ -445,8 +478,8 @@ export default function App() {
                         </button>
                     </div>
                 ) : (
-                    <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-                        Press <kbd className="rounded border border-blue-200 bg-white px-1.5 py-0.5 font-mono text-xs">⌥Q</kbd> on macOS or <kbd className="rounded border border-blue-200 bg-white px-1.5 py-0.5 font-mono text-xs">Alt+Q</kbd> on Windows, select an image, then click the check mark.
+                    <div className="mt-4 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-900">
+                        Press <kbd className="rounded border border-orange-200 bg-white px-1.5 py-0.5 font-mono text-xs">⌥Q</kbd> on macOS or <kbd className="rounded border border-orange-200 bg-white px-1.5 py-0.5 font-mono text-xs">Alt+Q</kbd> on Windows, select an image, then click the check mark.
                     </div>
                 )}
             </header>
@@ -457,7 +490,7 @@ export default function App() {
                 </div>
             ) : null}
 
-            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <section className="rounded-2xl border border-orange-100 bg-white p-4 shadow-sm">
                 <div className="flex items-center justify-between gap-3">
                     <h2 className="text-sm font-semibold">Translation settings</h2>
                     <div className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${dirty ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
@@ -477,12 +510,26 @@ export default function App() {
                                 setDirty(true);
                                 void chrome.storage.local.set({ [TRANSLATOR_KEY]: choice });
                             }}
-                            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
                         >
                             <option value="gemini">Gemini (free tier)</option>
                             <option value="deepseek">DeepSeek</option>
                             <option value="builtin">This browser</option>
                         </select>
+                    </label>
+
+                    <label className="col-span-2 flex flex-col gap-1 text-xs font-medium text-slate-600">
+                        Pick shortcut
+                        <button
+                            type="button"
+                            onClick={() => setRecording(true)}
+                            className={`rounded-lg border px-3 py-2 text-left text-sm transition ${recording ? 'border-orange-400 bg-orange-50 text-orange-800' : 'border-slate-300 bg-white text-slate-900 hover:bg-orange-50'}`}
+                        >
+                            {recording ? 'Press a shortcut...' : shortcut || 'Not set'}
+                        </button>
+                        <span className="text-[11px] font-normal leading-4 text-slate-500">
+                            Click, then press the new key combination. On macOS, Option+Q is recorded as Alt+Q.
+                        </span>
                     </label>
 
                     <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
@@ -495,7 +542,7 @@ export default function App() {
                                 setGeminiKey(event.target.value);
                                 setDirty(true);
                             }}
-                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
                         />
                         <span className="text-[11px] font-normal leading-4 text-slate-500">
                             Used for the vision SFX check when Gemini is selected. DeepSeek uses its own vision model.
@@ -512,14 +559,14 @@ export default function App() {
                                 setDeepSeekKey(event.target.value);
                                 setDirty(true);
                             }}
-                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
                         />
                     </label>
                 </div>
             </section>
 
             {imageUrl ? (
-                <section className={`rounded-2xl border border-slate-200 bg-white p-3 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
+                <section className={`rounded-2xl border border-orange-100 bg-white p-3 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
                     <div className="mb-2 flex items-center justify-between">
                         <h2 className="text-sm font-semibold">Page preview</h2>
                         <span className="text-xs text-slate-500">{boxes.length} boxes</span>
@@ -576,11 +623,11 @@ export default function App() {
             ) : null}
 
             {groups.length > 0 ? (
-                <section className={`rounded-2xl border border-slate-200 bg-white p-4 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
+                <section className={`rounded-2xl border border-orange-100 bg-white p-4 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
                     <h2 className="text-sm font-semibold">Reading groups</h2>
                     <ol className="mt-2 space-y-2">
                         {groups.map((group, index) => (
-                            <li key={`${group.x}-${group.y}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                            <li key={`${group.x}-${group.y}`} className="rounded-xl border border-orange-100 bg-orange-50/60 p-3">
                                 <p className="text-sm font-medium text-slate-800">{group.lines.join('') || 'no text'}</p>
                                 {translated ? (
                                     <p className="mt-1 text-sm text-slate-600">
@@ -596,13 +643,13 @@ export default function App() {
             ) : null}
 
             {previews.length > 0 ? (
-                <section className={`rounded-2xl border border-slate-200 bg-white p-4 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
+                <section className={`rounded-2xl border border-orange-100 bg-white p-4 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
                     <h2 className="text-sm font-semibold">Text regions</h2>
                     <ol className="mt-2 flex gap-3 overflow-x-auto pb-1">
                         {boxes.map((box, index) => (
                             <li key={index} className="w-40 shrink-0">
                                 {previews[index] ? (
-                                    <img src={previews[index]} alt={`Text region ${index + 1}`} className="max-h-28 w-full rounded-lg border border-slate-200 bg-white object-contain" />
+                                    <img src={previews[index]} alt={`Text region ${index + 1}`} className="max-h-28 w-full rounded-lg border border-orange-100 bg-white object-contain" />
                                 ) : null}
                                 <p className="mt-1 text-xs leading-4 text-slate-600">{box.text || 'no text'}</p>
                                 <span className="ocr-score">{ocrScore(box.confidence)}</span>
