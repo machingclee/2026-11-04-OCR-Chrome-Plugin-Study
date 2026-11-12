@@ -657,6 +657,7 @@ function startBatchSelection(): void {
         window.removeEventListener('click', onClick, true);
         window.removeEventListener('mousemove', onMove, true);
         window.removeEventListener('keydown', onKey, true);
+        document.removeEventListener('keydown', onKey, true);
         window.removeEventListener('scroll', redrawMarks, true);
         window.removeEventListener('resize', redrawMarks);
         for (const type of PAGE_EVENTS) window.removeEventListener(type, swallowPageEvent, true);
@@ -747,6 +748,7 @@ function startBatchSelection(): void {
     window.addEventListener('click', onClick, true);
     window.addEventListener('mousemove', onMove, true);
     window.addEventListener('keydown', onKey, true);
+    document.addEventListener('keydown', onKey, true);
     window.addEventListener('scroll', redrawMarks, true);
     window.addEventListener('resize', redrawMarks);
     for (const type of PAGE_EVENTS) window.addEventListener(type, swallowPageEvent, true);
