@@ -495,6 +495,14 @@ function ensureBoxStyle(): void {
     document.head.appendChild(style);
 }
 
+function ensureBoxStyle(): void {
+    if (document.getElementById('comic-translator-box-style')) return;
+    const style = document.createElement('style');
+    style.id = 'comic-translator-box-style';
+    style.textContent = `[${BOX_ATTR}="true"] { overflow: visible !important; }`;
+    document.head.appendChild(style);
+}
+
 function apply(request: OverlayRequest): OverlayResponse {
     ensureBoxStyle();
     const target = findTarget(request);
