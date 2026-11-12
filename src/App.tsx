@@ -604,7 +604,8 @@ export default function App() {
                 rectangle: group.rectangle,
                 fontSize: group.fontSize,
                 clip: balloon?.outline,
-                fill: Boolean(balloon),
+                fill: Boolean(balloon)
+                    && group.width * group.height <= pageWidth * pageHeight * 0.15,
             }));
             if (items.length === 0) throw new Error('The translation returned no dialogue to place.');
             setTranslated(out);
