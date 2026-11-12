@@ -2,6 +2,7 @@ import { detectBoxes, isSessionReady } from '../lib/detector';
 import { detectBubbles } from '../lib/bubble';
 import { cropPreviews } from '../lib/regions';
 import { expandToInk } from '../lib/expand';
+import { trimMergedRuby } from '../lib/trimRuby';
 import { groupByRegion, splitGroupByColumnGap, toOrderedTextLines } from '../lib/readingOrder';
 import { recognizeLine } from '../lib/ocr/recognize';
 import { DETECTOR_INPUT_SIZE, OFFSCREEN_TARGET } from '../shared/constants';
@@ -288,10 +289,9 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         const balloonList = bubbles ? bubbles.bubbles : [];
         const grouped = groupByRegion(ordered, balloonList, detected.blkBoxes, false);
 
-        const lines = grouped.lines.map((line) => ({
-            ...line,
-            ...expandToInk(line, detected.mask),
-        }));
+        const lines = grouped.lines.map((line) =>
+            trimMergedRuby({ ...line, ...expandToInk(line, detected.mask) }, detected.mask),
+        );
         timings.group = Math.round(performance.now() - groupStarted);
 
         const ocrStarted = performance.now();
