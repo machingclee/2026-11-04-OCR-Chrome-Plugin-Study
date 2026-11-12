@@ -215,10 +215,11 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
 
         const glyphSizes = detected
             .map((line) => vertical ? line.width : line.height)
-            .filter((size) => Number.isFinite(size) && size >= 4)
-            .sort((left, right) => left - right);
-        const glyph = glyphSizes.length > 0 ? glyphSizes[glyphSizes.length >> 1] : 0;
-        const font = glyph > 0 ? Math.max(6, Math.round(glyph * 0.9)) : group.fontSize;
+            .filter((size) => Number.isFinite(size) && size >= 4);
+        const glyph = glyphSizes.length > 0
+            ? glyphSizes.reduce((sum, size) => sum + size, 0) / glyphSizes.length
+            : 0;
+        const font = glyph > 0 ? Math.max(6, Math.round(glyph)) : group.fontSize;
 
         detected.forEach((line, columnIndex) => {
             const part = chunks[columnIndex]?.trim();
