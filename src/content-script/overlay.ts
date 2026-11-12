@@ -470,6 +470,15 @@ function apply(request: OverlayRequest): OverlayResponse {
     }
     clearTarget(target);
 
+    if (request.erasedUrl) {
+        if (target instanceof HTMLImageElement) {
+            target.removeAttribute('srcset');
+            target.src = request.erasedUrl;
+        } else {
+            target.style.backgroundImage = `url("${request.erasedUrl}")`;
+        }
+    }
+
     const width = request.width > 0 ? request.width : target.clientWidth;
     const height = request.height > 0 ? request.height : target.clientHeight;
     if (width <= 0 || height <= 0) {

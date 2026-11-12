@@ -20,6 +20,7 @@ export type TranslationJobInput = {
     imageWidth: number;
     imageHeight: number;
     settings: TranslationSettings;
+    inpainted?: boolean;
     translateBuiltin?: (lines: string[]) => Promise<string[]>;
 };
 
@@ -270,7 +271,7 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         rectangle: group.rectangle,
         fontSize: group.fontSize,
         clip: balloon?.outline,
-        patch: balloon ? {
+        patch: balloon && !input.inpainted ? {
             x: tight.x,
             y: tight.y,
             width: tight.width,

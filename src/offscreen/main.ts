@@ -3,6 +3,8 @@ import { detectBubbles } from '../lib/bubble';
 import { cropPreviews } from '../lib/regions';
 import { expandToInk } from '../lib/expand';
 import { trimMergedRuby } from '../lib/trimRuby';
+import { inpaintPage } from '../lib/inpaint';
+import { refineMask } from '../lib/mask';
 import { canTranslate, translateAll } from '../lib/translate';
 import { groupByRegion, splitGroupByColumnGap, toOrderedTextLines } from '../lib/readingOrder';
 import { recognizeLine } from '../lib/ocr/recognize';
@@ -432,10 +434,38 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
 
         const previews = cropPreviews(bitmap, collected.slice(0, MAX_PREVIEWS));
 
+        let erasedUrl: string | null = null;
+        if (detected.mask && usable.length > 0) {
+            const inpaintStarted = performance.now();
+            const canvas = document.createElement('canvas');
+            canvas.width = bitmap.width;
+            canvas.height = bitmap.height;
+            const context = canvas.getContext('2d', { willReadFrequently: true });
+            if (context) {
+                context.drawImage(bitmap, 0, 0);
+                const image = context.getImageData(0, 0, canvas.width, canvas.height);
+                const mask = refineMask(usable, detected.mask, canvas.width, canvas.height);
+                const painted = await inpaintPage(image, mask).catch(() => null);
+                if (painted) {
+                    for (let index = 0; index < mask.length; index += 1) {
+                        if (mask[index] !== 1) continue;
+                        const offset = index * 4;
+                        image.data[offset] = painted.data[offset];
+                        image.data[offset + 1] = painted.data[offset + 1];
+                        image.data[offset + 2] = painted.data[offset + 2];
+                    }
+                    context.putImageData(image, 0, 0);
+                    erasedUrl = canvas.toDataURL('image/webp', 0.9);
+                }
+            }
+            timings.extras += Math.round(performance.now() - inpaintStarted);
+        }
+
         return {
             ok: true,
             boxes: collected,
             previews,
+            erasedUrl,
             imageWidth: bitmap.width,
             imageHeight: bitmap.height,
             groupedLines: grouped.lines.length,

@@ -105,6 +105,8 @@ export type OverlayRequest = {
     /** The token stored when the image was picked. */
     token?: string;
     imageUrl: string;
+    /** Inpainted page, when the inpaint pass succeeded. */
+    erasedUrl?: string | null;
     /** Natural image size; every item coordinate is in this space. */
     width: number;
     height: number;
@@ -182,6 +184,7 @@ export type DetectResponse =
           groups: GroupData[];
           bubbleError: string | null;
           bubbles: BubbleData[];
+          erasedUrl: string | null;
           timings?: DetectTimings;
       }
     | { ok: false; error: string };
