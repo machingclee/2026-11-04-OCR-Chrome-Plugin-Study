@@ -25,7 +25,7 @@ import type {
     OverlayResponse,
 } from './shared/types';
 import { canTranslate, translateAll } from './lib/translate';
-import { classifyVisionCandidates } from './lib/visionClassify';
+import { classifyVisionCandidates, type VisionProvider } from './lib/visionClassify';
 import { toHorizontal, toVertical } from './lib/punct';
 import { translateWithDeepSeek } from './lib/translateDeepSeek';
 import { translateWithGemini } from './lib/translateGemini';
@@ -424,7 +424,18 @@ export default function App() {
                 };
             }
             let visionSkipped = 0;
-            if (current.length > 0 && geminiKey.trim().length > 0) {
+            let visionProvider: VisionProvider | null = null;
+            if (translator === 'deepseek' && deepSeekKey.trim().length > 0) {
+                visionProvider = { kind: 'deepseek', apiKey: deepSeekKey.trim() };
+            } else if (translator === 'gemini' && geminiKey.trim().length > 0) {
+                visionProvider = { kind: 'gemini', apiKey: geminiKey.trim() };
+            } else if (deepSeekKey.trim().length > 0) {
+                visionProvider = { kind: 'deepseek', apiKey: deepSeekKey.trim() };
+            } else if (geminiKey.trim().length > 0) {
+                visionProvider = { kind: 'gemini', apiKey: geminiKey.trim() };
+            }
+
+            if (current.length > 0 && visionProvider) {
                 const candidates = current
                     .map((group, index) => ({
                         index,
@@ -433,7 +444,7 @@ export default function App() {
                     }))
                     .filter((candidate) => candidate.crop.length > 0);
                 if (candidates.length > 0) {
-                    const verdicts = await classifyVisionCandidates(candidates, geminiKey.trim());
+                    const verdicts = await classifyVisionCandidates(candidates, visionProvider);
                     const removed = new Set<number>();
                     for (const candidate of candidates) {
                         const verdict = verdicts.get(candidate.index);
@@ -764,7 +775,7 @@ export default function App() {
                         }}
                     />
                     <span className="hint">
-                        Also used for the free Gemini 2.5 Flash vision SFX check when present. Translation can stay on DeepSeek.
+                        Used for the vision SFX check when Gemini is the selected translator; DeepSeek uses its own vision model.
                     </span>
                 </label>
 

@@ -1,11 +1,17 @@
 /**
- * Fixed free-tier model for the vision check. The translation model stays a
- * separate, optional choice; this classifier never follows that setting.
+ * The vision check follows the selected translation provider. DeepSeek uses its
+ * vision-capable flash model; Gemini 2.5 Flash remains the fallback.
  */
-const VISION_MODEL = 'gemini-2.5-flash';
-const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${VISION_MODEL}:generateContent`;
+const GEMINI_VISION_MODEL = 'gemini-2.5-flash';
+const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_VISION_MODEL}:generateContent`;
+const DEEPSEEK_ENDPOINT = 'https://api.deepseek.com/chat/completions';
+const DEEPSEEK_VISION_MODEL = 'deepseek-flash';
 
 export type VisionVerdict = 'real_text' | 'sfx' | 'false_positive' | 'uncertain';
+
+export type VisionProvider =
+    | { kind: 'gemini'; apiKey: string }
+    | { kind: 'deepseek'; apiKey: string };
 
 export type VisionCandidate = {
     index: number;
@@ -37,11 +43,8 @@ function normalise(value: string): VisionVerdict {
     return 'uncertain';
 }
 
-async function classifyOne(candidate: VisionCandidate, apiKey: string): Promise<VisionVerdict> {
-    const image = splitDataUrl(candidate.crop);
-    if (!image) return 'uncertain';
-
-    const response = await fetch(ENDPOINT, {
+async function classifyWithGemini(candidate: VisionCandidate, apiKey: string, image: { mime: string; data: string }): Promise<VisionVerdict> {
+    const response = await fetch(GEMINI_ENDPOINT, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -70,16 +73,57 @@ async function classifyOne(candidate: VisionCandidate, apiKey: string): Promise<
     return normalise(content);
 }
 
+async function classifyWithDeepSeek(candidate: VisionCandidate, apiKey: string): Promise<VisionVerdict> {
+    const response = await fetch(DEEPSEEK_ENDPOINT, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+            model: DEEPSEEK_VISION_MODEL,
+            temperature: 0,
+            max_tokens: 8,
+            messages: [
+                { role: 'system', content: SYSTEM },
+                {
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: `OCR 文字：${candidate.text}\n請判斷這個裁切區域。` },
+                        { type: 'image_url', image_url: { url: candidate.crop } },
+                    ],
+                },
+            ],
+        }),
+    });
+    if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        throw new Error(`DeepSeek vision answered ${response.status}. ${detail.slice(0, 120)}`);
+    }
+    const payload = (await response.json()) as {
+        choices?: { message?: { content?: string } }[];
+    };
+    return normalise(payload.choices?.[0]?.message?.content ?? '');
+}
+
+async function classifyOne(candidate: VisionCandidate, provider: VisionProvider): Promise<VisionVerdict> {
+    if (provider.kind === 'deepseek') return classifyWithDeepSeek(candidate, provider.apiKey);
+    const image = splitDataUrl(candidate.crop);
+    if (!image) return 'uncertain';
+    return classifyWithGemini(candidate, provider.apiKey, image);
+}
+
 /**
- * Ask Gemini to inspect the ambiguous crops. The normal text model still does
- * the translation; this pass only decides which regions must stay untouched.
+ * Ask the selected provider to inspect the ambiguous crops. The normal text
+ * model still does the translation; this pass only decides which regions must
+ * stay untouched.
  */
 export async function classifyVisionCandidates(
     candidates: VisionCandidate[],
-    apiKey: string,
+    provider: VisionProvider | null,
 ): Promise<Map<number, VisionVerdict>> {
     const verdicts = new Map<number, VisionVerdict>();
-    if (candidates.length === 0 || apiKey.trim().length === 0) return verdicts;
+    if (candidates.length === 0 || !provider || provider.apiKey.trim().length === 0) return verdicts;
 
     let next = 0;
     await Promise.all(Array.from({ length: Math.min(4, candidates.length) }, async () => {
@@ -88,7 +132,7 @@ export async function classifyVisionCandidates(
             next += 1;
             if (!candidate) return;
             try {
-                verdicts.set(candidate.index, await classifyOne(candidate, apiKey.trim()));
+                verdicts.set(candidate.index, await classifyOne(candidate, provider));
             } catch (cause) {
                 console.warn('The vision region check failed; keeping the region.', cause);
                 verdicts.set(candidate.index, 'uncertain');
