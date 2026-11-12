@@ -484,7 +484,7 @@ export default function App() {
             let skipped = 0;
             current.forEach((group, index) => {
                 const answer = out[index];
-                if (answer?.skip) {
+                if (answer?.skip || answer?.type === 'sfx') {
                     skipped += 1;
                     return;
                 }
