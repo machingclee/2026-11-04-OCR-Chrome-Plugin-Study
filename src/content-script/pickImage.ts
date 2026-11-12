@@ -311,12 +311,10 @@ function start(): void {
         hit.element.setAttribute(OVERLAY_TARGET_ATTRIBUTE, token);
 
         const picked = hit;
-        chrome.storage.local
-            .set({
-                [PICKED_IMAGE_URL_KEY]: picked.url,
-                [PICKED_IMAGE_TARGET_KEY]: token,
-            })
-            .then(() => {
+        const saved = chrome.storage.local.set({
+            [PICKED_IMAGE_URL_KEY]: picked.url,
+            [PICKED_IMAGE_TARGET_KEY]: token,
+        });
                 confirmButton?.remove();
                 const button = document.createElement('button');
                 confirmButton = button;
@@ -454,11 +452,10 @@ function start(): void {
                 });
                 document.documentElement.append(button);
                 showToast('Image picked. Click the check mark to translate it.');
-            })
-            .catch((cause: unknown) => {
-                const message = cause instanceof Error ? cause.message : String(cause);
-                showToast(`Could not save the URL: ${message}`);
-            });
+        void saved.catch((cause: unknown) => {
+            const message = cause instanceof Error ? cause.message : String(cause);
+            showToast(`Could not save the URL: ${message}`);
+        });
     }
 
     function onKey(event: KeyboardEvent): void {
