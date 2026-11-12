@@ -492,10 +492,6 @@ function apply(request: OverlayRequest): OverlayResponse {
     });
 
     for (const items of grouped.values()) {
-        const minX = Math.min(...items.map((item) => item.x));
-        const minY = Math.min(...items.map((item) => item.y));
-        const maxX = Math.max(...items.map((item) => item.x + item.width));
-        const maxY = Math.max(...items.map((item) => item.y + item.height));
         const group = document.createElement('div');
         group.setAttribute('data-comic-translator-group-container', 'true');
         group.style.position = 'absolute';
