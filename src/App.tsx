@@ -426,14 +426,14 @@ export default function App() {
                     onClick={() => setView('production')}
                     className={`rounded px-3 py-1.5 text-xs font-medium transition ${view === 'production' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
                 >
-                    Production
+                    Setting
                 </button>
                 <button
                     type="button"
                     onClick={() => setView('debug')}
                     className={`rounded px-3 py-1.5 text-xs font-medium transition ${view === 'debug' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
                 >
-                    Debug
+                    Debug Client
                 </button>
             </div>
 
