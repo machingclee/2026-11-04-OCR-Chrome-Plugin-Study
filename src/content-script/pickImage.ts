@@ -765,6 +765,12 @@ function startBatchSelection(): void {
         redrawMarks();
     }
 
+    function unselectAll(): void {
+        for (const item of selection) item.element.removeAttribute(OVERLAY_TARGET_ATTRIBUTE);
+        selection.length = 0;
+        redrawMarks();
+    }
+
     function showPickMenu(hit: Exclude<ReturnType<typeof findAt>, 'blocked-frame' | null>, x: number, y: number): void {
         pickMenu?.remove();
         const menu = document.createElement('div');
@@ -812,6 +818,7 @@ function startBatchSelection(): void {
         };
         addItem(selected ? 'Unselect this image' : 'Select this image', () => toggleHit(hit));
         addItem('Select all visible images', () => selectAllVisible(hit.element));
+        addItem('Unselect all', unselectAll);
         addItem('Translate all', () => { void confirmSelection(); });
         menu.addEventListener('contextmenu', (event) => event.preventDefault());
         document.documentElement.append(menu);
