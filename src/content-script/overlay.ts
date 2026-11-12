@@ -337,7 +337,7 @@ function makeBox(
     style.display = 'flex';
     style.alignItems = 'center';
     style.justifyContent = 'center';
-    style.overflow = 'hidden';
+    style.overflow = 'visible';
     style.padding = '1px 2px';
     style.textAlign = 'center';
     if (item.patch) {
