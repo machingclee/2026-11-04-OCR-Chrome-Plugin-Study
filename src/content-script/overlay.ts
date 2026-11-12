@@ -409,6 +409,13 @@ function makeBox(
     const size = Math.max(7, sourceSize > 0 ? sourceSize : fallback);
     box.style.fontSize = `${size}px`;
     box.dataset.comicTranslatorSourceSize = String(size);
+    if (request.erasedUrl) {
+        style.backgroundImage = `url("${request.erasedUrl}")`;
+        style.backgroundRepeat = 'no-repeat';
+        style.backgroundSize = `${width * scale}px ${height * scale}px`;
+        style.backgroundPosition = `${-item.x * scale}px ${-item.y * scale}px`;
+        style.backgroundClip = 'border-box';
+    }
     enableDrag(box);
     return box;
 }
@@ -517,47 +524,6 @@ function apply(request: OverlayRequest): OverlayResponse {
     const host = layer.parentElement;
     const renderedWidth = host?.getBoundingClientRect().width ?? width;
     const scale = renderedWidth / width;
-
-    if (request.originalUrl) {
-        // nhentai can hide or filter its own image node. Render the original
-        // bitmap as an opaque base layer so the page cannot turn black behind
-        // the transparent cutout.
-        const base = document.createElement('img');
-        base.src = request.originalUrl;
-        base.alt = '';
-        base.style.position = 'absolute';
-        base.style.inset = '0';
-        base.style.width = '100%';
-        base.style.height = '100%';
-        base.style.objectFit = 'fill';
-        base.style.pointerEvents = 'none';
-        base.style.opacity = '1';
-        base.style.visibility = 'visible';
-        base.style.filter = 'none';
-        base.style.mixBlendMode = 'normal';
-        base.style.zIndex = '0';
-        base.setAttribute('data-comic-translator-base', 'true');
-        layer.appendChild(base);
-    }
-
-    if (request.erasedUrl) {
-        // Keep the original image node. The erased image is a layer inside the
-        // same wrapper, so Clear overlay restores the page without a reload.
-        const erased = document.createElement('img');
-        erased.src = request.erasedUrl;
-        erased.alt = '';
-        erased.style.position = 'absolute';
-        erased.style.inset = '0';
-        erased.style.width = '100%';
-        erased.style.height = '100%';
-        erased.style.objectFit = 'fill';
-        erased.style.pointerEvents = 'none';
-        erased.style.background = 'transparent';
-        erased.style.mixBlendMode = 'normal';
-        erased.style.zIndex = '1';
-        erased.setAttribute('data-comic-translator-erased', 'true');
-        layer.appendChild(erased);
-    }
 
     let count = 0;
     for (const item of request.items) {
