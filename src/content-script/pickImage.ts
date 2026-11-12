@@ -56,7 +56,7 @@ function isPickerUi(element: Element): boolean {
 }
 
 function isBatchUi(element: Element): boolean {
-    return Boolean(element.closest(`#${BATCH_BAR_ID}`) || element.closest(`[${BATCH_MARK_ATTR}]`) || element.closest('[data-comic-translator-batch-progress]'));
+    return Boolean(element.closest(`#${BATCH_BAR_ID}`) || element.closest(`#${PICK_MENU_ID}`) || element.closest(`[${BATCH_MARK_ATTR}]`) || element.closest('[data-comic-translator-batch-progress]'));
 }
 
 function absoluteUrl(value: string): string {
@@ -199,6 +199,7 @@ const PAGE_EVENTS = ['mousedown', 'auxclick', 'dragstart'] as const;
 // Installed at document_start by the manifest before the page registers its
 // own mousedown handlers. Rawkuma opens an ad from a window capture handler.
 const PICKING_ATTR = 'data-comic-translator-picking';
+const PICK_MENU_ID = 'comic-translator-pick-menu';
 const guardScope = window as unknown as { __comicTranslatorMousedownGuard?: boolean };
 if (!guardScope.__comicTranslatorMousedownGuard) {
     guardScope.__comicTranslatorMousedownGuard = true;
@@ -210,14 +211,14 @@ if (!guardScope.__comicTranslatorMousedownGuard) {
             return;
         }
         const target = event.target as Element | null;
-        if (target?.closest('#comic-translator-pick-confirm, #comic-translator-batch-bar, [data-comic-translator-mark]')) return;
+        if (target?.closest('#comic-translator-pick-confirm, #comic-translator-batch-bar, #comic-translator-pick-menu, [data-comic-translator-mark]')) return;
         event.preventDefault();
         event.stopImmediatePropagation();
     }, true);
 }
 
 function swallowPageEvent(event: Event): void {
-    if ((event.target as Element | null)?.closest('#comic-translator-pick-confirm, #comic-translator-batch-bar, [data-comic-translator-mark]')) return;
+    if ((event.target as Element | null)?.closest('#comic-translator-pick-confirm, #comic-translator-batch-bar, #comic-translator-pick-menu, [data-comic-translator-mark]')) return;
     if (event instanceof MouseEvent && event.button === 2) return;
     event.preventDefault();
     event.stopPropagation();
@@ -499,6 +500,7 @@ function startBatchSelection(): void {
     let stopped = false;
     let bar: HTMLElement | null = null;
     let marks: HTMLElement | null = null;
+    let pickMenu: HTMLElement | null = null;
 
     const shield = document.createElement('div');
     shield.id = SHIELD_ID;
@@ -671,6 +673,8 @@ function startBatchSelection(): void {
         for (const type of PAGE_EVENTS) window.removeEventListener(type, swallowPageEvent, true);
         shield.remove();
         hover.remove();
+        pickMenu?.remove();
+        pickMenu = null;
         bar?.remove();
         marks?.remove();
         bar = null;
@@ -711,9 +715,84 @@ function startBatchSelection(): void {
         placeHover(hit && hit !== 'blocked-frame' ? hit.rect : null);
     }
 
+    function toggleHit(hit: Exclude<ReturnType<typeof findAt>, 'blocked-frame' | null>): void {
+        const existing = selection.findIndex((item) =>
+            item.element === hit.element
+            || (item.url === hit.url && Math.abs(item.rect.top - hit.rect.top) < 1
+                && Math.abs(item.rect.left - hit.rect.left) < 1));
+        if (existing >= 0) {
+            selection[existing].element.removeAttribute(OVERLAY_TARGET_ATTRIBUTE);
+            selection.splice(existing, 1);
+        } else {
+            const token = `batch-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            hit.element.setAttribute(OVERLAY_TARGET_ATTRIBUTE, token);
+            selection.push({ token, url: hit.url, element: hit.element, rect: hit.rect });
+        }
+        redrawMarks();
+    }
+
+    function selectAllVisible(): void {
+        for (const image of document.images) {
+            const rect = image.getBoundingClientRect();
+            if (rect.width < 8 || rect.height < 8) continue;
+            if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
+            const url = imageUrl(image);
+            if (!url || url.startsWith('blob:')) continue;
+            if (selection.some((item) => item.element === image || item.url === url)) continue;
+            const token = `batch-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            image.setAttribute(OVERLAY_TARGET_ATTRIBUTE, token);
+            selection.push({ token, url, element: image, rect });
+        }
+        redrawMarks();
+    }
+
+    function showPickMenu(hit: Exclude<ReturnType<typeof findAt>, 'blocked-frame' | null>, x: number, y: number): void {
+        pickMenu?.remove();
+        const menu = document.createElement('div');
+        pickMenu = menu;
+        menu.id = PICK_MENU_ID;
+        menu.style.position = 'fixed';
+        menu.style.left = `${Math.min(x, window.innerWidth - 190)}px`;
+        menu.style.top = `${Math.min(y, window.innerHeight - 140)}px`;
+        menu.style.width = '180px';
+        menu.style.padding = '6px';
+        menu.style.borderRadius = '8px';
+        menu.style.background = '#fffdf8';
+        menu.style.border = '1px solid #d6c7b6';
+        menu.style.boxShadow = '0 10px 30px rgba(15,23,42,0.25)';
+        menu.style.zIndex = '2147483647';
+        menu.style.font = '13px/1.3 system-ui, sans-serif';
+        const selected = selection.some((item) => item.element === hit.element || item.url === hit.url);
+        const addItem = (label: string, run: () => void) => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.textContent = label;
+            item.style.display = 'block';
+            item.style.width = '100%';
+            item.style.padding = '8px';
+            item.style.border = '0';
+            item.style.borderRadius = '5px';
+            item.style.background = 'transparent';
+            item.style.color = '#3f2f22';
+            item.style.textAlign = 'left';
+            item.style.cursor = 'pointer';
+            item.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                menu.remove();
+                pickMenu = null;
+                run();
+            });
+            menu.append(item);
+        };
+        addItem(selected ? 'Unselect this image' : 'Select this image', () => toggleHit(hit));
+        addItem('Select all visible images', selectAllVisible);
+        menu.addEventListener('contextmenu', (event) => event.preventDefault());
+        document.documentElement.append(menu);
+    }
+
     function onClick(event: MouseEvent): void {
         if (event.type !== 'contextmenu') return;
-        if (isBatchUi(event.target as Element) && event.type !== 'contextmenu') return;
         event.preventDefault();
         event.stopPropagation();
 
@@ -722,31 +801,14 @@ function startBatchSelection(): void {
             showToast('This image is inside a frame the picker cannot read.');
             return;
         }
-        if (!hit) {
-            showToast('No image under the pointer.');
-            return;
-        }
+        if (!hit) return;
         if (hit.url.startsWith('blob:')) {
             showToast('This image has no stable URL, so it cannot be fetched later.');
             return;
         }
+        showPickMenu(hit, event.clientX, event.clientY);
+        return;
 
-        const existing = selection.findIndex((item) =>
-            item.element === hit.element
-            || (item.url === hit.url && Math.abs(item.rect.top - hit.rect.top) < 1
-                && Math.abs(item.rect.left - hit.rect.left) < 1));
-        if (existing >= 0) {
-            selection[existing].element.removeAttribute(OVERLAY_TARGET_ATTRIBUTE);
-            selection.splice(existing, 1);
-            redrawMarks();
-            return;
-        }
-
-        const token = `batch-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        hit.element.setAttribute(OVERLAY_TARGET_ATTRIBUTE, token);
-        selection.push({ token, url: hit.url, element: hit.element, rect: hit.rect });
-        makeBar();
-        redrawMarks();
     }
 
     function onKey(event: KeyboardEvent): void {
