@@ -231,9 +231,16 @@ function start(): void {
     };
 
     let confirmButton: HTMLButtonElement | null = null;
+    let statusBox: HTMLElement | null = null;
+    let statusTimer: number | undefined;
+    let progressListener: ((message: unknown) => void) | undefined;
+    let keepStatus = false;
     const stop = (): void => {
         confirmButton?.remove();
         confirmButton = null;
+        if (!keepStatus) statusBox?.remove();
+        if (statusTimer !== undefined) window.clearInterval(statusTimer);
+        if (progressListener) chrome.runtime.onMessage.removeListener(progressListener);
         shield.removeEventListener('click', onClick);
         window.removeEventListener('click', onClick, true);
         window.removeEventListener('mousemove', onMove, true);
@@ -300,10 +307,10 @@ function start(): void {
                 button.style.top = `${top}px`;
                 button.style.width = `${size}px`;
                 button.style.height = `${size}px`;
-                button.style.borderRadius = '8px';
-                button.style.border = '1px solid rgba(255,255,255,0.8)';
-                button.style.background = '#2563eb';
-                button.style.color = '#fff';
+                button.style.borderRadius = '50%';
+                button.style.border = '1px solid #86efac';
+                button.style.background = '#dcfce7';
+                button.style.color = '#166534';
                 button.style.font = '700 22px/1 system-ui, sans-serif';
                 button.style.zIndex = '2147483647';
                 button.style.cursor = 'pointer';
@@ -311,8 +318,69 @@ function start(): void {
                 button.addEventListener('click', (clickEvent) => {
                     clickEvent.preventDefault();
                     clickEvent.stopPropagation();
-                    button.disabled = true;
-                    button.textContent = '…';
+                    button.remove();
+                    confirmButton = null;
+
+                    const started = Date.now();
+                    const status = document.createElement('div');
+                    statusBox = status;
+                    status.style.position = 'fixed';
+                    status.style.width = '270px';
+                    status.style.maxWidth = 'calc(100vw - 16px)';
+                    status.style.padding = '10px 12px';
+                    status.style.borderRadius = '999px';
+                    status.style.background = '#ecfdf5';
+                    status.style.border = '1px solid #a7f3d0';
+                    status.style.color = '#065f46';
+                    status.style.font = '600 13px/1.3 system-ui, sans-serif';
+                    status.style.display = 'flex';
+                    status.style.alignItems = 'center';
+                    status.style.gap = '8px';
+                    status.style.zIndex = '2147483647';
+                    status.style.boxShadow = '0 8px 24px rgba(15,23,42,0.25)';
+                    const statusLeft = Math.min(window.innerWidth - 278, Math.max(8, picked.rect.right - 278));
+                    const statusTop = Math.min(window.innerHeight - 52, Math.max(8, picked.rect.bottom - 52));
+                    status.style.left = `${statusLeft}px`;
+                    status.style.top = `${statusTop}px`;
+
+                    const spinner = document.createElement('span');
+                    spinner.style.width = '14px';
+                    spinner.style.height = '14px';
+                    spinner.style.flex = '0 0 auto';
+                    spinner.style.border = '2px solid #a7f3d0';
+                    spinner.style.borderTopColor = '#059669';
+                    spinner.style.borderRadius = '50%';
+                    spinner.style.animation = 'comic-translator-spin 0.8s linear infinite';
+                    const style = document.createElement('style');
+                    style.textContent = '@keyframes comic-translator-spin { to { transform: rotate(360deg); } }';
+                    document.documentElement.append(style);
+
+                    const text = document.createElement('span');
+                    text.style.flex = '1';
+                    text.textContent = 'Detecting boxes ...';
+                    const elapsed = document.createElement('span');
+                    elapsed.style.flex = '0 0 auto';
+                    elapsed.style.fontVariantNumeric = 'tabular-nums';
+                    elapsed.textContent = '0 s';
+                    status.append(spinner, text, elapsed);
+                    document.documentElement.append(status);
+
+                    statusTimer = window.setInterval(() => {
+                        elapsed.textContent = `${Math.floor((Date.now() - started) / 1000)} s`;
+                    }, 1000);
+
+                    progressListener = (message: unknown): void => {
+                        const progress = message as { kind?: string; stage?: string; provider?: string } | undefined;
+                        if (progress?.kind !== 'translate-progress') return;
+                        if (progress.stage === 'detecting') text.textContent = 'Detecting boxes ...';
+                        if (progress.stage === 'inpainting') text.textContent = 'Inpainting ...';
+                        if (progress.stage === 'calling') {
+                            const provider = progress.provider === 'deepseek' ? 'DeepSeek' : progress.provider === 'gemini' ? 'Gemini' : 'translation';
+                            text.textContent = `Calling ${provider}-api ...`;
+                        }
+                    };
+                    chrome.runtime.onMessage.addListener(progressListener);
+
                     void chrome.runtime.sendMessage(
                         serviceWorkerRequestFactory.ofTranslation({
                             imageUrl: picked.url,
@@ -321,11 +389,18 @@ function start(): void {
                         }),
                     ).then((response: TranslateResponse | undefined) => {
                         if (!response?.ok) throw new Error(response?.error ?? 'The background worker sent no answer.');
-                        showToast('Translating this image.');
+                        if (statusTimer !== undefined) window.clearInterval(statusTimer);
+                        spinner.remove();
+                        text.textContent = `Finished in ${Math.floor((Date.now() - started) / 1000)} seconds`;
+                        elapsed.textContent = `${Math.floor((Date.now() - started) / 1000)} s`;
+                        keepStatus = true;
                         stop();
+                        window.setTimeout(() => status.remove(), 5000);
                     }).catch((cause: unknown) => {
-                        button.disabled = false;
-                        button.textContent = '✓';
+                        status.remove();
+                        statusBox = null;
+                        if (statusTimer !== undefined) window.clearInterval(statusTimer);
+                        if (progressListener) chrome.runtime.onMessage.removeListener(progressListener);
                         showToast(`Could not translate: ${cause instanceof Error ? cause.message : String(cause)}`);
                     });
                 });

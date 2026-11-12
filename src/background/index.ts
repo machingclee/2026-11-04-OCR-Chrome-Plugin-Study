@@ -34,6 +34,10 @@ let offscreenReady: Promise<void> | null = null;
 let translationQueue: Promise<void> = Promise.resolve();
 let batchRunning = false;
 
+function notifyProgress(stage: string, provider?: string): void {
+    void chrome.runtime.sendMessage({ kind: 'translate-progress', stage, provider }).catch(() => undefined);
+}
+
 
 // this file is the context of service worker
 // only short-lived tasks should be done here, 
@@ -331,6 +335,7 @@ async function runTranslation(request: TranslateRequest, sender: chrome.runtime.
             const tab = await chrome.tabs.get(tabId).catch(() => null);
             tabPageUrl = tab?.url?.startsWith('http') ? tab.url : undefined;
         }
+        notifyProgress('detecting');
         const detection = await runDetection({
             target: SERVICE_WORKER_TARGET,
             type: 'detect',
@@ -338,8 +343,10 @@ async function runTranslation(request: TranslateRequest, sender: chrome.runtime.
             tabPageUrl,
         });
         if (!detection.ok) return detection;
+        notifyProgress('inpainting');
 
         const settings = request.settings ?? await readSettings();
+        notifyProgress('calling', settings.translator);
         const job = await translateGroups({
             groups: detection.groups,
             boxes: detection.boxes,
