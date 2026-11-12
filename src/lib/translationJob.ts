@@ -236,8 +236,9 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         };
 
         if (useColumns) {
+            const columnTop = Math.min(...sortedLines.map((line) => line.y));
             sortedLines.forEach((line, columnIndex) => {
-                push(line, modelColumns[columnIndex].trim());
+                push({ ...line, y: columnTop }, modelColumns[columnIndex].trim());
             });
         } else {
             push(tight, text);
