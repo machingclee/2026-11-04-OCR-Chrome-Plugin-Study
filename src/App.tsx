@@ -519,7 +519,7 @@ export default function App() {
                             title="Translation runs in the background worker."
                             className="rounded bg-[#b3815c] px-3 py-2 text-sm font-medium text-white transition hover:bg-[#a5724f] disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                            {translating ? 'Translating...' : 'Translate page'}
+                            {translating ? 'Translating...' : 'Detect + Translate'}
                         </button>
                         <button
                             type="button"
