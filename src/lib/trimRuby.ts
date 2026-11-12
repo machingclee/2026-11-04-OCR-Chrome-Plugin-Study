@@ -10,7 +10,7 @@ function inkAt(mask: TextMask, x: number, y: number): number {
     return mask.data[my * DETECTOR_INPUT_SIZE + mx];
 }
 
-type Run = { start: number; end: number; peak: number };
+type Run = { start: number; end: number; peak: number; alongStart: number; alongEnd: number };
 
 /**
  * A short ruby sometimes sits so close to its host that the detector returns one
@@ -30,25 +30,39 @@ export function trimMergedRuby<T extends Box & { direction?: 'vertical' | 'horiz
 
     const alongStart = Math.floor(vertical ? line.y : line.x);
     const alongEnd = Math.ceil(vertical ? line.y + line.height : line.x + line.width);
-    const counts: Array<{ position: number; count: number }> = [];
+    const counts: Array<{ position: number; count: number; first: number; last: number }> = [];
     for (let cross = crossStart; cross < crossEnd; cross += 1) {
         let count = 0;
+        let first = Number.POSITIVE_INFINITY;
+        let last = Number.NEGATIVE_INFINITY;
         for (let along = alongStart; along < alongEnd; along += 1) {
             const x = vertical ? cross : along;
             const y = vertical ? along : cross;
-            if (inkAt(mask, x, y) >= INK) count += 1;
+            if (inkAt(mask, x, y) < INK) continue;
+            count += 1;
+            first = Math.min(first, along);
+            last = Math.max(last, along);
         }
-        counts.push({ position: cross, count });
+        counts.push({ position: cross, count, first, last });
     }
 
     const runs: Run[] = [];
     let current: Run | null = null;
     for (const entry of counts) {
         if (entry.count >= 1) {
-            if (!current) current = { start: entry.position, end: entry.position, peak: entry.count };
-            else {
+            if (!current) {
+                current = {
+                    start: entry.position,
+                    end: entry.position,
+                    peak: entry.count,
+                    alongStart: entry.first,
+                    alongEnd: entry.last,
+                };
+            } else {
                 current.end = entry.position;
                 current.peak = Math.max(current.peak, entry.count);
+                current.alongStart = Math.min(current.alongStart, entry.first);
+                current.alongEnd = Math.max(current.alongEnd, entry.last);
             }
         } else if (current) {
             runs.push(current);
@@ -64,6 +78,8 @@ export function trimMergedRuby<T extends Box & { direction?: 'vertical' | 'horiz
         if (previous && run.start - previous.end <= 3) {
             previous.end = run.end;
             previous.peak = Math.max(previous.peak, run.peak);
+            previous.alongStart = Math.min(previous.alongStart, run.alongStart);
+            previous.alongEnd = Math.max(previous.alongEnd, run.alongEnd);
         } else {
             mergedRuns.push({ ...run });
         }
@@ -72,11 +88,14 @@ export function trimMergedRuby<T extends Box & { direction?: 'vertical' | 'horiz
 
     const host = [...mergedRuns].sort((a, b) => (b.end - b.start) - (a.end - a.start))[0];
     const hostExtent = host.end - host.start + 1;
+    const hostLength = host.alongEnd - host.alongStart + 1;
     const readings = mergedRuns.filter((run) => {
         if (run === host) return false;
         const extent = run.end - run.start + 1;
+        const length = run.alongEnd - run.alongStart + 1;
         const gap = Math.max(0, Math.max(run.start, host.start) - Math.min(run.end, host.end));
         return extent <= hostExtent * 0.7
+            && length <= hostLength * 0.6
             && run.peak <= host.peak * 0.65
             && gap <= hostExtent * 1.5;
     });
