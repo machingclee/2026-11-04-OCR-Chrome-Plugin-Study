@@ -510,15 +510,20 @@ to pick an image, then click the check mark. Change the binding in chrome://exte
             <section className="rounded-md border border-[#e7dfd4] bg-white p-3 shadow-sm">
                 <div className="flex items-center justify-between gap-3">
                     <h2 className="text-sm font-semibold">Translation settings</h2>
-                    <button
-                        type="button"
-                        onClick={handleSaveSettings}
-                        disabled={!dirty}
-                        className={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition ${dirty ? 'bg-amber-50 text-amber-700 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-700'}`}
-                    >
-                        <span className={`h-1.5 w-1.5 rounded-full ${dirty ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-                        {dirty ? 'Save' : 'Saved'}
-                    </button>
+                    {dirty ? (
+                        <button
+                            type="button"
+                            onClick={handleSaveSettings}
+                            className="rounded border border-[#9f6f4d] bg-[#b3815c] px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[#a5724f] active:translate-y-px"
+                        >
+                            Save settings
+                        </button>
+                    ) : (
+                        <div className="inline-flex items-center gap-1.5 rounded bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                            Saved
+                        </div>
+                    )}
                 </div>
 
                 <div className="mt-2 grid grid-cols-2 gap-2">
