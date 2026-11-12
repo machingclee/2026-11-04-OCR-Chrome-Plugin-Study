@@ -196,6 +196,19 @@ function findAt(doc: Document, x: number, y: number, offsetX: number, offsetY: n
 
 const PAGE_EVENTS = ['auxclick', 'contextmenu', 'dragstart'] as const;
 
+// Installed at document_start by the manifest before the page registers its
+// own mousedown handlers. Rawkuma opens an ad from a window capture handler.
+const guardScope = window as unknown as { __comicTranslatorMousedownGuard?: boolean };
+if (!guardScope.__comicTranslatorMousedownGuard) {
+    guardScope.__comicTranslatorMousedownGuard = true;
+    window.addEventListener('mousedown', (event) => {
+        if (!window.__comicTranslatorPickerActive) return;
+        if ((event.target as Element | null)?.closest('#comic-translator-pick-confirm')) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+    }, true);
+}
+
 function swallowPageEvent(event: Event): void {
     if ((event.target as Element | null)?.closest('#comic-translator-pick-confirm')) return;
     event.preventDefault();

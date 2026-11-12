@@ -29,6 +29,14 @@
     "default_title": "Comic Translator",
     "default_popup": "popup.html"
   },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["pickImage.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
   "background": {
     "service_worker": "background.js",
     "type": "module"
