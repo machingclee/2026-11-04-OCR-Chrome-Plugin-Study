@@ -255,11 +255,6 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
             });
         };
 
-        const fitSizes = columns.slice(0, sortedLines.length).map((column, index) => {
-            const line = sortedLines[index];
-            const glyphs = Math.max(1, [...column].length);
-            return (vertical ? line.height : line.width) / glyphs;
-        });
         const fittedFont = Math.max(6, Math.round(font));
 
         if (columns.length > 1 && columns.length <= sortedLines.length) {
