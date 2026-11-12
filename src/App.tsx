@@ -51,6 +51,7 @@ type GroupStroke = {
     rectangle?: boolean;
     fontSize?: number;
     vertical?: boolean;
+    balloon?: boolean;
 };
 function seconds(ms: number): string {
     return `${(ms / 1000).toFixed(1)} s`;
@@ -480,7 +481,9 @@ export default function App() {
                     skipped += 1;
                     return;
                 }
-                const layout = tightenBox(group, currentBoxes);
+                // A balloon is the text container. A block is not: filling a
+                // block box would cover the panel, so its lines define the area.
+                const layout = group.balloon ? group : tightenBox(group, currentBoxes);
                 items.push({
                     x: layout.x,
                     y: layout.y,

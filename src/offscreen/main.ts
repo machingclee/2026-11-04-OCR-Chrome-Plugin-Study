@@ -302,7 +302,13 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         }
         grouped.boxes.forEach((box, index) => {
             const text = perGroup[index].filter((value) => value.length > 0);
-            if (text.length > 0) groups.push({ ...box, lines: text, fontSize: groupFontSize(usable, box), vertical: groupVertical(usable, box) });
+            if (text.length > 0) groups.push({
+                ...box,
+                lines: text,
+                fontSize: groupFontSize(usable, box),
+                vertical: groupVertical(usable, box),
+                balloon: grouped.balloonFlags[index] ?? false,
+            });
         });
         for (const line of usable) {
             if (groups.some((group) => centreInsideBox(line, group))) continue;
@@ -315,6 +321,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
                 lines: [line.text],
                 fontSize: groupFontSize(usable, line),
                 vertical: line.direction === 'vertical',
+                balloon: false,
             });
         }
 
@@ -347,6 +354,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
                     lines: text,
                     fontSize: groupFontSize(usable, clusterBox),
                     vertical: groupVertical(usable, clusterBox),
+                    balloon: group.balloon ?? false,
                 });
             }
         }

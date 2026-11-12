@@ -68,6 +68,8 @@ export type GroupData = {
     fontSize?: number;
     /** True when the source lines are mostly vertical. */
     vertical?: boolean;
+    /** True when the group came from a balloon rather than a block. */
+    balloon?: boolean;
 };
 
 /** One absolutely positioned translation, in the image's own pixels. */

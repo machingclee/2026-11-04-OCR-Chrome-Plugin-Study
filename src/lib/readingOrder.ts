@@ -204,7 +204,7 @@ export function groupByRegion(
     bubbles: Bubble[],
     blocks: TextBlock[],
     strict: boolean,
-): { lines: TextLine[]; grouped: number; dropped: number; regions: number; boxes: Box[] } {
+): { lines: TextLine[]; grouped: number; dropped: number; regions: number; boxes: Box[]; balloonFlags: boolean[] } {
     // A balloon is one speaker and one sentence, so it wins over the block that
     // surrounds it. A block is the fallback for text with no balloon at all.
     const balloons = bubbles.map(regionOfBalloon);
@@ -254,9 +254,9 @@ export function groupByRegion(
     });
 
     if (strict) {
-        return { lines: ordered, grouped, dropped: lines.length - grouped, regions: ids.length, boxes };
+        return { lines: ordered, grouped, dropped: lines.length - grouped, regions: ids.length, boxes, balloonFlags: ids.map((id) => id.startsWith('balloon-')) };
     }
-    return { lines: ordered.concat(loose), grouped, dropped: 0, regions: ids.length, boxes };
+    return { lines: ordered.concat(loose), grouped, dropped: 0, regions: ids.length, boxes, balloonFlags: ids.map((id) => id.startsWith('balloon-')) };
 }
 
 /**
