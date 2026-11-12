@@ -225,22 +225,6 @@ export default function App() {
             });
     }, [deepSeekKey, geminiKey, translator]);
 
-    const handleSaveSettings = useCallback(async () => {
-        try {
-            await chrome.storage.local.set({
-                [GEMINI_KEY]: geminiKey.trim(),
-                [DEEPSEEK_KEY]: deepSeekKey.trim(),
-                [TRANSLATOR_KEY]: translator,
-                        });
-            setDirty(false);
-            setStatus('Settings saved.');
-        } catch (cause) {
-            setError(`Could not save settings: ${cause instanceof Error ? cause.message : String(cause)}`);
-            setDirty(true);
-        }
-    }, [deepSeekKey, geminiKey, translator]);
-
-
     const runDetect = useCallback(async (): Promise<DetectResponse | null> => {
         if (!imageUrl) return null;
         setBusy(true);
@@ -395,157 +379,187 @@ export default function App() {
     }, []);
 
     return (
-        <main>
-            <h1>Comic Translator</h1>
-            <p>{status}</p>
+        <main className="mx-auto flex min-h-[560px] w-[720px] flex-col gap-4 bg-slate-100 p-4 text-slate-900">
+            <header className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-4">
+                    <div>
+                        <h1 className="text-lg font-semibold tracking-tight">Comic Translator</h1>
+                        <p className="mt-1 text-sm leading-5 text-slate-600">{status}</p>
+                    </div>
+                    <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-500">v1.0.5</span>
+                </div>
 
-
-            <div className="actions">
-                <button type="button" onClick={handlePick}>
-                    Pick an image on this page
-                </button>
-                <button
-                    type="button"
-                    onClick={handleDetect}
-                    disabled={!imageUrl || busy}
-                    data-busy={busy}
-                    title={imageUrl ? undefined : 'Pick an image on the page first.'}
-                >
-                    {busy ? 'Working' : 'Detect boxes'}
-                </button>
-                <button
-                    type="button"
-                    onClick={handleTranslate}
-                    disabled={translating || !imageUrl}
-                    title="Translation runs in the background worker."
-                >
-                    {translating ? 'Translating' : 'Translate the page'}
-                </button>
-                <button type="button" onClick={handleClearOverlay} disabled={!imageUrl}>
-                    Clear overlay
-                </button>
-
-            </div>
-
-            <div className="keys">
-                <label>
-                    Translator
-                    <select
-                        value={translator}
-                        onChange={(event) => {
-                            const choice = event.target.value as TranslatorChoice;
-                            setTranslator(choice);
-                            setDirty(true);
-                            // Persist immediately: forgetting this was why an old
-                            // Gemini choice silently came back after reopening.
-                            void chrome.storage.local.set({ [TRANSLATOR_KEY]: choice });
-                        }}
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                    <button
+                        type="button"
+                        onClick={handlePick}
+                        className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                        <option value="gemini">Gemini (free tier)</option>
-                        <option value="deepseek">DeepSeek</option>
-                        <option value="builtin">This browser</option>
-                    </select>
-                </label>
+                        Pick an image
+                    </button>
+                    <button
+                        type="button"
+                        onClick={handleDetect}
+                        disabled={!imageUrl || busy}
+                        data-busy={busy}
+                        title={imageUrl ? undefined : 'Pick an image on the page first.'}
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        {busy ? 'Detecting...' : 'Detect boxes'}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={handleTranslate}
+                        disabled={translating || !imageUrl}
+                        title="Translation runs in the background worker."
+                        className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        {translating ? 'Translating...' : 'Translate page'}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={handleClearOverlay}
+                        disabled={!imageUrl}
+                        className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        Clear overlay
+                    </button>
+                </div>
+            </header>
 
-                <label>
-                    Gemini API key
-                    <input
-                        type="password"
-                        value={geminiKey}
-                        placeholder="AIza..."
-                        onChange={(event) => {
-                            setGeminiKey(event.target.value);
-                            setDirty(true);
-                        }}
-                    />
-                    <span className="hint">
-                        Used for the vision SFX check when Gemini is the selected translator; DeepSeek uses its own vision model.
-                    </span>
-                </label>
-
-                <label>
-                    DeepSeek API key
-                    <input
-                        type="password"
-                        value={deepSeekKey}
-                        placeholder="sk-..."
-                        onChange={(event) => {
-                            setDeepSeekKey(event.target.value);
-                            setDirty(true);
-                        }}
-                    />
-                </label>
-
-                <span />
-                <button type="button" className="save" onClick={handleSaveSettings} disabled={!dirty}>
-                    {dirty ? 'Save settings' : 'Saved'}
-                </button>
-            </div>
-
-            {error ? <p role="alert">{error}</p> : null}
-
-            {imageUrl ? (
-                <div className="stage" key={boxes?.length || 0}>
-                    <img
-                        src={imageUrl}
-                        alt="Picked from the page"
-                        onLoad={(event) =>
-                            setSize({
-                                width: event.currentTarget.naturalWidth,
-                                height: event.currentTarget.naturalHeight,
-                            })
-                        }
-                    />
-                    {bubbles.map((bubble) => (
-                        <span
-                            key={`bubble-${bubble.x}-${bubble.y}`}
-                            className="bubble"
-                            style={{
-                                left: `${(bubble.x / size.width) * 100}%`,
-                                top: `${(bubble.y / size.height) * 100}%`,
-                                width: `${(bubble.width / size.width) * 100}%`,
-                                height: `${(bubble.height / size.height) * 100}%`,
-                            }}
-                        />
-                    ))}
-                    {size.width > 0
-                        ? boxes.map((box) => {
-                            const angle = box.angle ?? 0;
-                            // A vertical column keeps its long side vertical, so the
-                            // crop size, not the raw line length, decides the box.
-                            const { width, height } = cropSize(box);
-                            const centreX = box.x + box.width / 2;
-                            const centreY = box.y + box.height / 2;
-                            return (
-                                <span
-                                    key={`${box.x}-${box.y}-${box.width}-${box.height}-${angle}`}
-                                    className="box"
-                                    data-direction={box.direction}
-                                    title={`${box.text || 'no text'} - ${ocrScore(box.confidence)}`}
-                                    style={{
-                                        left: `${((centreX - width / 2) / size.width) * 100}%`,
-                                        top: `${((centreY - height / 2) / size.height) * 100}%`,
-                                        width: `${(width / size.width) * 100}%`,
-                                        height: `${(height / size.height) * 100}%`,
-                                        transform: angle === 0 ? undefined : `rotate(${angle}rad)`,
-                                        transformOrigin: 'center',
-                                    }}
-                                />
-                            );
-                        })
-                        : null}
+            {error ? (
+                <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+                    {error}
                 </div>
             ) : null}
 
+            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                    <h2 className="text-sm font-semibold">Translation settings</h2>
+                    <div className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${dirty ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${dirty ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                        {dirty ? 'Unsaved' : 'Saved'}
+                    </div>
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                    <label className="col-span-2 flex flex-col gap-1 text-xs font-medium text-slate-600">
+                        Translator
+                        <select
+                            value={translator}
+                            onChange={(event) => {
+                                const choice = event.target.value as TranslatorChoice;
+                                setTranslator(choice);
+                                setDirty(true);
+                                void chrome.storage.local.set({ [TRANSLATOR_KEY]: choice });
+                            }}
+                            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        >
+                            <option value="gemini">Gemini (free tier)</option>
+                            <option value="deepseek">DeepSeek</option>
+                            <option value="builtin">This browser</option>
+                        </select>
+                    </label>
+
+                    <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                        Gemini API key
+                        <input
+                            type="password"
+                            value={geminiKey}
+                            placeholder="AIza..."
+                            onChange={(event) => {
+                                setGeminiKey(event.target.value);
+                                setDirty(true);
+                            }}
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        />
+                        <span className="text-[11px] font-normal leading-4 text-slate-500">
+                            Used for the vision SFX check when Gemini is selected. DeepSeek uses its own vision model.
+                        </span>
+                    </label>
+
+                    <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                        DeepSeek API key
+                        <input
+                            type="password"
+                            value={deepSeekKey}
+                            placeholder="sk-..."
+                            onChange={(event) => {
+                                setDeepSeekKey(event.target.value);
+                                setDirty(true);
+                            }}
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        />
+                    </label>
+                </div>
+            </section>
+
+            {imageUrl ? (
+                <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                    <div className="mb-2 flex items-center justify-between">
+                        <h2 className="text-sm font-semibold">Page preview</h2>
+                        <span className="text-xs text-slate-500">{boxes.length} boxes</span>
+                    </div>
+                    <div className="stage" key={boxes?.length || 0}>
+                        <img
+                            src={imageUrl}
+                            alt="Picked from the page"
+                            onLoad={(event) =>
+                                setSize({
+                                    width: event.currentTarget.naturalWidth,
+                                    height: event.currentTarget.naturalHeight,
+                                })
+                            }
+                        />
+                        {bubbles.map((bubble) => (
+                            <span
+                                key={`bubble-${bubble.x}-${bubble.y}`}
+                                className="bubble"
+                                style={{
+                                    left: `${(bubble.x / size.width) * 100}%`,
+                                    top: `${(bubble.y / size.height) * 100}%`,
+                                    width: `${(bubble.width / size.width) * 100}%`,
+                                    height: `${(bubble.height / size.height) * 100}%`,
+                                }}
+                            />
+                        ))}
+                        {size.width > 0
+                            ? boxes.map((box) => {
+                                const angle = box.angle ?? 0;
+                                const { width, height } = cropSize(box);
+                                const centreX = box.x + box.width / 2;
+                                const centreY = box.y + box.height / 2;
+                                return (
+                                    <span
+                                        key={`${box.x}-${box.y}-${box.width}-${box.height}-${angle}`}
+                                        className="box"
+                                        data-direction={box.direction}
+                                        title={`${box.text || 'no text'} - ${ocrScore(box.confidence)}`}
+                                        style={{
+                                            left: `${((centreX - width / 2) / size.width) * 100}%`,
+                                            top: `${((centreY - height / 2) / size.height) * 100}%`,
+                                            width: `${(width / size.width) * 100}%`,
+                                            height: `${(height / size.height) * 100}%`,
+                                            transform: angle === 0 ? undefined : `rotate(${angle}rad)`,
+                                            transformOrigin: 'center',
+                                        }}
+                                    />
+                                );
+                            })
+                            : null}
+                    </div>
+                </section>
+            ) : null}
+
             {groups.length > 0 ? (
-                <section className="groups">
-                    <h2>Reading groups</h2>
-                    <ol>
+                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <h2 className="text-sm font-semibold">Reading groups</h2>
+                    <ol className="mt-2 space-y-2">
                         {groups.map((group, index) => (
-                            <li key={`${group.x}-${group.y}`}>
-                                <p className="source">{group.lines.join('') || 'no text'}</p>
+                            <li key={`${group.x}-${group.y}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                <p className="text-sm font-medium text-slate-800">{group.lines.join('') || 'no text'}</p>
                                 {translated ? (
-                                    <p className="target">
+                                    <p className="mt-1 text-sm text-slate-600">
                                         {translated[index]?.skip
                                             ? '(not translated - UI/name/SFX)'
                                             : translated[index]?.text ?? ''}
@@ -557,15 +571,16 @@ export default function App() {
                 </section>
             ) : null}
 
-
             {previews.length > 0 ? (
-                <section className="regions">
-                    <h2>Text regions</h2>
-                    <ol>
+                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <h2 className="text-sm font-semibold">Text regions</h2>
+                    <ol className="mt-2 flex gap-3 overflow-x-auto pb-1">
                         {boxes.map((box, index) => (
-                            <li key={index}>
-                                {previews[index] ? <img src={previews[index]} alt={`Text region ${index + 1}`} /> : null}
-                                <p>{box.text || 'no text'}</p>
+                            <li key={index} className="w-40 shrink-0">
+                                {previews[index] ? (
+                                    <img src={previews[index]} alt={`Text region ${index + 1}`} className="max-h-28 w-full rounded-lg border border-slate-200 bg-white object-contain" />
+                                ) : null}
+                                <p className="mt-1 text-xs leading-4 text-slate-600">{box.text || 'no text'}</p>
                                 <span className="ocr-score">{ocrScore(box.confidence)}</span>
                             </li>
                         ))}

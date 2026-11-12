@@ -1,44 +1,24 @@
-/* Chrome caps an action popup at 800 by 600, so the page fills that box. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 body {
   width: 720px;
   min-height: 560px;
   max-height: 600px;
   overflow-y: auto;
   margin: 0;
-  padding: 8px;
+  padding: 0;
   box-sizing: border-box;
-  font: 14px/1.5 system-ui, sans-serif;
-}
-
-h1 {
-  margin: 0 0 4px;
-  font-size: 16px;
-}
-
-p {
-  margin: 0 0 12px;
-  color: #444;
-}
-
-button {
-  padding: 6px 12px;
-  font: inherit;
-  cursor: pointer;
-}
-
-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-button[data-busy='true'] {
-  cursor: progress;
+  font-family: ui-sans-serif, system-ui, sans-serif;
 }
 
 .stage {
   position: relative;
-  margin-top: 12px;
-  border: 1px solid #ddd;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
 }
 
 .stage img {
@@ -54,53 +34,9 @@ button[data-busy='true'] {
   background: rgba(255, 77, 109, 0.12);
 }
 
-.actions {
-  display: flex;
-  gap: 8px;
-}
-
-.regions h2 {
-  font-size: 13px;
-  margin: 16px 0 8px;
-}
-
-.regions ol {
-  display: flex;
-  gap: 8px;
-  margin: 0;
-  padding: 8px 0 0;
-  list-style: none;
-  overflow-x: auto;
-}
-
-.regions li {
-  flex: 0 0 auto;
-}
-
-.regions img {
-  display: block;
-  max-height: 120px;
-  border: 1px solid #ddd;
-  background: #fff;
-}
-
 .box[data-direction='horizontal'] {
   border-color: #2f7bd8;
   background: rgba(47, 123, 216, 0.12);
-}
-
-.regions li p {
-  max-width: 180px;
-  margin: 4px 0 0;
-  font-size: 12px;
-  line-height: 1.4;
-  color: #333;
-}
-
-.toggle {
-  display: block;
-  margin: 0 0 8px;
-  color: #444;
 }
 
 .bubble {
@@ -113,7 +49,11 @@ button[data-busy='true'] {
 .ocr-score {
   display: block;
   margin-top: 2px;
-  color: #666;
+  color: #64748b;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+}
+
+button[data-busy='true'] {
+  cursor: progress;
 }
