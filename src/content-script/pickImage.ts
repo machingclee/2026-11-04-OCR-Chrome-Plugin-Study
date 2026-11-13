@@ -739,34 +739,59 @@ function startBatchSelection(): void {
         menu.setAttribute('popover', 'manual');
         menu.style.position = 'fixed';
         menu.style.margin = '0';
-        menu.style.left = `${Math.min(x, window.innerWidth - 190)}px`;
+        menu.style.left = `${Math.min(x, window.innerWidth - 210)}px`;
         menu.style.top = `${Math.min(y, window.innerHeight - 140)}px`;
-        menu.style.width = '180px';
+        menu.style.width = '200px';
         menu.style.padding = '6px';
         menu.style.borderRadius = '8px';
-        menu.style.background = '#fffdf8';
-        menu.style.border = '1px solid #d6c7b6';
+        menu.style.background = '#fffaf3';
+        menu.style.border = '1px solid #e2d1bd';
         menu.style.boxShadow = '0 10px 30px rgba(15,23,42,0.25)';
         menu.style.zIndex = '2147483647';
         menu.style.pointerEvents = 'auto';
         menu.style.isolation = 'isolate';
         menu.style.userSelect = 'none';
         menu.style.font = '13px/1.3 system-ui, sans-serif';
+        const icons = {
+            select: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+            unselect: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 12h14"/></svg>',
+            selectAll: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M16 15l2 2 4-4"/></svg>',
+            unselectAll: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M6 18L18 6"/></svg>',
+            translate: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 12h16M14 6l6 6-6 6"/></svg>',
+        };
         const selected = selection.some((item) => item.element === hit.element || item.url === hit.url);
-        const addItem = (label: string, run: () => void) => {
+        const addItem = (label: string, run: () => void, icon: string) => {
             const item = document.createElement('button');
             item.type = 'button';
-            item.textContent = label;
-            item.style.display = 'block';
+            item.style.display = 'flex';
+            item.style.alignItems = 'center';
+            item.style.gap = '9px';
             item.style.width = '100%';
             item.style.padding = '8px';
             item.style.border = '0';
             item.style.borderRadius = '5px';
             item.style.background = 'transparent';
-            item.style.color = '#3f2f22';
+            item.style.color = '#4a3828';
             item.style.textAlign = 'left';
             item.style.cursor = 'pointer';
             item.style.pointerEvents = 'auto';
+            item.style.transition = 'background 120ms ease, color 120ms ease';
+            const iconNode = document.createElement('span');
+            iconNode.innerHTML = icon;
+            iconNode.style.display = 'inline-flex';
+            iconNode.style.flex = '0 0 auto';
+            iconNode.style.color = '#8a6a4f';
+            const textNode = document.createElement('span');
+            textNode.textContent = label;
+            item.append(iconNode, textNode);
+            item.addEventListener('mouseenter', () => {
+                item.style.background = '#f5e7d7';
+                item.style.color = '#3f2f22';
+            });
+            item.addEventListener('mouseleave', () => {
+                item.style.background = 'transparent';
+                item.style.color = '#4a3828';
+            });
             item.addEventListener('click', (event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -776,10 +801,10 @@ function startBatchSelection(): void {
             });
             menu.append(item);
         };
-        addItem(selected ? 'Unselect this image' : 'Select this image', () => toggleHit(hit));
-        addItem('Select all visible images', () => selectAllVisible(hit.element));
-        addItem('Unselect all', unselectAll);
-        addItem('Translate all', () => { void confirmSelection(); });
+        addItem(selected ? 'Unselect this image' : 'Select this image', () => toggleHit(hit), selected ? icons.unselect : icons.select);
+        addItem('Select all visible images', () => selectAllVisible(hit.element), icons.selectAll);
+        addItem('Unselect all', unselectAll, icons.unselectAll);
+        addItem('Translate all', () => { void confirmSelection(); }, icons.translate);
         menu.addEventListener('contextmenu', (event) => event.preventDefault());
         document.documentElement.append(menu);
         try {
