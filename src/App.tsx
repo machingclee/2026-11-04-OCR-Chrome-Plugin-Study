@@ -418,6 +418,21 @@ export default function App() {
         }
     }, [deepSeekKey, geminiKey, translator]);
 
+    const handleDownloadImage = useCallback(() => {
+        if (!imageUrl) return;
+        let name = 'comic-image';
+        try {
+            name = decodeURIComponent(new URL(imageUrl).pathname.split('/').pop() || name);
+        } catch {
+            // Keep the fallback name for unusual image URLs.
+        }
+        chrome.downloads.download({ url: imageUrl, filename: name, saveAs: true }, (id) => {
+            if (chrome.runtime.lastError || id === undefined) {
+                setError(chrome.runtime.lastError?.message ?? 'Could not start the image download.');
+            }
+        });
+    }, [imageUrl]);
+
     return (
         <main className={`mx-auto flex flex-col gap-3 rounded-md bg-[#f4f1ec] p-3 text-slate-900 transition-[width] duration-200 ease-out ${view === 'debug' ? 'w-[720px]' : 'w-[480px]'}`}>
             <div className="flex self-start rounded-md bg-[#e9e3da] p-1">
@@ -578,7 +593,16 @@ to select images, then click the translate button. Each selected image receives 
                 <section className={`rounded-md border border-[#e7dfd4] bg-white p-3 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
                     <div className="mb-2 flex items-center justify-between">
                         <h2 className="text-sm font-semibold">Page preview</h2>
-                        <span className="text-xs text-slate-500">{boxes.length} boxes</span>
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-500">{boxes.length} boxes</span>
+                            <button
+                                type="button"
+                                onClick={handleDownloadImage}
+                                className="rounded border border-[#ded2c4] bg-white px-2 py-1 text-xs font-medium text-[#6d523b] transition hover:bg-[#f3eee8]"
+                            >
+                                Download image
+                            </button>
+                        </div>
                     </div>
                     <div className="stage" key={boxes?.length || 0}>
                         <img
