@@ -206,11 +206,16 @@ if (!guardScope.__comicTranslatorMousedownGuard) {
     window.addEventListener('mousedown', (event) => {
         if (!document.documentElement.hasAttribute(PICKING_ATTR)) return;
         if (event.type === 'contextmenu') return;
+        const target = event.target as Element | null;
+        if (target?.closest('#comic-translator-pick-menu')) return;
         if (event.button === 2) {
+            event.preventDefault();
             event.stopImmediatePropagation();
+            window.dispatchEvent(new CustomEvent('comic-translator-right-click', {
+                detail: { x: event.clientX, y: event.clientY },
+            }));
             return;
         }
-        const target = event.target as Element | null;
         if (target?.closest('#comic-translator-pick-menu')) {
             event.stopImmediatePropagation();
             return;
@@ -670,6 +675,7 @@ function startBatchSelection(): void {
         window.removeEventListener('mousemove', onMove, true);
         window.removeEventListener('keydown', onKey, true);
         document.removeEventListener('keydown', onKey, true);
+        window.removeEventListener('comic-translator-right-click', onRightClick);
         window.removeEventListener('scroll', redrawMarks, true);
         window.removeEventListener('resize', redrawMarks);
         for (const type of PAGE_EVENTS) window.removeEventListener(type, swallowPageEvent, true);
@@ -849,6 +855,13 @@ function startBatchSelection(): void {
         toggleHit(hit);
     }
 
+    function onRightClick(event: Event): void {
+        const detail = (event as CustomEvent<{ x: number; y: number }>).detail;
+        const hit = findAt(document, detail.x, detail.y, 0, 0);
+        if (!hit || hit === 'blocked-frame' || hit.url.startsWith('blob:')) return;
+        showPickMenu(hit, detail.x, detail.y);
+    }
+
     function onKey(event: KeyboardEvent): void {
         if (event.key === 'Escape') finish(false);
     }
@@ -859,6 +872,7 @@ function startBatchSelection(): void {
     window.addEventListener('mousemove', onMove, true);
     window.addEventListener('keydown', onKey, true);
     document.addEventListener('keydown', onKey, true);
+    window.addEventListener('comic-translator-right-click', onRightClick);
     window.addEventListener('scroll', redrawMarks, true);
     window.addEventListener('resize', redrawMarks);
     for (const type of PAGE_EVENTS) window.addEventListener(type, swallowPageEvent, true);
