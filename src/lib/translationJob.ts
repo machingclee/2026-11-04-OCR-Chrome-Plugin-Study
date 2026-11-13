@@ -4,8 +4,8 @@ import type { RegionAnswer } from './translatePrompt';
 import { canTranslate, translateAll } from './translate';
 import { translateWithDeepSeek } from './translateDeepSeek';
 import { translateWithGemini } from './translateGemini';
-import { classifyVisionCandidates, type VisionProvider } from './visionClassify';
 import { safeBreak, toHorizontal, toVertical } from './punct';
+import { cropSize } from './warp';
 
 export type TranslationSettings = {
     translator: TranslatorChoice;
@@ -22,7 +22,10 @@ export type TranslationJobInput = {
     settings: TranslationSettings;
     inpainted?: boolean;
     translateBuiltin?: (lines: string[]) => Promise<string[]>;
+    signal?: AbortSignal;
 };
+
+export type EraseBox = { x: number; y: number; width: number; height: number; angle?: number };
 
 export type TranslationJobResult = {
     items: OverlayItem[];
@@ -31,6 +34,8 @@ export type TranslationJobResult = {
     active: TranslatorChoice;
     skipped: number;
     withBalloon: number;
+    /** Every source line of a translated group, including columns that received no label. */
+    erase: EraseBox[];
 };
 
 function countWithBalloon(list: GroupData[], balloons: BubbleData[]): number {
@@ -43,58 +48,31 @@ function countWithBalloon(list: GroupData[], balloons: BubbleData[]): number {
     }).length;
 }
 
-function visionProvider(settings: TranslationSettings): VisionProvider | null {
-    if (settings.translator === 'deepseek' && settings.deepSeekKey.trim().length > 0) {
-        return { kind: 'deepseek', apiKey: settings.deepSeekKey.trim() };
+/** Upright crop of a leaned line, placed so a rotation around its centre lands on the glyphs. */
+function placedFrame(line: BoxData): { x: number; y: number; width: number; height: number; angle?: number } {
+    const angle = line.angle ?? 0;
+    if (Math.abs(angle) < 0.01) {
+        return { x: line.x, y: line.y, width: line.width, height: line.height };
     }
-    if (settings.translator === 'gemini' && settings.geminiKey.trim().length > 0) {
-        return { kind: 'gemini', apiKey: settings.geminiKey.trim() };
-    }
-    if (settings.deepSeekKey.trim().length > 0) {
-        return { kind: 'deepseek', apiKey: settings.deepSeekKey.trim() };
-    }
-    if (settings.geminiKey.trim().length > 0) {
-        return { kind: 'gemini', apiKey: settings.geminiKey.trim() };
-    }
-    return null;
+    const size = cropSize(line);
+    const centreX = line.x + line.width / 2;
+    const centreY = line.y + line.height / 2;
+    return {
+        x: centreX - size.width / 2,
+        y: centreY - size.height / 2,
+        width: size.width,
+        height: size.height,
+        angle,
+    };
 }
 
 /** Detect, filter, translate, and lay out one image without touching the page. */
 export async function translateGroups(input: TranslationJobInput): Promise<TranslationJobResult> {
-    let current = input.groups;
-    let pageWidth = input.imageWidth;
-    let pageHeight = input.imageHeight;
+    const current = input.groups;
     const { settings, boxes, balloons } = input;
-    let visionSkipped = 0;
 
-    const provider = visionProvider(settings);
-    if (current.length > 0 && provider) {
-        const candidates = current
-            .map((group, index) => ({
-                index,
-                crop: group.visionCrop ?? '',
-                text: group.lines.join(''),
-            }))
-            .filter((candidate) => candidate.crop.length > 0);
-        if (candidates.length > 0) {
-            const verdicts = await classifyVisionCandidates(candidates, provider);
-            const removed = new Set<number>();
-            for (const candidate of candidates) {
-                const verdict = verdicts.get(candidate.index);
-                if (verdict === 'sfx' || verdict === 'false_positive') removed.add(candidate.index);
-            }
-            if (removed.size > 0) {
-                visionSkipped = removed.size;
-                current = current.filter((_, index) => !removed.has(index));
-            }
-        }
-    }
-
+    if (input.signal?.aborted) throw new Error('Cancelled.');
     if (current.length === 0) throw new Error('No text was found on this page.');
-    if (pageWidth <= 0 || pageHeight <= 0) {
-        pageWidth = Math.max(...boxes.map((box) => box.x + box.width), 1);
-        pageHeight = Math.max(...boxes.map((box) => box.y + box.height), 1);
-    }
 
     const regions = current.map((group, index) => ({
         id: `r${index + 1}`,
@@ -125,8 +103,8 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         used = 'browser';
     } else if (key.length > 0) {
         out = active === 'gemini'
-            ? await translateWithGemini(regions, key)
-            : await translateWithDeepSeek(regions, key);
+            ? await translateWithGemini(regions, key, input.signal)
+            : await translateWithDeepSeek(regions, key, input.signal);
     } else if (canTranslate()) {
         used = 'browser (no API key)';
         const plain = current.map((group) => group.lines.join(''));
@@ -142,7 +120,8 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
     }
 
     const items: OverlayItem[] = [];
-    let skipped = visionSkipped;
+    const erase: EraseBox[] = [];
+    let skipped = 0;
 
     current.forEach((group, index) => {
         const answer = out[index];
@@ -180,12 +159,29 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         const sortedLines = [...linesInGroup].sort((left, right) => vertical
             ? (right.x + right.width / 2) - (left.x + left.width / 2)
             : (left.y + left.height / 2) - (right.y + right.height / 2));
+        const strokeOf = (line: { width: number; height: number; lineLength?: number; lineThickness?: number }) => {
+            if (line.lineLength && line.lineThickness && line.lineLength > 0 && line.lineThickness > 0) {
+                return Math.min(line.lineLength, line.lineThickness);
+            }
+            return vertical ? line.width : line.height;
+        };
+        const strokes = sortedLines.map(strokeOf).filter((size) => size >= 4);
+        const thickest = strokes.length > 0 ? Math.max(...strokes) : 0;
+        // The page-aligned width of a slanted line includes the lean, so a
+        // reading looks as wide as the column. The stroke thickness does not.
+        const bodyLines = thickest > 0
+            ? sortedLines.filter((line) => strokeOf(line) >= thickest / 1.6)
+            : sortedLines;
+        const placedLines = bodyLines.length > 0 ? bodyLines : sortedLines;
+        // A group can come back with fewer columns than it had. The spare source
+        // line would otherwise keep its ink, because only labelled frames are erased.
+        for (const line of linesInGroup) erase.push(placedFrame(line));
 
         let minX = Number.POSITIVE_INFINITY;
         let minY = Number.POSITIVE_INFINITY;
         let maxX = Number.NEGATIVE_INFINITY;
         let maxY = Number.NEGATIVE_INFINITY;
-        for (const line of linesInGroup) {
+        for (const line of placedLines) {
             minX = Math.min(minX, line.x);
             minY = Math.min(minY, line.y);
             maxX = Math.max(maxX, line.x + line.width);
@@ -195,8 +191,13 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
             ? { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
             : { x: group.x, y: group.y, width: group.width, height: group.height };
 
-        const glyphSizes = linesInGroup
-            .map((line) => vertical ? line.width : line.height)
+        const glyphSizes = placedLines
+            .map((line) => {
+                if (Math.abs(line.angle ?? 0) >= 0.01 && line.lineThickness && line.lineThickness >= 4) {
+                    return line.lineThickness;
+                }
+                return vertical ? line.width : line.height;
+            })
             .filter((value) => Number.isFinite(value) && value >= 4);
         const glyph = glyphSizes.length > 0
             ? glyphSizes.reduce((sum, value) => sum + value, 0) / glyphSizes.length
@@ -231,16 +232,16 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
             carry = chars.slice(cut).join('');
         }
 
-        if (sortedLines.length > 0 && columns.length > 0 && columns.length !== sortedLines.length) {
+        if (placedLines.length > 0 && columns.length > 0 && columns.length !== placedLines.length) {
             const chars = [...columns.join('')];
-            const per = Math.max(1, Math.ceil(chars.length / sortedLines.length));
+            const per = Math.max(1, Math.ceil(chars.length / placedLines.length));
             columns.length = 0;
-            for (let index = 0; index < sortedLines.length; index += 1) {
+            for (let index = 0; index < placedLines.length; index += 1) {
                 columns.push(chars.slice(index * per, (index + 1) * per).join(''));
             }
         }
 
-        const push = (line: { x: number; y: number; width: number; height: number }, content: string) => {
+        const push = (line: { x: number; y: number; width: number; height: number; angle?: number }, content: string) => {
             items.push({
                 x: line.x,
                 y: line.y,
@@ -248,6 +249,7 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
                 height: line.height,
                 text: vertical ? toVertical(content) : toHorizontal(content),
                 vertical,
+                angle: line.angle,
                 groupId: index,
                 background: group.background,
                 color: group.color,
@@ -266,10 +268,12 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
 
         const fittedFont = Math.max(6, Math.round(font));
 
-        if (columns.length > 1 && columns.length <= sortedLines.length) {
-            sortedLines.slice(0, columns.length).forEach((line, columnIndex) => {
-                push(line, columns[columnIndex]);
+        if (columns.length > 1 && columns.length <= placedLines.length) {
+            placedLines.slice(0, columns.length).forEach((line, columnIndex) => {
+                push(placedFrame(line), columns[columnIndex]);
             });
+        } else if (placedLines.length === 1) {
+            push(placedFrame(placedLines[0]), columns.join(''));
         } else {
             push(tight, columns.join(''));
         }
@@ -284,5 +288,6 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         active,
         skipped,
         withBalloon: countWithBalloon(current, balloons),
+        erase,
     };
 }

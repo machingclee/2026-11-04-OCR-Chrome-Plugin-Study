@@ -1,4 +1,5 @@
-import { detectBoxes, isSessionReady } from '../lib/detector';
+import { detectBoxes, extendCutEnds, isSessionReady, stopAtBubbles, suppressOverlaps } from '../lib/detector';
+import { renderScoreOverlay } from '../lib/scoreOverlay';
 import { detectBubbles } from '../lib/bubble';
 import { cropPreviews } from '../lib/regions';
 import { expandToInk } from '../lib/expand';
@@ -16,12 +17,44 @@ import type {
     GroupData,
     IncomingMessage,
     OffscreenDetectRequest,
+    OffscreenInpaintRequest,
+    OffscreenInpaintResponse,
 } from '../shared/types';
 import type { TextLine, TextMask } from '../lib/types';
 import serviceWorkerResponseFactory from '../shared/factories/serviceWorkerResponseFactory';
 
 /** Each crop is a data url in storage, so the strip stops at this many. */
 const MAX_PREVIEWS = 30;
+
+/** The page from the last detection, so translation can erase only the lines it keeps. */
+let heldPage: { image: ImageData; textMask: TextMask } | null = null;
+
+/** Decode inline pixels locally: no round trip, and no data: fetch to trust. */
+function decodeImageDataUrl(dataUrl: string): Blob | null {
+    const comma = dataUrl.indexOf(',');
+    if (comma < 0) return null;
+    const header = dataUrl.slice(5, comma);
+    const payload = dataUrl.slice(comma + 1);
+    try {
+        const bytes = header.endsWith(';base64')
+            ? Uint8Array.from(atob(payload), (character) => character.charCodeAt(0))
+            : new TextEncoder().encode(decodeURIComponent(payload));
+        return new Blob([bytes], { type: header.split(';')[0] || 'image/png' });
+    } catch {
+        return null;
+    }
+}
+
+async function fetchImageBlob(url: string): Promise<Blob> {
+    // A data: URL already holds the bytes; decoding it here avoids a fetch.
+    const inline = url.startsWith('data:') ? decodeImageDataUrl(url) : null;
+    if (inline) return inline;
+    if (url.startsWith('data:')) throw new Error('The inline image could not be decoded.');
+
+    const response = await fetch(url, { credentials: 'include' });
+    if (!response.ok) throw new Error(`Image fetch failed with ${response.status}.`);
+    return response.blob();
+}
 
 /** Phone/UI strings that must not be sent to the translator as dialogue. */
 const UI_LINE = /^(?:(?:上午|下午|午前|午後)\s*)?\d{1,2}:\d{2}$|^(?:未接來電|購買次數|搜尋|訊號|電量|Wi-?Fi|LTE|5G|4G)$/i;
@@ -64,10 +97,10 @@ function skipAsNonDialogue(
     const shortSide = Math.min(line.width, line.height);
     const huge = medianThickness > 0 && shortSide > medianThickness * 2.2;
 
-    // A huge kana run is a sound effect, not dialogue. This stays true when the
-    // bubble model mistakes the SFX for a balloon, which is what produced the
-    // large white patch and the translated SFX.
-    if (kanaOnly && normalised.length <= 6 && huge) return true;
+    // A huge repeated kana run is a sound effect, not dialogue. This stays true
+    // when the bubble model mistakes the SFX for a balloon. A name such as
+    // アリスッ is kana too, but it does not repeat, so it stays.
+    if (kanaOnly && normalised.length <= 6 && huge && isSfxLine(text)) return true;
 
     // Large lettering is often OCR'd as unrelated kanji. When the OCR score is
     // low, that reading is unreliable even if the script is not kana.
@@ -149,7 +182,8 @@ function median(values: number[]): number {
 /**
  * Give each label the colour of the paper just outside its text. A flat patch
  * of the right tone disappears into a balloon or a screentone much better than
- * a pure white sticker. This is sampling only; it does not change the image.
+ * a pure white sticker. The glyph fill stays dark; the overlay draws the white stroke.
+ * This is sampling only; it does not change the image.
  */
 function paintGroupColours(
     bitmap: ImageBitmap,
@@ -199,7 +233,8 @@ function paintGroupColours(
         const green = median(greens);
         const blue = median(blues);
         group.background = `rgb(${red}, ${green}, ${blue})`;
-        group.color = red * 0.299 + green * 0.587 + blue * 0.114 >= 140 ? '#111111' : '#ffffff';
+        // The label always carries a white stroke, so a white fill would disappear into it.
+        group.color = '#111111';
 
         if (!textMask) continue;
         // The seg mask is the source of truth for glyphs, not the line box.
@@ -276,26 +311,6 @@ async function recognizeLines(
     return collected;
 }
 
-/** Small surrounding crop for the optional Gemini real-text/SFX check. */
-function visionCrop(bitmap: ImageBitmap, group: GroupData): string {
-    const padX = group.width * 0.25;
-    const padY = group.height * 0.25;
-    const x = Math.max(0, group.x - padX);
-    const y = Math.max(0, group.y - padY);
-    const right = Math.min(bitmap.width, group.x + group.width + padX);
-    const bottom = Math.min(bitmap.height, group.y + group.height + padY);
-    const width = Math.max(1, right - x);
-    const height = Math.max(1, bottom - y);
-    const scale = Math.min(1, 384 / Math.max(width, height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(width * scale));
-    canvas.height = Math.max(1, Math.round(height * scale));
-    const context = canvas.getContext('2d');
-    if (!context) return '';
-    context.drawImage(bitmap, x, y, width, height, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL('image/jpeg', 0.65);
-}
-
 async function runDetection(request: OffscreenDetectRequest): Promise<DetectResponse> {
     const started = performance.now();
     const warm = isSessionReady();
@@ -303,23 +318,20 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
 
     try {
         const fetchStarted = performance.now();
-        const response = await fetch(request.imageUrl, { credentials: 'include' });
-        if (!response.ok) {
-            return { ok: false, error: `Image fetch failed with ${response.status}.` };
-        }
+        // A blob: page cannot be fetched from here, so the picker sends pixels.
+        const inline = typeof request.imageDataUrl === 'string' && request.imageDataUrl.length > 0
+            ? request.imageDataUrl
+            : '';
+        const blob = inline
+            ? decodeImageDataUrl(inline)
+            : await fetchImageBlob(request.imageUrl);
+        if (!blob) return { ok: false, error: 'The captured image could not be decoded.' };
 
-        const bitmap = await createImageBitmap(await response.blob());
+        const bitmap = await createImageBitmap(blob);
         timings.fetch = Math.round(performance.now() - fetchStarted);
 
-        // One whole-page pass, as in the target project. Tiling was measured and
-        // removed: it cost one full pass per tile for very little text gain.
-        const detectStarted = performance.now();
-        const detected = await detectBoxes(bitmap);
-        timings.detect = Math.round(performance.now() - detectStarted);
-        const ordered = toOrderedTextLines(detected.detBoxes, [], true);
-
-        // ORT is single-threaded here, so running the balloon session beside the
-        // detector only queues work on the same thread. Measure it instead.
+        // Balloons first, so a column that grows to finish a sentence stops at the
+        // balloon edge instead of running into the balloon below.
         let bubbleError: string | null = null;
         const bubbleStarted = performance.now();
         const bubbles = await detectBubbles(bitmap).catch((cause: unknown) => {
@@ -327,18 +339,54 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             return null;
         });
         timings.bubble = Math.round(performance.now() - bubbleStarted);
+        const balloonList = bubbles ? bubbles.bubbles : [];
+
+        // One whole-page pass, as in the target project. Tiling was measured and
+        // removed: it cost one full pass per tile for very little text gain.
+        const detectStarted = performance.now();
+        const detected = await detectBoxes(bitmap, balloonList.map((bubble) => ({
+            x: bubble.x,
+            y: bubble.y,
+            width: bubble.width,
+            height: bubble.height,
+        })));
+        timings.detect = Math.round(performance.now() - detectStarted);
+        const ordered = toOrderedTextLines(detected.detBoxes, [], true);
 
         const groupStarted = performance.now();
-        const balloonList = bubbles ? bubbles.bubbles : [];
-        const grouped = groupByRegion(ordered, balloonList, detected.blkBoxes, false);
+        const grouped = groupByRegion(ordered, balloonList, [], false);
 
-        const lines = grouped.lines.map((line) =>
-            trimMergedRuby({ ...line, ...expandToInk(line, detected.mask) }, detected.mask),
-        );
+        const balloonRects = balloonList.map((bubble) => ({
+            x: bubble.x,
+            y: bubble.y,
+            width: bubble.width,
+            height: bubble.height,
+        }));
+        const lines = grouped.lines.map((line) => {
+            const grown = { ...line, ...expandToInk(line, detected.mask, balloonRects) };
+            // Ink past a balloon edge belongs to the next line. Keep the part
+            // that started on this side of the edge, then follow det back out
+            // from both ends until the mask runs out.
+            const limited = stopAtBubbles(
+                grown,
+                line.x + line.width / 2,
+                line.y + line.height / 2,
+                balloonRects,
+            );
+            const restored = detected.det
+                ? extendCutEnds(
+                    limited,
+                    detected.det,
+                    { width: bitmap.width, height: bitmap.height },
+                    grown.height >= grown.width,
+                )
+                : limited;
+            return trimMergedRuby(restored, detected.mask);
+        });
         timings.group = Math.round(performance.now() - groupStarted);
 
         const ocrStarted = performance.now();
-        const collected = await recognizeLines(bitmap, lines);
+        const collected = await recognizeLines(bitmap, suppressOverlaps(lines));
         timings.ocr = Math.round(performance.now() - ocrStarted);
         timings.extras = Math.round(performance.now() - started - timings.fetch - timings.detect - timings.group - timings.ocr);
 
@@ -391,7 +439,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         // paragraph that can only be placed in one of them.
         const splitGroups: GroupData[] = [];
         for (const group of groups) {
-            const clusters = splitGroupByColumnGap(group, usable, detected.blkBoxes);
+            const clusters = splitGroupByColumnGap(group, usable);
             if (clusters.length <= 1) {
                 splitGroups.push(group);
                 continue;
@@ -422,20 +470,6 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
 
         paintGroupColours(bitmap, splitGroups, usable, detected.mask);
 
-        const fontSizes = splitGroups
-            .map((group) => group.fontSize ?? 0)
-            .filter((size) => size > 0)
-            .sort((left, right) => left - right);
-        const medianFont = fontSizes.length > 0 ? fontSizes[fontSizes.length >> 1] : 0;
-        const pageArea = bitmap.width * bitmap.height;
-        for (const group of splitGroups) {
-            const outside = !group.balloon;
-            const huge = (group.fontSize ?? 0) > medianFont * 1.5;
-            const large = group.width * group.height > pageArea * 0.015;
-            if (!outside && !huge && !large) continue;
-            group.visionCrop = visionCrop(bitmap, group);
-        }
-
         const previews = cropPreviews(bitmap, collected.slice(0, MAX_PREVIEWS));
 
         const originalCanvas = document.createElement('canvas');
@@ -445,54 +479,36 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         originalContext?.drawImage(bitmap, 0, 0);
         const originalUrl = originalContext ? originalCanvas.toDataURL('image/webp', 0.95) : null;
 
-        let erasedUrl: string | null = null;
-        if (detected.mask && usable.length > 0) {
-            const inpaintStarted = performance.now();
+        heldPage = null;
+        if (detected.mask) {
             const canvas = document.createElement('canvas');
             canvas.width = bitmap.width;
             canvas.height = bitmap.height;
             const context = canvas.getContext('2d', { willReadFrequently: true });
             if (context) {
                 context.drawImage(bitmap, 0, 0);
-                const image = context.getImageData(0, 0, canvas.width, canvas.height);
-                let mask = refineMask(detected.detBoxes, detected.mask, canvas.width, canvas.height);
-                let maskPixels = 0;
-                for (const value of mask) if (value === 1) maskPixels += 1;
-                // Use only the refined seg mask. Filling whole detection boxes
-                // here turned long line boxes into broad inpaint bands.
-                const painted = maskPixels > 0
-                    ? await inpaintPage(image, mask).catch(() => null)
-                    : null;
-                if (painted) {
-                    // Keep only the inpainted mask pixels. The rest of the layer
-                    // stays transparent, so the original page remains visible.
-                    const overlay = document.createElement('canvas');
-                    overlay.width = canvas.width;
-                    overlay.height = canvas.height;
-                    const overlayContext = overlay.getContext('2d');
-                    if (overlayContext) {
-                        const cutout = overlayContext.createImageData(canvas.width, canvas.height);
-                        for (let index = 0; index < mask.length; index += 1) {
-                            if (mask[index] !== 1) continue;
-                            const offset = index * 4;
-                            cutout.data[offset] = painted.data[offset];
-                            cutout.data[offset + 1] = painted.data[offset + 1];
-                            cutout.data[offset + 2] = painted.data[offset + 2];
-                            cutout.data[offset + 3] = 255;
-                        }
-                        overlayContext.putImageData(cutout, 0, 0);
-                        erasedUrl = overlay.toDataURL('image/png');
-                    }
-                }
+                heldPage = {
+                    image: context.getImageData(0, 0, canvas.width, canvas.height),
+                    textMask: detected.mask,
+                };
             }
-            timings.extras += Math.round(performance.now() - inpaintStarted);
         }
+
+        const detUrl = detected.det
+            ? renderScoreOverlay(detected.det, bitmap.width, bitmap.height, [255, 120, 20])
+            : null;
+        const segUrl = detected.mask
+            ? renderScoreOverlay(detected.mask, bitmap.width, bitmap.height, [20, 190, 255])
+            : null;
 
         return {
             ok: true,
             boxes: collected,
             previews,
-            erasedUrl,
+            detUrl,
+            segUrl,
+            erasedUrl: null,
+            canInpaint: heldPage !== null,
             originalUrl,
             imageWidth: bitmap.width,
             imageHeight: bitmap.height,
@@ -506,10 +522,54 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
                 height: bubble.height,
                 outline: bubble.outline,
             })),
+            blocks: detected.blkBoxes.map((block) => ({
+                x: block.x,
+                y: block.y,
+                width: block.width,
+                height: block.height,
+                score: block.score,
+            })),
             ms: Math.round(performance.now() - started),
             warm,
             timings,
         };
+    } catch (cause) {
+        return { ok: false, error: cause instanceof Error ? cause.message : String(cause) };
+    }
+}
+
+/**
+ * Erase the strokes inside the boxes that received a translation. Sound effects
+ * are omitted from that list, so their ink stays on the page. The detector mask
+ * says where the ink is. AOT fills those pixels.
+ */
+async function runInpaint(request: OffscreenInpaintRequest): Promise<OffscreenInpaintResponse> {
+    const page = heldPage;
+    if (!page || request.boxes.length === 0) return { ok: true, erasedUrl: null };
+    try {
+        const lines = request.boxes.map((box) => ({ ...box, score: 1 }));
+        const mask = refineMask(lines, page.textMask, page.image.width, page.image.height);
+        let maskPixels = 0;
+        for (const value of mask) if (value === 1) maskPixels += 1;
+        if (maskPixels === 0) return { ok: true, erasedUrl: null };
+
+        const painted = await inpaintPage(page.image, mask);
+        const overlay = document.createElement('canvas');
+        overlay.width = page.image.width;
+        overlay.height = page.image.height;
+        const overlayContext = overlay.getContext('2d');
+        if (!overlayContext) return { ok: true, erasedUrl: null };
+        const cutout = overlayContext.createImageData(page.image.width, page.image.height);
+        for (let index = 0; index < mask.length; index += 1) {
+            if (mask[index] !== 1) continue;
+            const offset = index * 4;
+            cutout.data[offset] = painted.data[offset];
+            cutout.data[offset + 1] = painted.data[offset + 1];
+            cutout.data[offset + 2] = painted.data[offset + 2];
+            cutout.data[offset + 3] = 255;
+        }
+        overlayContext.putImageData(cutout, 0, 0);
+        return { ok: true, erasedUrl: overlay.toDataURL('image/png') };
     } catch (cause) {
         return { ok: false, error: cause instanceof Error ? cause.message : String(cause) };
     }
@@ -538,6 +598,11 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
 
     if (request.type === 'translate-builtin') {
         runBuiltinTranslate(request.lines).then(sendResponse);
+        return true;
+    }
+
+    if (request.type === 'inpaint') {
+        void runInpaint(request).then(sendResponse);
         return true;
     }
 

@@ -96,6 +96,72 @@ export function minAreaRect(points: Point[]): RotatedRect | null {
 }
 
 /**
+ * First principal axis of the points, the major axis of their covariance.
+ * A corner pulls the minimum rectangle; this follows the mass instead.
+ */
+export function majorAxis(points: Point[]): number | null {
+    if (points.length < 2) return null;
+    let meanX = 0;
+    let meanY = 0;
+    for (const point of points) {
+        meanX += point.x;
+        meanY += point.y;
+    }
+    meanX /= points.length;
+    meanY /= points.length;
+
+    let xx = 0;
+    let xy = 0;
+    let yy = 0;
+    for (const point of points) {
+        const dx = point.x - meanX;
+        const dy = point.y - meanY;
+        xx += dx * dx;
+        xy += dx * dy;
+        yy += dy * dy;
+    }
+    if (xx === 0 && yy === 0) return null;
+    return 0.5 * Math.atan2(2 * xy, xx - yy);
+}
+
+/** Points more than this far from the main mass, across the text, are another cluster. */
+const CLUSTER_GAP = 8;
+
+/**
+ * Drop a side cluster. The text is the heaviest run along the minor axis;
+ * a seg blob that sits off that run does not get to tilt it.
+ */
+export function mainCluster(points: Point[]): { angle: number; points: Point[] } | null {
+    const first = majorAxis(points);
+    if (first === null) return null;
+    const acrossX = -Math.sin(first);
+    const acrossY = Math.cos(first);
+    const ranked = points
+        .map((point) => ({ point, across: point.x * acrossX + point.y * acrossY }))
+        .sort((a, b) => a.across - b.across);
+
+    const runs: Point[][] = [];
+    let run: Point[] = [];
+    let previous = Number.NEGATIVE_INFINITY;
+    for (const entry of ranked) {
+        if (run.length > 0 && entry.across - previous > CLUSTER_GAP) {
+            runs.push(run);
+            run = [];
+        }
+        run.push(entry.point);
+        previous = entry.across;
+    }
+    if (run.length > 0) runs.push(run);
+
+    let best = runs[0];
+    for (const candidate of runs) {
+        if (candidate.length > best.length) best = candidate;
+    }
+    const angle = majorAxis(best) ?? first;
+    return { angle, points: best };
+}
+
+/**
  * A rectangle has no direction, so every angle folds into (-pi/2, pi/2]. The
  * guard at the end treats a near axis aligned line as exactly axis aligned.
  */

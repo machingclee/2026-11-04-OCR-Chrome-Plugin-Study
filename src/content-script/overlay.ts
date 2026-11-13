@@ -4,10 +4,17 @@ import type { OverlayItem, OverlayRequest, OverlayResponse } from '../shared/typ
 const WRAPPER_ATTR = 'data-comic-translator-wrapper';
 const LAYER_ATTR = 'data-comic-translator-layer';
 const BOX_ATTR = 'data-comic-translator-box';
+const INCLINED_ATTR = 'data-comic-translator-inclined';
+const INPAINT_ATTR = 'data-comic-translator-inpaint';
+const TEXT_ATTR = 'data-comic-translator-text';
 const IMAGE_STYLE_ATTR = 'data-comic-translator-image-style';
 const POSITION_ATTR = 'data-comic-translator-position';
+const OPACITY_ATTR = 'data-comic-translator-overlay-opacity';
 
 const stopWatchers = new Map<HTMLElement, () => void>();
+
+/** Translated glyphs sit a little under the measured source size. */
+const TRANSLATED_FONT_SCALE = 0.9;
 
 type ImageStyle = {
     display: string;
@@ -40,6 +47,9 @@ function findTarget(request: OverlayRequest): HTMLElement | null {
         );
         if (marked) return marked;
     }
+
+    // A pick captured as pixels has no URL to match, only the token above.
+    if (!request.imageUrl) return null;
 
     const wanted = absoluteUrl(request.imageUrl);
     for (const image of document.images) {
@@ -256,10 +266,24 @@ function makePatch(
     } else {
         style.background = item.background ?? '#ffffff';
     }
+    if (Math.abs(item.angle ?? 0) >= 0.01) {
+        style.background = item.background ?? '#ffffff';
+        style.backgroundImage = 'none';
+        style.clipPath = '';
+        style.transform = `rotate(${item.angle}rad)`;
+        style.transformOrigin = 'center';
+    }
     patch.dataset.comicTranslatorPatch = 'true';
     void request;
     void scale;
     return patch;
+}
+
+/** White halo around the glyphs. Stroke is centered, so twice the 3.5% radius stays outside the fill. */
+function applyWhiteStroke(box: HTMLElement, fontSize: number): void {
+    const width = Math.max(1, Math.round(fontSize * 0.07));
+    box.style.setProperty('-webkit-text-stroke', `${width}px #ffffff`);
+    box.style.setProperty('paint-order', 'stroke fill');
 }
 
 function makeBox(
@@ -273,6 +297,8 @@ function makeBox(
     box.setAttribute(BOX_ATTR, 'true');
     box.setAttribute('data-comic-translator-label', 'true');
     if (item.groupId !== undefined) box.setAttribute('data-comic-translator-group', String(item.groupId));
+    const inclined = Math.abs(item.angle ?? 0) >= 0.01;
+    if (inclined) box.setAttribute(INCLINED_ATTR, 'true');
     box.textContent = item.text;
 
     const style = box.style;
@@ -287,7 +313,9 @@ function makeBox(
     style.justifyContent = 'center';
     style.overflow = 'hidden';
     style.padding = '1px 2px';
-    style.textAlign = 'center';
+    // In vertical-rl the inline axis runs down the column, so center pulls
+    // the glyphs off the top. Horizontal text still centres on its own axis.
+    style.textAlign = item.vertical ? 'start' : 'center';
     if (item.patch) {
         // The paper patch is its own layer, sized to the detected text area.
         // This box only carries the translated text.
@@ -327,19 +355,23 @@ function makeBox(
     style.wordBreak = 'break-word';
     style.pointerEvents = 'none';
     style.zIndex = '2';
+    if (inclined) {
+        style.transform = `rotate(${item.angle}rad)`;
+        style.transformOrigin = 'center';
+    }
 
     if (item.vertical) {
         // A flex container swaps its axes in vertical writing mode, which can
         // leave a short column at the left edge. A grid centres the text on both
         // axes, so a lone vertical ellipsis sits in the middle of its balloon.
         style.writingMode = 'vertical-rl';
-        // mixed rotates the vertical ellipsis back into horizontal dots.
+        // mixed rotates U+22EE back into horizontal dots. toVertical emits
+        // U+FE19, whose dots already sit in the centre of the em box.
         style.textOrientation = 'upright';
         style.display = 'grid';
         // Vertical writing swaps the grid axes: align centre across the
         // column, but start at the top so short columns do not float down.
         style.placeItems = 'center start';
-        style.textAlign = 'center';
         // Let the text use the number of columns the balloon has room for.
         // The word joiner in toVertical keeps a trailing ellipsis with the
         // preceding glyph instead of forcing the whole label into one column.
@@ -354,8 +386,9 @@ function makeBox(
     // original line thickness instead.
     const sourceSize = item.fontSize && item.fontSize > 0 ? item.fontSize * scale : 0;
     const fallback = Math.min(boxHeight * 0.8, boxWidth * 0.9);
-    const size = Math.max(7, sourceSize > 0 ? sourceSize : fallback);
+    const size = Math.max(7, (sourceSize > 0 ? sourceSize : fallback) * TRANSLATED_FONT_SCALE);
     box.style.fontSize = `${size}px`;
+    applyWhiteStroke(box, size);
     box.dataset.comicTranslatorSourceSize = String(size);
     return box;
 }
@@ -370,6 +403,10 @@ function textFits(box: HTMLElement): boolean {
     range.selectNodeContents(box);
     const rect = range.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return true;
+    if (box.hasAttribute(INCLINED_ATTR)) {
+        const boxRect = box.getBoundingClientRect();
+        return rect.width <= boxRect.width + 1 && rect.height <= boxRect.height + 1;
+    }
     const style = getComputedStyle(box);
     const paddingX = Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight);
     const paddingY = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
@@ -419,15 +456,23 @@ function fitBoxes(layer: HTMLElement, leading: number): void {
         while (size > floor && boxes.some((box) => !textFits(box) || !estimatedFits(box, size, leading))) {
             size -= 1;
         }
-        for (const box of boxes) box.style.fontSize = `${size}px`;
+        for (const box of boxes) {
+            box.style.fontSize = `${size}px`;
+            applyWhiteStroke(box, size);
+        }
     }
 }
 
 function ensureBoxStyle(): void {
-    if (document.getElementById('comic-translator-box-style')) return;
+    const css = `span[${BOX_ATTR}="true"]:not([${INCLINED_ATTR}]) { overflow: visible !important; height: unset !important; padding-top: 0px !important; }`;
+    const existing = document.getElementById('comic-translator-box-style');
+    if (existing) {
+        existing.textContent = css;
+        return;
+    }
     const style = document.createElement('style');
     style.id = 'comic-translator-box-style';
-    style.textContent = `span[${BOX_ATTR}="true"] { overflow: visible !important; height: unset !important; padding-top: 0px !important; }`;
+    style.textContent = css;
     document.head.appendChild(style);
 }
 
@@ -461,9 +506,31 @@ function apply(request: OverlayRequest): OverlayResponse {
     const layer = target instanceof HTMLImageElement ? wrapImage(target) : attachLayer(target);
     layer.style.background = 'transparent';
     layer.style.mixBlendMode = 'normal';
+    layer.style.opacity = document.documentElement.getAttribute(OPACITY_ATTR) === '0' ? '0' : '1';
     const host = layer.parentElement;
     const renderedWidth = host?.getBoundingClientRect().width ?? width;
     const scale = renderedWidth / width;
+
+    // Two sibling layers keep every inpainted pixel under every translated
+    // glyph. Group containers are stacking contexts, so a patch inside a later
+    // group used to paint over the text of an earlier one.
+    const inpaintLayer = document.createElement('div');
+    inpaintLayer.setAttribute(INPAINT_ATTR, 'true');
+    inpaintLayer.style.position = 'absolute';
+    inpaintLayer.style.inset = '0';
+    inpaintLayer.style.overflow = 'hidden';
+    inpaintLayer.style.pointerEvents = 'none';
+    inpaintLayer.style.zIndex = '1';
+    layer.appendChild(inpaintLayer);
+
+    const textLayer = document.createElement('div');
+    textLayer.setAttribute(TEXT_ATTR, 'true');
+    textLayer.style.position = 'absolute';
+    textLayer.style.inset = '0';
+    textLayer.style.overflow = 'visible';
+    textLayer.style.pointerEvents = 'none';
+    textLayer.style.zIndex = '2';
+    layer.appendChild(textLayer);
 
     if (request.erasedUrl) {
         const erased = document.createElement('img');
@@ -479,7 +546,7 @@ function apply(request: OverlayRequest): OverlayResponse {
         erased.style.mixBlendMode = 'normal';
         erased.style.zIndex = '1';
         erased.setAttribute('data-comic-translator-erased', 'true');
-        layer.appendChild(erased);
+        inpaintLayer.appendChild(erased);
     }
 
     let count = 0;
@@ -500,11 +567,10 @@ function apply(request: OverlayRequest): OverlayResponse {
         group.style.pointerEvents = 'auto';
         group.style.cursor = 'grab';
         group.style.touchAction = 'none';
-        group.style.zIndex = '1';
-        layer.appendChild(group);
+        textLayer.appendChild(group);
         for (const item of items) {
             const patch = makePatch(item, request, width, height, scale);
-            if (patch) group.appendChild(patch);
+            if (patch) inpaintLayer.appendChild(patch);
             const box = makeBox(item, request, width, height, scale);
             box.style.pointerEvents = 'none';
             group.appendChild(box);
@@ -558,12 +624,25 @@ function clearAll(): void {
 }
 
 /**
+ * Show or hide every translated layer at once. The erased base image lives in
+ * the same layer, so opacity 0 puts the untouched original page back in view.
+ */
+function setOpacity(value: number): number {
+    const opacity = value > 0 ? 1 : 0;
+    document.documentElement.setAttribute(OPACITY_ATTR, String(opacity));
+    const layers = document.querySelectorAll<HTMLElement>(`[${LAYER_ATTR}]`);
+    for (const layer of layers) layer.style.opacity = String(opacity);
+    return layers.length;
+}
+
+/**
  * The popup calls these through chrome.scripting.executeScript, so the result
  * comes back per frame and the popup knows whether the image was found.
  */
 const api = {
     apply,
     clear: clearAll,
+    setOpacity,
 };
 
 type OverlayApi = typeof api;

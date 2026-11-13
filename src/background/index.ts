@@ -6,6 +6,7 @@ import {
     DEEPSEEK_KEY,
     FONT_KEY,
     GEMINI_KEY,
+    DEBUG_PAGES_KEY,
     LAST_RESULT_KEY,
     LEADING_KEY,
     OFFSCREEN_HTML,
@@ -20,22 +21,39 @@ import type {
     IncomingMessage,
     OverlayRequest,
     OverlayResponse,
+    DebugPage,
+    BatchItemState,
     BatchState,
+    BatchStatusResponse,
     CancelBatchRequest,
     TranslateBatchRequest,
     TranslateBatchResponse,
     TranslateRequest,
     TranslateResponse,
     TranslateSettings,
+    OffscreenInpaintResponse,
 } from '../shared/types';
 import { translateGroups } from '../lib/translationJob';
 
 let offscreenReady: Promise<void> | null = null;
 let translationQueue: Promise<void> = Promise.resolve();
 let batchRunning = false;
+let activeBatchId: string | null = null;
+let batchAbort: AbortController | null = null;
 
-function notifyProgress(stage: string, provider?: string): void {
-    void chrome.runtime.sendMessage({ kind: 'translate-progress', stage, provider }).catch(() => undefined);
+/**
+ * Pixels captured in the page, keyed by the token of the element they came
+ * from. Batch state is written to local storage on every step, so bytes are
+ * held here instead: a batch of ten captured pages would not fit in 10 MB.
+ */
+const capturedPixels = new Map<string, string>();
+
+function notifyProgress(tabId: number | undefined, stage: string, provider?: string): void {
+    const message = { kind: 'translate-progress' as const, stage, provider };
+    if (typeof tabId === 'number') {
+        void chrome.tabs.sendMessage(tabId, message, { frameId: 0 }).catch(() => undefined);
+    }
+    void chrome.runtime.sendMessage(message).catch(() => undefined);
 }
 
 
@@ -75,6 +93,15 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
             }
         });
         return true;
+    }
+
+    if (request.type === 'batch-status') {
+        const status: BatchStatusResponse = {
+            running: batchRunning,
+            batchId: batchRunning ? activeBatchId : null,
+        };
+        sendResponse(status);
+        return false;
     }
 
     if (request.type === 'cancel-batch') {
@@ -124,20 +151,26 @@ async function startPickMode(): Promise<void> {
 }
 
 async function runDetection(request: DetectRequest): Promise<DetectResponse> {
-    if (typeof request.imageUrl !== 'string') {
+    const imageDataUrl = typeof request.imageDataUrl === 'string' && request.imageDataUrl.length > 0
+        ? request.imageDataUrl
+        : undefined;
+    if (!imageDataUrl && typeof request.imageUrl !== 'string') {
         return { ok: false, error: 'Missing image url.' }
     };
 
     await ensureOffscreenReady();
 
-    const withReferer = typeof request.tabPageUrl === 'string' && request.tabPageUrl.startsWith('http');
+    // Only a network URL needs the page's referer; data: URLs carry their bytes.
+    const withReferer = typeof request.tabPageUrl === 'string'
+        && request.tabPageUrl.startsWith('http')
+        && /^https?:\/\//i.test(request.imageUrl);
     if (withReferer) {
         await installRefererRule(request.imageUrl, request.tabPageUrl as string);
     }
 
     try {
         const response = (await chrome.runtime.sendMessage(
-            offscreenRequestFactory.ofDetection(request.imageUrl),
+            offscreenRequestFactory.ofDetection(request.imageUrl, imageDataUrl),
         )) as DetectResponse | undefined;
 
         if (!response) return { ok: false, error: 'The offscreen document sent no answer.' };
@@ -149,26 +182,28 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
                 boxes: response.boxes,
                 previews: response.previews,
                 bubbles: response.bubbles,
+                blocks: response.blocks,
                 groups: response.groups,
                 erasedUrl: response.erasedUrl,
                 originalUrl: response.originalUrl,
+                detUrl: response.detUrl,
+                segUrl: response.segUrl,
                 ms: response.ms,
                 warm: response.warm,
                 timings: response.timings,
             };
 
-            // Local storage holds 10 MB. The crops are the only large part, so
-            // they are the first thing to drop when a page has many lines.
+            // Local storage holds 10 MB. Crops and the two score maps are the
+            // large parts, so they are the first thing to drop.
             const tooBig = JSON.stringify(payload).length > 5_000_000;
-            const stored = tooBig ? { ...payload, previews: [] } : payload;
+            const stored = tooBig ? { ...payload, previews: [], detUrl: null, segUrl: null } : payload;
             try {
                 await chrome.storage.local.set({ [LAST_RESULT_KEY]: stored });
             } catch (cause) {
                 console.warn('The last result did not fit in session storage.', cause);
                 if (!tooBig) {
-                    // Keep the boxes and groups; only the crops are expendable.
                     await chrome.storage.local
-                        .set({ [LAST_RESULT_KEY]: { ...payload, previews: [] } })
+                        .set({ [LAST_RESULT_KEY]: { ...payload, previews: [], detUrl: null, segUrl: null } })
                         .catch(() => undefined);
                 }
             }
@@ -188,13 +223,42 @@ function enqueueTranslation<T>(job: () => Promise<T>): Promise<T> {
     return next;
 }
 
+async function readDebugPages(): Promise<DebugPage[]> {
+    const stored = await chrome.storage.local.get(DEBUG_PAGES_KEY);
+    const pages = stored[DEBUG_PAGES_KEY];
+    return Array.isArray(pages) ? pages as DebugPage[] : [];
+}
+
+async function rememberDebugPage(page: DebugPage): Promise<void> {
+    const pages = await readDebugPages();
+    const index = page.token
+        ? pages.findIndex((item) => item.token === page.token)
+        : pages.findIndex((item) => item.imageUrl === page.imageUrl && item.imageUrl.length > 0);
+    const next = pages.slice();
+    if (index >= 0) next[index] = page;
+    else next.push(page);
+    const write = (list: DebugPage[]) => chrome.storage.local.set({ [DEBUG_PAGES_KEY]: list });
+    try {
+        await write(next);
+    } catch (cause) {
+        console.warn('Debug pages did not fit with the score maps.', cause);
+        const slim = next.map((item) => ({ ...item, detUrl: undefined, segUrl: undefined }));
+        await write(slim).catch(() => undefined);
+    }
+}
+
 async function readBatch(): Promise<BatchState | null> {
     const stored = await chrome.storage.local.get(BATCH_STATE_KEY);
     const state = stored[BATCH_STATE_KEY];
     return state && typeof state === 'object' ? state as BatchState : null;
 }
 
+function batchWasCancelled(id: string): boolean {
+    return batchAbort?.signal.aborted === true && activeBatchId === id;
+}
+
 async function saveBatch(state: BatchState): Promise<void> {
+    if (state.status === 'running' && batchWasCancelled(state.id)) state.status = 'cancelled';
     state.updatedAt = Date.now();
     await chrome.storage.local.set({ [BATCH_STATE_KEY]: state });
 }
@@ -212,24 +276,55 @@ async function startBatch(request: TranslateBatchRequest, sender: chrome.runtime
     if (!Array.isArray(request.items) || request.items.length === 0) {
         return { ok: false, error: 'No images were selected.' };
     }
+    // Captured pixels stay in memory; only this small descriptor is persisted.
+    // Validate every item first, so an early return cannot leave bytes behind.
+    const problem = request.items.find((item) => {
+        const captured = typeof item.imageDataUrl === 'string' && item.imageDataUrl.length > 0;
+        if (captured) return !item.token;
+        return typeof item.imageUrl !== 'string' || item.imageUrl.length === 0;
+    });
+    if (problem) {
+        const captured = typeof problem.imageDataUrl === 'string' && problem.imageDataUrl.length > 0;
+        return {
+            ok: false,
+            error: captured
+                ? 'A captured image arrived without a token.'
+                : 'One of the selected images has no URL and no captured pixels.',
+        };
+    }
+    const items: BatchItemState[] = request.items.map((item) => {
+        const captured = typeof item.imageDataUrl === 'string' && item.imageDataUrl.length > 0;
+        if (captured) capturedPixels.set(item.token as string, item.imageDataUrl as string);
+        return { imageUrl: item.imageUrl, token: item.token, status: 'pending', captured };
+    });
     try {
         const tabId = await resolveTabId(
-            { target: SERVICE_WORKER_TARGET, type: 'translate', imageUrl: request.items[0].imageUrl, tabId: request.tabId },
+            { target: SERVICE_WORKER_TARGET, type: 'translate', imageUrl: items[0].imageUrl, tabId: request.tabId },
             sender,
         );
         const state: BatchState = {
             id: `batch-${Date.now()}-${Math.random().toString(36).slice(2)}`,
             tabId,
             status: 'running',
-            items: request.items.map((item) => ({
-                imageUrl: item.imageUrl,
-                token: item.token,
-                status: 'pending',
-            })),
+            items,
             createdAt: Date.now(),
             updatedAt: Date.now(),
         };
+        activeBatchId = state.id;
+        batchAbort = new AbortController();
         await saveBatch(state);
+        await chrome.storage.local.set({
+            [DEBUG_PAGES_KEY]: items.map((item): DebugPage => ({
+                token: item.token,
+                imageUrl: item.imageUrl,
+                boxes: [],
+                bubbles: [],
+                blocks: [],
+                groups: [],
+                ms: 0,
+                ready: false,
+            })),
+        });
         batchRunning = true;
         void processBatch(state, request.settings);
         return { ok: true, batchId: state.id, count: state.items.length };
@@ -239,8 +334,11 @@ async function startBatch(request: TranslateBatchRequest, sender: chrome.runtime
 }
 
 async function cancelBatch(request: CancelBatchRequest): Promise<boolean> {
+    if (activeBatchId === request.batchId) batchAbort?.abort();
     const state = await readBatch();
-    if (!state || state.id !== request.batchId || state.status !== 'running') return false;
+    if (!state || state.id !== request.batchId) return false;
+    if (state.status === 'cancelled') return true;
+    if (state.status !== 'running') return false;
     state.status = 'cancelled';
     await saveBatch(state);
     await notifyBatch(state);
@@ -252,27 +350,71 @@ async function processBatch(state: BatchState, settings?: TranslateSettings): Pr
     try {
         const resolved = settings ?? await readSettings();
         for (const item of state.items) {
+            if (batchWasCancelled(state.id)) {
+                state.status = 'cancelled';
+                await saveBatch(state);
+                await notifyBatch(state);
+                break;
+            }
             const latest = await readBatch();
             if (!latest || latest.id !== state.id || latest.status === 'cancelled') break;
             if (item.status === 'done') continue;
             item.status = 'running';
             item.error = undefined;
             await saveBatch(state);
+            if (state.status === 'cancelled') {
+                await notifyBatch(state);
+                break;
+            }
             await notifyBatch(state);
 
-            const response = await enqueueTranslation(() => runTranslation(
-                {
-                    target: SERVICE_WORKER_TARGET,
-                    type: 'translate',
-                    imageUrl: item.imageUrl,
-                    tabId: state.tabId,
-                    token: item.token,
-                    settings: resolved,
-                },
-                { } as chrome.runtime.MessageSender,
-            ));
+            const captured = item.captured && item.token ? capturedPixels.get(item.token) : undefined;
+            if (item.captured && !captured) {
+                item.status = 'error';
+                item.error = 'The captured pixels were lost when the worker restarted. Select the image again.';
+                await saveBatch(state);
+                await notifyBatch(state);
+                continue;
+            }
+
+            let response: TranslateResponse;
+            try {
+                response = await enqueueTranslation(() => runTranslation(
+                    {
+                        target: SERVICE_WORKER_TARGET,
+                        type: 'translate',
+                        imageUrl: item.imageUrl,
+                        imageDataUrl: captured,
+                        tabId: state.tabId,
+                        token: item.token,
+                        settings: resolved,
+                    },
+                    { } as chrome.runtime.MessageSender,
+                    batchAbort?.signal,
+                ));
+            } catch (cause) {
+                if (batchWasCancelled(state.id) || (cause instanceof Error && cause.message === 'Cancelled.')) {
+                    state.status = 'cancelled';
+                    await saveBatch(state);
+                    await notifyBatch(state);
+                    break;
+                }
+                item.status = 'error';
+                item.error = cause instanceof Error ? cause.message : String(cause);
+                await saveBatch(state);
+                await notifyBatch(state);
+                continue;
+            }
+            if (batchWasCancelled(state.id)) {
+                state.status = 'cancelled';
+                await saveBatch(state);
+                await notifyBatch(state);
+                break;
+            }
             item.status = response.ok ? 'done' : 'error';
             item.error = response.ok ? undefined : response.error;
+            // The bytes are only needed for this one job.
+            if (item.token) capturedPixels.delete(item.token);
             await saveBatch(state);
             await notifyBatch(state);
         }
@@ -283,6 +425,11 @@ async function processBatch(state: BatchState, settings?: TranslateSettings): Pr
             await notifyBatch(state);
         }
     } finally {
+        // Drop the bytes this batch never reached, so a cancelled run frees them.
+        for (const item of state.items) {
+            if (item.token) capturedPixels.delete(item.token);
+        }
+        if (activeBatchId === state.id) activeBatchId = null;
         batchRunning = false;
     }
 }
@@ -291,6 +438,8 @@ async function resumeBatch(): Promise<void> {
     if (batchRunning) return;
     const state = await readBatch().catch(() => null);
     if (!state || state.status !== 'running') return;
+    activeBatchId = state.id;
+    batchAbort = new AbortController();
     batchRunning = true;
     await processBatch(state);
 }
@@ -323,8 +472,11 @@ async function resolveTabId(request: TranslateRequest, sender: chrome.runtime.Me
     return tab.id;
 }
 
-async function runTranslation(request: TranslateRequest, sender: chrome.runtime.MessageSender): Promise<TranslateResponse> {
-    if (typeof request.imageUrl !== 'string' || request.imageUrl.length === 0) {
+async function runTranslation(request: TranslateRequest, sender: chrome.runtime.MessageSender, signal?: AbortSignal): Promise<TranslateResponse> {
+    // A captured blob: image arrives as pixels; a plain pick arrives as a URL.
+    const imageDataUrl = request.imageDataUrl
+        ?? (request.token ? capturedPixels.get(request.token) : undefined);
+    if (!imageDataUrl && (typeof request.imageUrl !== 'string' || request.imageUrl.length === 0)) {
         return { ok: false, error: 'Missing image url.' };
     }
 
@@ -335,18 +487,34 @@ async function runTranslation(request: TranslateRequest, sender: chrome.runtime.
             const tab = await chrome.tabs.get(tabId).catch(() => null);
             tabPageUrl = tab?.url?.startsWith('http') ? tab.url : undefined;
         }
-        notifyProgress('detecting');
+        notifyProgress(tabId, 'detecting');
         const detection = await runDetection({
             target: SERVICE_WORKER_TARGET,
             type: 'detect',
             imageUrl: request.imageUrl,
+            imageDataUrl,
             tabPageUrl,
         });
         if (!detection.ok) return detection;
-        notifyProgress('inpainting');
+        if (signal?.aborted) throw new Error('Cancelled.');
+
+        await rememberDebugPage({
+            token: request.token,
+            imageUrl: request.imageUrl,
+            boxes: detection.boxes,
+            bubbles: detection.bubbles,
+            blocks: detection.blocks,
+            groups: detection.groups.map((group) => ({ ...group, maskUrl: undefined })),
+            detUrl: detection.detUrl,
+            segUrl: detection.segUrl,
+            ms: detection.ms,
+            warm: detection.warm,
+            timings: detection.timings,
+            ready: true,
+        });
 
         const settings = request.settings ?? await readSettings();
-        notifyProgress('calling', settings.translator);
+        notifyProgress(tabId, 'calling', settings.translator);
         const job = await translateGroups({
             groups: detection.groups,
             boxes: detection.boxes,
@@ -354,7 +522,8 @@ async function runTranslation(request: TranslateRequest, sender: chrome.runtime.
             imageWidth: detection.imageWidth,
             imageHeight: detection.imageHeight,
             settings,
-            inpainted: Boolean(detection.erasedUrl),
+            inpainted: detection.canInpaint,
+            signal,
             translateBuiltin: async (lines) => {
                 const response = (await chrome.runtime.sendMessage(
                     offscreenRequestFactory.ofBuiltinTranslate(lines),
@@ -369,11 +538,39 @@ async function runTranslation(request: TranslateRequest, sender: chrome.runtime.
             await chrome.storage.local.set({ [TRANSLATOR_KEY]: job.active });
         }
 
+        let erasedUrl = detection.erasedUrl;
+        if (signal?.aborted) throw new Error('Cancelled.');
+        if (detection.canInpaint && job.items.length > 0) {
+            notifyProgress(tabId, 'inpainting');
+            const rubyBoxes = detection.boxes.flatMap((line) => line.ruby.map((ruby) => ({
+                x: ruby.x,
+                y: ruby.y,
+                width: ruby.width,
+                height: ruby.height,
+            })));
+            const painted = (await chrome.runtime.sendMessage(
+                offscreenRequestFactory.ofInpaint([
+                    ...job.erase,
+                    ...job.items.map((item) => ({
+                        x: item.x,
+                        y: item.y,
+                        width: item.width,
+                        height: item.height,
+                        angle: item.angle,
+                    })),
+                    ...rubyBoxes,
+                ]),
+            )) as OffscreenInpaintResponse | undefined;
+            if (!painted) throw new Error('The offscreen document sent no inpaint answer.');
+            if (!painted.ok) throw new Error(painted.error);
+            erasedUrl = painted.erasedUrl;
+        }
+
         const overlay: OverlayRequest = {
             token: request.token,
             imageUrl: request.imageUrl,
             originalUrl: detection.originalUrl,
-            erasedUrl: detection.erasedUrl,
+            erasedUrl,
             width: detection.imageWidth,
             height: detection.imageHeight,
             items: job.items,
