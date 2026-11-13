@@ -5,6 +5,7 @@
   "description": "A React and TypeScript extension that detects text boxes with an on-device ONNX model.",
   "permissions": [
     "storage",
+    "downloads",
     "scripting",
     "activeTab",
     "declarativeNetRequest",
