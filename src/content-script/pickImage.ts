@@ -250,9 +250,6 @@ function start(): void {
         window.removeEventListener('click', onClick, true);
         window.removeEventListener('contextmenu', onClick, true);
         window.removeEventListener('mousemove', onMove, true);
-        window.removeEventListener('mousedown', onDragStart, true);
-        window.removeEventListener('mousemove', onDragMove, true);
-        window.removeEventListener('mouseup', onDragEnd, true);
         window.removeEventListener('keydown', onKey, true);
         shield.remove();
         box.remove();
@@ -449,9 +446,6 @@ function start(): void {
     window.addEventListener('click', onClick, true);
     window.addEventListener('contextmenu', onClick, true);
     window.addEventListener('mousemove', onMove, true);
-    window.addEventListener('mousedown', onDragStart, true);
-    window.addEventListener('mousemove', onDragMove, true);
-    window.addEventListener('mouseup', onDragEnd, true);
     window.addEventListener('keydown', onKey, true);
     showToast('Pick mode is on. Click an image, or press Escape.');
 }
