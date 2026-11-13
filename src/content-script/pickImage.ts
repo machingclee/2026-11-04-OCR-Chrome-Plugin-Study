@@ -250,6 +250,9 @@ function start(): void {
         window.removeEventListener('click', onClick, true);
         window.removeEventListener('contextmenu', onClick, true);
         window.removeEventListener('mousemove', onMove, true);
+        window.removeEventListener('mousedown', onDragStart, true);
+        window.removeEventListener('mousemove', onDragMove, true);
+        window.removeEventListener('mouseup', onDragEnd, true);
         window.removeEventListener('keydown', onKey, true);
         shield.remove();
         box.remove();
@@ -446,6 +449,9 @@ function start(): void {
     window.addEventListener('click', onClick, true);
     window.addEventListener('contextmenu', onClick, true);
     window.addEventListener('mousemove', onMove, true);
+    window.addEventListener('mousedown', onDragStart, true);
+    window.addEventListener('mousemove', onDragMove, true);
+    window.addEventListener('mouseup', onDragEnd, true);
     window.addEventListener('keydown', onKey, true);
     showToast('Pick mode is on. Click an image, or press Escape.');
 }
@@ -467,6 +473,13 @@ function startBatchSelection(): void {
     let bar: HTMLElement | null = null;
     let marks: HTMLElement | null = null;
     let pickMenu: HTMLElement | null = null;
+    let markOffset = 0;
+    let lastScrollY = window.scrollY;
+    let scrollTimer: number | undefined;
+    let dragStart: { x: number; y: number } | null = null;
+    let dragBox: HTMLElement | null = null;
+    let dragged = false;
+    let suppressClick = false;
 
     const shield = document.createElement('div');
     shield.id = SHIELD_ID;
@@ -625,6 +638,19 @@ function startBatchSelection(): void {
         document.documentElement.append(bar);
     };
 
+    const onScroll = (): void => {
+        const next = window.scrollY;
+        markOffset += lastScrollY - next;
+        lastScrollY = next;
+        if (marks) marks.style.transform = `translateY(${markOffset}px)`;
+        if (scrollTimer !== undefined) window.clearTimeout(scrollTimer);
+        scrollTimer = window.setTimeout(() => {
+            if (marks) marks.style.transform = '';
+            markOffset = 0;
+            redrawMarks();
+        }, 120);
+    };
+
     const finish = (keepTokens: boolean): void => {
         if (stopped) return;
         stopped = true;
@@ -632,10 +658,14 @@ function startBatchSelection(): void {
         window.removeEventListener('click', onClick, true);
         window.removeEventListener('contextmenu', onClick, true);
         window.removeEventListener('mousemove', onMove, true);
+        window.removeEventListener('mousedown', onDragStart, true);
+        window.removeEventListener('mousemove', onDragMove, true);
+        window.removeEventListener('mouseup', onDragEnd, true);
         window.removeEventListener('keydown', onKey, true);
         document.removeEventListener('keydown', onKey, true);
-        window.removeEventListener('scroll', redrawMarks, true);
+        window.removeEventListener('scroll', onScroll, true);
         window.removeEventListener('resize', redrawMarks);
+        if (scrollTimer !== undefined) window.clearTimeout(scrollTimer);
         shield.remove();
         hover.remove();
         pickMenu?.remove();
@@ -691,36 +721,6 @@ function startBatchSelection(): void {
             const token = `batch-${Date.now()}-${Math.random().toString(36).slice(2)}`;
             hit.element.setAttribute(OVERLAY_TARGET_ATTRIBUTE, token);
             selection.push({ token, url: hit.url, element: hit.element, rect: hit.rect });
-        }
-        redrawMarks();
-    }
-
-    function selectAllVisible(anchor: HTMLElement): void {
-        let container = anchor.parentElement;
-        let images: HTMLImageElement[] = [];
-        while (container && container !== document.body) {
-            const found = [...container.querySelectorAll('img')];
-            if (found.length > 1) {
-                images = found;
-                break;
-            }
-            container = container.parentElement;
-        }
-        if (images.length === 0) {
-            images = [...document.images].filter((image) => {
-                const rect = image.getBoundingClientRect();
-                return rect.width >= 200 && rect.height >= 200;
-            });
-        }
-        for (const image of images) {
-            const rect = image.getBoundingClientRect();
-            if (rect.width < 32 || rect.height < 32) continue;
-            const url = imageUrl(image);
-            if (!url || url.startsWith('blob:')) continue;
-            if (selection.some((item) => item.element === image || item.url === url)) continue;
-            const token = `batch-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-            image.setAttribute(OVERLAY_TARGET_ATTRIBUTE, token);
-            selection.push({ token, url, element: image, rect });
         }
         redrawMarks();
     }
@@ -802,9 +802,8 @@ function startBatchSelection(): void {
             menu.append(item);
         };
         addItem(selected ? 'Unselect this image' : 'Select this image', () => toggleHit(hit), selected ? icons.unselect : icons.select);
-        addItem('Select all visible images', () => selectAllVisible(hit.element), icons.selectAll);
         addItem('Unselect all', unselectAll, icons.unselectAll);
-        addItem('Translate all', () => { void confirmSelection(); }, icons.translate);
+        addItem(`Translate selected (${selection.length})`, () => { void confirmSelection(); }, icons.translate);
         menu.addEventListener('contextmenu', (event) => event.preventDefault());
         document.documentElement.append(menu);
         try {
@@ -815,6 +814,10 @@ function startBatchSelection(): void {
     }
 
     function onClick(event: MouseEvent): void {
+        if (suppressClick) {
+            suppressClick = false;
+            return;
+        }
         if (isBatchUi(event.target as Element)) return;
         event.preventDefault();
         event.stopPropagation();
@@ -836,6 +839,62 @@ function startBatchSelection(): void {
         toggleHit(hit);
     }
 
+    function onDragStart(event: MouseEvent): void {
+        if (event.button !== 0 || isBatchUi(event.target as Element)) return;
+        dragStart = { x: event.clientX, y: event.clientY };
+        dragged = false;
+    }
+
+    function onDragMove(event: MouseEvent): void {
+        if (!dragStart || (event.buttons & 1) === 0) return;
+        const x = Math.min(dragStart.x, event.clientX);
+        const y = Math.min(dragStart.y, event.clientY);
+        const width = Math.abs(event.clientX - dragStart.x);
+        const height = Math.abs(event.clientY - dragStart.y);
+        if (width < 6 && height < 6) return;
+        dragged = true;
+        event.preventDefault();
+        if (!dragBox) {
+            dragBox = document.createElement('div');
+            dragBox.style.position = 'fixed';
+            dragBox.style.border = '1px dashed #b3815c';
+            dragBox.style.background = 'rgba(179, 129, 92, 0.12)';
+            dragBox.style.pointerEvents = 'none';
+            dragBox.style.zIndex = '2147483646';
+            document.documentElement.append(dragBox);
+        }
+        dragBox.style.left = `${x}px`;
+        dragBox.style.top = `${y}px`;
+        dragBox.style.width = `${width}px`;
+        dragBox.style.height = `${height}px`;
+    }
+
+    function onDragEnd(event: MouseEvent): void {
+        if (!dragStart) return;
+        const start = dragStart;
+        dragStart = null;
+        dragBox?.remove();
+        dragBox = null;
+        if (!dragged) return;
+        suppressClick = true;
+        window.setTimeout(() => { suppressClick = false; }, 0);
+        const left = Math.min(start.x, event.clientX);
+        const right = Math.max(start.x, event.clientX);
+        const top = Math.min(start.y, event.clientY);
+        const bottom = Math.max(start.y, event.clientY);
+        for (const image of document.images) {
+            const rect = image.getBoundingClientRect();
+            if (rect.right < left || rect.left > right || rect.bottom < top || rect.top > bottom) continue;
+            const url = imageUrl(image);
+            if (!url || url.startsWith('blob:')) continue;
+            if (selection.some((item) => item.element === image || item.url === url)) continue;
+            const token = `batch-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            image.setAttribute(OVERLAY_TARGET_ATTRIBUTE, token);
+            selection.push({ token, url, element: image, rect });
+        }
+        redrawMarks();
+    }
+
     function onKey(event: KeyboardEvent): void {
         if (event.key === 'Escape') finish(false);
     }
@@ -844,9 +903,12 @@ function startBatchSelection(): void {
     window.addEventListener('click', onClick, true);
     window.addEventListener('contextmenu', onClick, true);
     window.addEventListener('mousemove', onMove, true);
+    window.addEventListener('mousedown', onDragStart, true);
+    window.addEventListener('mousemove', onDragMove, true);
+    window.addEventListener('mouseup', onDragEnd, true);
     window.addEventListener('keydown', onKey, true);
     document.addEventListener('keydown', onKey, true);
-    window.addEventListener('scroll', redrawMarks, true);
+    window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', redrawMarks);
     makeBar();
     redrawMarks();
