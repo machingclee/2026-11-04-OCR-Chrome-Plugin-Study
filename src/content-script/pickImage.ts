@@ -486,8 +486,6 @@ function start(): void {
 }
 
 
-void start;
-
 type BatchSelection = {
     token: string;
     url: string;
@@ -875,7 +873,9 @@ const pickerScope = window as unknown as {
 pickerScope.__comicTranslatorPicker = {
     start: () => {
         if (window.__comicTranslatorPickerActive) return;
-        startBatchSelection();
+        window.__comicTranslatorPickerActive = true;
+        document.documentElement.setAttribute(PICKING_ATTR, 'true');
+        start();
     },
     startSelection: () => {
         if (window.__comicTranslatorPickerActive) return;

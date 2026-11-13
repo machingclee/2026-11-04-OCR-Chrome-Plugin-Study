@@ -113,9 +113,9 @@ async function startPickMode(): Promise<void> {
             world: 'ISOLATED',
             func: () => {
                 const picker = (globalThis as unknown as {
-                    __comicTranslatorPicker?: { start?: () => void };
+                    __comicTranslatorPicker?: { startSelection?: () => void };
                 }).__comicTranslatorPicker;
-                picker?.start?.();
+                picker?.startSelection?.();
             },
         });
     } catch (cause) {
