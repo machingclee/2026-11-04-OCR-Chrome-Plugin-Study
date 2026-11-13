@@ -652,6 +652,7 @@ function startBatchSelection(): void {
         window.removeEventListener('click', onClick, true);
         window.removeEventListener('contextmenu', onClick, true);
         window.removeEventListener('mousemove', onMove, true);
+        window.removeEventListener('pointermove', onMove, true);
         window.removeEventListener('mousedown', onDragStart, true);
         window.removeEventListener('mousemove', onDragMove, true);
         window.removeEventListener('mouseup', onDragEnd, true);
@@ -897,6 +898,7 @@ function startBatchSelection(): void {
     window.addEventListener('click', onClick, true);
     window.addEventListener('contextmenu', onClick, true);
     window.addEventListener('mousemove', onMove, true);
+    window.addEventListener('pointermove', onMove, true);
     window.addEventListener('mousedown', onDragStart, true);
     window.addEventListener('mousemove', onDragMove, true);
     window.addEventListener('mouseup', onDragEnd, true);
