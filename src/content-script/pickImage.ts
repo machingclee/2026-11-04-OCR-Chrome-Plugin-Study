@@ -828,7 +828,7 @@ function startBatchSelection(): void {
     }
 
     function onClick(event: MouseEvent): void {
-        if (event.type !== 'contextmenu') return;
+        if (isBatchUi(event.target as Element)) return;
         event.preventDefault();
         event.stopPropagation();
 
@@ -842,9 +842,11 @@ function startBatchSelection(): void {
             showToast('This image has no stable URL, so it cannot be fetched later.');
             return;
         }
-        showPickMenu(hit, event.clientX, event.clientY);
-        return;
-
+        if (event.type === 'contextmenu') {
+            showPickMenu(hit, event.clientX, event.clientY);
+            return;
+        }
+        toggleHit(hit);
     }
 
     function onKey(event: KeyboardEvent): void {
