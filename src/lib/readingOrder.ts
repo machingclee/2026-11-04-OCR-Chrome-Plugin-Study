@@ -3,14 +3,13 @@ import type { Box, Bubble, TextBlock, TextLine } from './types';
 /** A host must be at least this much thicker than the box beside it. */
 const RUBY_THICKNESS_RATIO = 1.6;
 /**
- * A ruby spans a glyph or two, so its length stays close to the thickness of its
- * host. A whole column is many times longer and can never pass this test.
+ * Furigana can run the full height of the word it annotates. It cannot run
+ * longer than that host. A second column of dialogue is just as long, and the
+ * thickness test is what keeps it.
  */
-const RUBY_MAX_LENGTH_RATIO = 1.6;
-/** The host has to be a long line, not a blob. */
+const RUBY_MAX_LENGTH_RATIO = 1.15;
+/** The host has to be a long line, not a blob. A reading can be one kana. */
 const RUBY_HOST_MIN_ELONGATION = 4;
-/** The reading is shorter than its host but still a run of glyphs. */
-const RUBY_GUEST_MIN_ELONGATION = 2;
 
 /**
  * Below this share of surviving lines the block gate is treated as unreliable.
@@ -55,7 +54,12 @@ function isWide(box: Box): boolean {
     return box.width >= box.height * 1.4;
 }
 
-/** Join two boxes only when they share one column and the gap stays short. */
+/**
+ * Join pieces of one line. A sword or a gap can leave a glyph as a square, so a
+ * square still joins a column when it sits on the same x and the break is about
+ * one stroke wide. Two tall columns side by side do not share that x, and two
+ * wide lines only join along a row.
+ */
 export function mergeAligned(boxes: Box[]): Box[] {
     const merged = boxes.map((box) => ({ ...box }));
     let changed = true;
@@ -66,18 +70,24 @@ export function mergeAligned(boxes: Box[]): Box[] {
             for (let j = i + 1; j < merged.length; j += 1) {
                 const a = merged[i];
                 const b = merged[j];
-                const vertical = isTall(a) && isTall(b);
-                const horizontal = isWide(a) && isWide(b);
-                if (!vertical && !horizontal) continue;
-
-                const overlap = vertical
-                    ? Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)
-                    : Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
-                const thickness = vertical ? Math.min(a.width, b.width) : Math.min(a.height, b.height);
-                const gap = vertical
-                    ? Math.max(0, Math.max(a.y, b.y) - Math.min(a.y + a.height, b.y + b.height))
-                    : Math.max(0, Math.max(a.x, b.x) - Math.min(a.x + a.width, b.x + b.width));
-                if (overlap < thickness * 0.6 || gap > thickness * 0.7) continue;
+                const xOverlap = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+                const yOverlap = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+                const yGap = Math.max(0, Math.max(a.y, b.y) - Math.min(a.y + a.height, b.y + b.height));
+                const xGap = Math.max(0, Math.max(a.x, b.x) - Math.min(a.x + a.width, b.x + b.width));
+                const minWidth = Math.min(a.width, b.width);
+                const minHeight = Math.min(a.height, b.height);
+                const sameColumn = xOverlap >= minWidth * 0.6;
+                const sameRow = yOverlap >= minHeight * 0.6;
+                const bothTall = isTall(a) && isTall(b);
+                // The break inside a split stroke is about a stroke wide, not a
+                // whole box. A kana box above a sound effect can share its x and
+                // sit a box width away; joining that pair makes one box that no
+                // balloon contains, and the kana then falls off the page.
+                const columnLimit = minWidth * (bothTall ? 0.7 : 0.5);
+                const stack = sameColumn && yGap <= columnLimit
+                    && (isTall(a) || isTall(b) || yGap < minHeight);
+                const join = sameRow && isWide(a) && isWide(b) && xGap <= minHeight * 0.7;
+                if (!stack && !join) continue;
 
                 const left = Math.min(a.x, b.x);
                 const top = Math.min(a.y, b.y);
@@ -109,23 +119,40 @@ export function toTextLines(boxes: Box[]): TextLine[] {
     }));
 }
 
-function smallerSide(box: Box): number {
+/**
+ * How thick the strokes are. A slanted line's page-aligned box is wide even
+ * when the glyphs are thin, so the rotated measurement is the one that counts.
+ */
+function strokeThickness(box: Box): number {
+    if (box.lineLength && box.lineThickness && box.lineLength > 0 && box.lineThickness > 0) {
+        return Math.min(box.lineLength, box.lineThickness);
+    }
     return Math.min(box.width, box.height);
 }
 
-/** Length along the text direction: the long side of the box. */
-function longerSide(box: Box): number {
+/** How long the line is along the slant, not along the page edge. */
+function strokeLength(box: Box): number {
+    if (box.lineLength && box.lineThickness && box.lineLength > 0 && box.lineThickness > 0) {
+        return Math.max(box.lineLength, box.lineThickness);
+    }
     return Math.max(box.width, box.height);
 }
 
-/** How long a box is compared with how thick it is. */
+/** How long a box is compared with how thick its strokes are. */
 function elongation(box: Box): number {
-    return longerSide(box) / Math.max(1, smallerSide(box));
+    return strokeLength(box) / Math.max(1, strokeThickness(box));
 }
 
-/** Whether two boxes run the same way, so one can annotate the other. */
-function sameOrientation(a: Box, b: Box): boolean {
-    return (a.height >= a.width) === (b.height >= b.width);
+/** Page-aligned thickness, used only to decide how far a reading may sit. */
+function crossSize(box: Box, vertical: boolean): number {
+    return vertical ? box.width : box.height;
+}
+
+/** Shared span along the host, so a reading has to sit on that column. */
+function alongOverlap(a: Box, b: Box, vertical: boolean): number {
+    return vertical
+        ? Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y)
+        : Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
 }
 
 function gapBetween(a: Box, b: Box): { x: number; y: number } {
@@ -264,43 +291,54 @@ export function groupByRegion(
  * only, and each of them carries the ruby that sat beside it, so nothing is lost
  * when the crop is cut.
  *
- * The test is relative: a box is ruby when the host beside it is at least 1.6
- * times as thick. A page median would break on a page that mixes sizes, and
- * vertical ruby is thin while horizontal ruby is short.
+ * The test follows the host's strokes, not the page-aligned box. A slanted
+ * column is wide on the page even when the glyphs are thin, so one kana beside
+ * it would otherwise look like another column.
  */
 export function separateRuby(lines: TextLine[]): TextLine[] {
     if (lines.length <= 1) return lines;
 
     // Thickest first, so a candidate can only be measured against lines that are
     // already accepted as text. A ruby line never becomes a host for real text.
-    const byThickness = [...lines].sort((a, b) => smallerSide(b) - smallerSide(a));
+    const byThickness = [...lines].sort((a, b) => strokeThickness(b) - strokeThickness(a));
     const hosts: TextLine[] = [];
 
     for (const line of byThickness) {
-        const thickness = smallerSide(line);
         let host: TextLine | null = null;
         let nearest = Infinity;
 
         for (const candidate of hosts) {
-            // The host has to be at least this much thicker than the candidate.
-            // Vertical ruby is thin, horizontal ruby is short, so one ratio fits both.
-            if (smallerSide(candidate) < thickness * RUBY_THICKNESS_RATIO) continue;
-
-            // Both boxes have to be lines. A blob over artwork is thick and short,
-            // and it must never collect real columns as if they were readings.
+            // A blob over artwork is thick and short, and it must never collect
+            // real columns as if they were readings.
             if (elongation(candidate) < RUBY_HOST_MIN_ELONGATION) continue;
-            if (elongation(line) < RUBY_GUEST_MIN_ELONGATION) continue;
 
-            // A ruby sits inside the span of its host, beside one or two glyphs.
-            // A full column is long, so length keeps real text out of the pile.
-            if (!sameOrientation(line, candidate)) continue;
-            if (longerSide(line) > smallerSide(candidate) * RUBY_MAX_LENGTH_RATIO) continue;
+            const vertical = candidate.height >= candidate.width;
+            const guestVertical = line.height >= line.width;
+            // A reading runs the same way as its host. A chapter title is a wide
+            // line; the columns in the next panel are tall. Those are not ruby,
+            // even when unclip makes the title thick enough to reach them.
+            if (vertical !== guestVertical && elongation(line) >= 2) continue;
 
-            // Ruby sits beside its host and never far away. The reach comes from
-            // the host thickness, so it works above a row and right of a column.
+            const hostStroke = strokeThickness(candidate);
+            const guestStroke = strokeThickness(line);
+            // Vertical ruby has thinner strokes. Horizontal ruby does too.
+            if (hostStroke < guestStroke * RUBY_THICKNESS_RATIO) continue;
+
+            // A reading may span the whole word. A line longer than its host is
+            // another column, not ruby. One kana is short, so it passes.
+            if (strokeLength(line) > strokeLength(candidate) * RUBY_MAX_LENGTH_RATIO) continue;
+            const overlap = alongOverlap(line, candidate, vertical);
+            const guestAlong = vertical ? line.height : line.width;
+            // A reading sits beside its word, so most of the reading overlaps the
+            // host. Two columns that only meet at a corner are not ruby.
+            if (overlap < guestAlong * 0.5) continue;
+
             const gap = gapBetween(line, candidate);
-            const distance = Math.max(gap.x, gap.y);
-            if (distance > smallerSide(candidate) * 1.5) continue;
+            const distance = vertical ? gap.x : gap.y;
+            // Reach from the thinner stroke. A full-height display column is wide
+            // enough that the old host-sized reach collected the next column.
+            const reach = Math.min(hostStroke, guestStroke * 2, crossSize(candidate, vertical));
+            if (distance > reach * 1.5) continue;
             if (distance < nearest) {
                 nearest = distance;
                 host = candidate;

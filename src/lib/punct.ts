@@ -14,8 +14,11 @@ const H2V = new Map<string, string>([
     ['；', '︔'],
     [':', '︓'],
     ['：', '︓'],
-    ['…', '⋮'],
+    // U+22EE sits on the left of its em box. The vertical presentation form
+    // is fullwidth, so the dots share the column centre with the kanji.
+    ['…', '︙'],
     ['⋯', '︙'],
+    ['⋮', '︙'],
     ['(', '︵'],
     [')', '︶'],
     ['（', '︵'],
@@ -26,6 +29,16 @@ const H2V = new Map<string, string>([
     ['』', '﹄'],
     ['[', '﹇'],
     [']', '﹈'],
+    // Upright vertical text does not rotate a dash, so a horizontal bar sits
+    // beside the column. The vertical em dash is already drawn top to bottom.
+    ['—', '︱'],
+    ['–', '︱'],
+    ['―', '︱'],
+    ['−', '︱'],
+    ['－', '︱'],
+    ['ー', '︱'],
+    ['ｰ', '︱'],
+    ['─', '︱'],
 ]);
 
 export function toHorizontal(text: string): string {
@@ -41,21 +54,22 @@ export function toVertical(text: string): string {
     // Three ASCII dots or a run of ellipsis marks is one vertical ellipsis, not
     // three full stops or a horizontal row of dots beside the column.
     const collapsed = text
-        .replace(/(?:[.．・·]\s*){2,}/g, '⋮')
-        .replace(/…+/g, '⋮')
-        .replace(/⋯+/g, '⋮');
+        .replace(/(?:[.．・·]\s*){2,}/g, '︙')
+        .replace(/…+/g, '︙')
+        .replace(/⋯+/g, '︙')
+        .replace(/⋮+/g, '︙');
     return [...collapsed]
         .map((character) => H2V.get(character) ?? character)
         .join('')
         // Keep the ellipsis with the preceding glyph. The label may use several
         // columns, but a column must not begin with a lone ellipsis.
-        .replace(/(.)([⋮︙])/gu, '$1\u2060$2');
+        .replace(/(.)([⋮︙︱])/gu, '$1\u2060$2');
 }
 
 /** A mark that may not start a line, which is where a break is forbidden. */
 const NO_START = new Set([
     '。', '，', '、', '！', '？', '；', '：', '!', '?', '︕', '︖', '︒', '︐', '︔', '︓',
-    ')', '）', '」', '』', '】', '〕', '︶', '﹂', '﹄', '⋮', '︙',
+    ')', '）', '」', '』', '】', '〕', '︶', '﹂', '﹄', '⋮', '︙', '︱',
 ]);
 
 /** A mark that may not end a line. */
