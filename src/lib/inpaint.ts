@@ -81,8 +81,16 @@ function toByte(value: number): number {
  * and the page are both scaled into the 512 square. Holes are set to 0 after
  * the minus-one-to-one scale. The answer is scaled back and copied only onto
  * the full-resolution detector mask.
+ *
+ * `fallback` is the paper this pass is filling. A value the model cannot produce
+ * (a NaN, which a broken kernel or a misread tensor leaves behind) becomes that
+ * colour instead of the black a Uint8ClampedArray turns a NaN into.
  */
-export async function inpaintPage(page: ImageData, mask: Uint8Array): Promise<ImageData> {
+export async function inpaintPage(
+    page: ImageData,
+    mask: Uint8Array,
+    fallback: [number, number, number] = [255, 255, 255],
+): Promise<ImageData> {
     const size = INPAINT_INPUT_SIZE;
     const session = await loadSession();
     const inputName = session.inputNames[0];
@@ -108,14 +116,23 @@ export async function inpaintPage(page: ImageData, mask: Uint8Array): Promise<Im
         [maskName]: new ort.Tensor('float32', hole, [1, 1, size, size]),
     });
 
-    const first = Object.values(outputs)[0] as ort.Tensor;
-    const data = first.data as Float32Array;
+    // The decode below reads three float32 planes. A tensor of another type or
+    // shape would read past its end, and an undefined value decodes as a NaN.
+    const first = Object.values(outputs)[0] as ort.Tensor | undefined;
+    if (!first || first.type !== 'float32' || !(first.data instanceof Float32Array)
+        || first.data.length < plane * 3) {
+        throw new Error('The inpaint model returned an unexpected tensor.');
+    }
+    const data = first.data;
     const decoded = new Uint8ClampedArray(plane * 4);
     for (let index = 0; index < plane; index += 1) {
         const offset = index * 4;
-        decoded[offset] = toByte((data[index] + 1) * 127.5);
-        decoded[offset + 1] = toByte((data[plane + index] + 1) * 127.5);
-        decoded[offset + 2] = toByte((data[2 * plane + index] + 1) * 127.5);
+        const red = (data[index] + 1) * 127.5;
+        const green = (data[plane + index] + 1) * 127.5;
+        const blue = (data[2 * plane + index] + 1) * 127.5;
+        decoded[offset] = Number.isFinite(red) ? toByte(red) : fallback[0];
+        decoded[offset + 1] = Number.isFinite(green) ? toByte(green) : fallback[1];
+        decoded[offset + 2] = Number.isFinite(blue) ? toByte(blue) : fallback[2];
         decoded[offset + 3] = 255;
     }
 

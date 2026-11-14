@@ -279,6 +279,94 @@ function makePatch(
     return patch;
 }
 
+/**
+ * Every label is one column or one row, so the reader nudges a single line and
+ * leaves the rest of the balloon where it is. The move is a transform, so the
+ * percentage layout still owns the base position, and a leaned label keeps its
+ * rotation. Labels stay inside the image, because the layer clips them there.
+ */
+function enableItemDrag(box: HTMLElement, angle: number): void {
+    const inclined = Math.abs(angle) >= 0.01;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    const paint = (): void => {
+        const rotation = inclined ? ` rotate(${angle}rad)` : '';
+        box.style.transform = `translate(${offsetX}px, ${offsetY}px)${rotation}`;
+    };
+
+    box.style.pointerEvents = 'auto';
+    box.style.cursor = 'grab';
+    box.style.touchAction = 'none';
+    box.style.userSelect = 'none';
+    box.title = 'Drag to move this label';
+
+    box.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) return;
+        const layer = box.closest<HTMLElement>(`[${LAYER_ATTR}]`);
+        if (!layer) return;
+        event.preventDefault();
+        event.stopPropagation();
+
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const baseX = offsetX;
+        const baseY = offsetY;
+        // Clamp against the label as it sits now, without the offset this drag
+        // already applied, so a second drag does not drift towards the edge.
+        const area = layer.getBoundingClientRect();
+        const rect = box.getBoundingClientRect();
+        const originLeft = rect.left - baseX;
+        const originTop = rect.top - baseY;
+        const minX = Math.min(0, area.left - originLeft);
+        const maxX = Math.max(0, area.right - (originLeft + rect.width));
+        const minY = Math.min(0, area.top - originTop);
+        const maxY = Math.max(0, area.bottom - (originTop + rect.height));
+        let moved = false;
+        box.style.cursor = 'grabbing';
+        box.style.zIndex = '5';
+
+        const move = (moveEvent: PointerEvent): void => {
+            if (moveEvent.pointerId !== event.pointerId) return;
+            if (!moved && (Math.abs(moveEvent.clientX - startX) > 3 || Math.abs(moveEvent.clientY - startY) > 3)) {
+                moved = true;
+            }
+            offsetX = Math.min(Math.max(baseX + (moveEvent.clientX - startX), minX), maxX);
+            offsetY = Math.min(Math.max(baseY + (moveEvent.clientY - startY), minY), maxY);
+            paint();
+        };
+        const end = (cancelled: boolean): void => {
+            document.removeEventListener('pointermove', move);
+            document.removeEventListener('pointerup', release);
+            document.removeEventListener('pointercancel', cancel);
+            box.style.cursor = 'grab';
+            box.style.zIndex = '2';
+            if (cancelled || !moved) return;
+            // The pointer leaves the label on a long drag, so the follow-up
+            // click lands on whatever sits under it. That click belongs to the
+            // drag, not to the page's link or lightbox.
+            const swallow = (clickEvent: MouseEvent): void => {
+                clickEvent.preventDefault();
+                clickEvent.stopPropagation();
+            };
+            document.addEventListener('click', swallow, true);
+            window.setTimeout(() => document.removeEventListener('click', swallow, true), 300);
+        };
+        const release = (): void => end(false);
+        const cancel = (): void => end(true);
+        document.addEventListener('pointermove', move);
+        document.addEventListener('pointerup', release);
+        document.addEventListener('pointercancel', cancel);
+    });
+
+    // A drag that ends on a label must not follow a link or open a lightbox
+    // that sits under the overlay.
+    box.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+    });
+}
+
 /** White halo around the glyphs. Stroke is centered, so twice the 3.5% radius stays outside the fill. */
 function applyWhiteStroke(box: HTMLElement, fontSize: number): void {
     const width = Math.max(1, Math.round(fontSize * 0.07));
@@ -353,6 +441,7 @@ function makeBox(
     style.wordSpacing = '0';
     style.whiteSpace = 'pre-wrap';
     style.wordBreak = 'break-word';
+    // enableItemDrag owns pointer events: only the label itself is a target.
     style.pointerEvents = 'none';
     style.zIndex = '2';
     if (inclined) {
@@ -464,7 +553,12 @@ function fitBoxes(layer: HTMLElement, leading: number): void {
 }
 
 function ensureBoxStyle(): void {
-    const css = `span[${BOX_ATTR}="true"]:not([${INCLINED_ATTR}]) { overflow: visible !important; height: unset !important; padding-top: 0px !important; }`;
+    const css = [
+        `span[${BOX_ATTR}="true"]:not([${INCLINED_ATTR}]) { overflow: visible !important; height: unset !important; padding-top: 0px !important; }`,
+        // The switch hides the whole layer with opacity. An invisible label must
+        // not keep swallowing drags that belong to the original page.
+        `html[${OPACITY_ATTR}="0"] span[${BOX_ATTR}="true"] { pointer-events: none !important; }`,
+    ].join('\n');
     const existing = document.getElementById('comic-translator-box-style');
     if (existing) {
         existing.textContent = css;
@@ -564,15 +658,16 @@ function apply(request: OverlayRequest): OverlayResponse {
         group.style.position = 'absolute';
         group.style.inset = '0';
         group.style.overflow = 'visible';
-        group.style.pointerEvents = 'auto';
-        group.style.cursor = 'grab';
-        group.style.touchAction = 'none';
+        // The group is only a layout and fitting bucket. It must stay
+        // transparent to the pointer engine, otherwise it swallows the whole
+        // image; each label below it accepts its own drag.
+        group.style.pointerEvents = 'none';
         textLayer.appendChild(group);
         for (const item of items) {
             const patch = makePatch(item, request, width, height, scale);
             if (patch) inpaintLayer.appendChild(patch);
             const box = makeBox(item, request, width, height, scale);
-            box.style.pointerEvents = 'none';
+            enableItemDrag(box, item.angle ?? 0);
             group.appendChild(box);
             count += 1;
         }
@@ -633,6 +728,28 @@ function setOpacity(value: number): number {
     const layers = document.querySelectorAll<HTMLElement>(`[${LAYER_ATTR}]`);
     for (const layer of layers) layer.style.opacity = String(opacity);
     return layers.length;
+}
+
+/**
+ * The picker's menu asks two questions about this document: does it carry a
+ * translation at all, and is that translation currently on screen. The layer
+ * holds the answer, because apply() and setOpacity() both write its opacity.
+ */
+export function readOverlayState(): { present: boolean; visible: boolean } {
+    const layers = [...document.querySelectorAll<HTMLElement>(`[${LAYER_ATTR}]`)];
+    return {
+        present: layers.length > 0,
+        visible: layers.some((layer) => layer.style.opacity !== '0'),
+    };
+}
+
+/** Flip every layer here; null means this document had nothing to flip. */
+export function toggleOverlayVisibility(): boolean | null {
+    const state = readOverlayState();
+    if (!state.present) return null;
+    const next = !state.visible;
+    setOpacity(next ? 1 : 0);
+    return next;
 }
 
 /**

@@ -71,6 +71,8 @@ export type Bubble = {
     score: number;
     /** A small polygon that follows the balloon edge, in page pixels. */
     outline: { x: number; y: number }[];
+    /** Median colour of the paper inside the balloon, when it was sampled. */
+    paper?: [number, number, number];
     /** The balloon itself, at prototype resolution. */
     shape: Float32Array;
     shapeSize: number;

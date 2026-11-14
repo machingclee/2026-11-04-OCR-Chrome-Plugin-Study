@@ -32,6 +32,8 @@ import type {
     TranslateResponse,
     TranslateSettings,
     OffscreenInpaintResponse,
+    InpaintBox,
+    BubbleData,
 } from '../shared/types';
 import { translateGroups } from '../lib/translationJob';
 
@@ -123,8 +125,7 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 chrome.commands.onCommand.addListener((command) => {
-    if (command !== 'pick-image') return;
-    void startPickMode();
+    if (command === 'pick-image') void startPickMode();
 });
 
 async function startPickMode(): Promise<void> {
@@ -148,6 +149,32 @@ async function startPickMode(): Promise<void> {
     } catch (cause) {
         console.warn('Could not start selection mode.', cause);
     }
+}
+
+/**
+ * Attach the paper each box sits on. A balloon is flat paper, so the eraser
+ * fills it instead of asking the model to invent a bubble; the outline keeps
+ * that fill off the balloon wall. A box outside every balloon stays plain and
+ * is inpainted as before.
+ */
+function withPaper(
+    boxes: { x: number; y: number; width: number; height: number; angle?: number }[],
+    bubbles: BubbleData[],
+): InpaintBox[] {
+    return boxes.map((box) => {
+        const centreX = box.x + box.width / 2;
+        const centreY = box.y + box.height / 2;
+        let balloon: BubbleData | undefined;
+        for (const bubble of bubbles) {
+            if (centreX < bubble.x || centreX > bubble.x + bubble.width
+                || centreY < bubble.y || centreY > bubble.y + bubble.height) continue;
+            if (!balloon || bubble.width * bubble.height < balloon.width * balloon.height) {
+                balloon = bubble;
+            }
+        }
+        if (!balloon?.paper || !balloon.outline || balloon.outline.length < 3) return { ...box };
+        return { ...box, paper: balloon.paper, clip: balloon.outline };
+    });
 }
 
 async function runDetection(request: DetectRequest): Promise<DetectResponse> {
@@ -522,7 +549,6 @@ async function runTranslation(request: TranslateRequest, sender: chrome.runtime.
             imageWidth: detection.imageWidth,
             imageHeight: detection.imageHeight,
             settings,
-            inpainted: detection.canInpaint,
             signal,
             translateBuiltin: async (lines) => {
                 const response = (await chrome.runtime.sendMessage(
@@ -549,7 +575,7 @@ async function runTranslation(request: TranslateRequest, sender: chrome.runtime.
                 height: ruby.height,
             })));
             const painted = (await chrome.runtime.sendMessage(
-                offscreenRequestFactory.ofInpaint([
+                offscreenRequestFactory.ofInpaint(withPaper([
                     ...job.erase,
                     ...job.items.map((item) => ({
                         x: item.x,
@@ -559,7 +585,7 @@ async function runTranslation(request: TranslateRequest, sender: chrome.runtime.
                         angle: item.angle,
                     })),
                     ...rubyBoxes,
-                ]),
+                ], detection.bubbles)),
             )) as OffscreenInpaintResponse | undefined;
             if (!painted) throw new Error('The offscreen document sent no inpaint answer.');
             if (!painted.ok) throw new Error(painted.error);

@@ -20,7 +20,6 @@ export type TranslationJobInput = {
     imageWidth: number;
     imageHeight: number;
     settings: TranslationSettings;
-    inpainted?: boolean;
     translateBuiltin?: (lines: string[]) => Promise<string[]>;
     signal?: AbortSignal;
 };
@@ -257,12 +256,16 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
                 maskBox: group.maskBox,
                 rectangle: group.rectangle,
                 fontSize: fittedFont,
-                patch: balloon && !input.inpainted ? {
+                // The paper patch is drawn under the label even when the erase
+                // pass ran, so a fill the model got wrong cannot show through:
+                // it is the same paper, clipped to the balloon outline.
+                patch: balloon ? {
                     x: line.x,
                     y: line.y,
                     width: line.width,
                     height: line.height,
                 } : undefined,
+                clip: balloon?.outline && balloon.outline.length >= 3 ? balloon.outline : undefined,
             });
         };
 

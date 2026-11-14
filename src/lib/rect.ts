@@ -190,3 +190,21 @@ export function cornersOf(rect: RotatedRect): Point[] {
         corner(-halfLength, halfThickness),
     ];
 }
+
+/**
+ * True when a page point falls inside a closed polygon. The even-odd rule is
+ * enough for a balloon outline: it is walked in one direction, so a straight
+ * polygon crosses a horizontal ray an odd number of times inside it.
+ */
+export function insidePolygon(points: Point[], x: number, y: number): boolean {
+    if (points.length < 3) return false;
+    let inside = false;
+    for (let index = 0, previous = points.length - 1; index < points.length; previous = index, index += 1) {
+        const a = points[index];
+        const b = points[previous];
+        if ((a.y > y) !== (b.y > y) && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) {
+            inside = !inside;
+        }
+    }
+    return inside;
+}

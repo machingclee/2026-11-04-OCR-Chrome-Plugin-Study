@@ -57,6 +57,8 @@ export type BubbleData = {
     width: number;
     height: number;
     outline?: { x: number; y: number }[];
+    /** Median colour of the paper inside the balloon, sampled in the offscreen pass. */
+    paper?: [number, number, number];
 };
 
 /** One reading group: the box that holds it and the text inside, line by line. */
@@ -152,11 +154,28 @@ export type OffscreenBuiltinTranslateRequest = {
     lines: string[];
 };
 
+/**
+ * One page rectangle to erase. A box inside a balloon names the flat paper
+ * behind its glyphs, so that rectangle is filled instead of inpainted; the
+ * balloon outline keeps the fill off the wall.
+ */
+export type InpaintBox = {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    angle?: number;
+    /** Paper colour behind these glyphs; when set, no model runs here. */
+    paper?: [number, number, number];
+    /** Balloon outline in image pixels. */
+    clip?: { x: number; y: number }[];
+};
+
 /** Erase only these page rectangles. Sound effects never appear in the list. */
 export type OffscreenInpaintRequest = {
     target: typeof OFFSCREEN_TARGET;
     type: 'inpaint';
-    boxes: { x: number; y: number; width: number; height: number; angle?: number }[];
+    boxes: InpaintBox[];
 };
 
 export type OffscreenInpaintResponse =

@@ -2,13 +2,15 @@ import {
     OVERLAY_TARGET_ATTRIBUTE,
     PICKED_IMAGE_TARGET_KEY,
     PICKED_IMAGE_URL_KEY,
+    SHOW_TRANSLATION_KEY,
 } from '../shared/constants';
-import { clearAll } from './overlay';
+import { clearAll, readOverlayState, toggleOverlayVisibility } from './overlay';
 import serviceWorkerRequestFactory from '../shared/factories/serviceWorkerRequestFactory';
 import type { BatchItem, BatchProgressMessage, BatchState, TranslateBatchResponse, TranslateResponse } from '../shared/types';
 import {
     BATCH_BAR_ID,
     BATCH_MARK_ATTR,
+    BOTTOM_CLEARANCE,
     HIGHLIGHT_ID,
     IMAGE_URL_PATTERN,
     SHIELD_ID,
@@ -37,7 +39,7 @@ function showToast(message: string): void {
     toast.textContent = message;
     toast.style.position = 'fixed';
     toast.style.left = '50%';
-    toast.style.bottom = '24px';
+    toast.style.bottom = `${BOTTOM_CLEARANCE}px`;
     toast.style.transform = 'translateX(-50%)';
     toast.style.maxWidth = '80vw';
     toast.style.padding = '8px 12px';
@@ -514,8 +516,13 @@ function start(): void {
                     status.style.gap = '8px';
                     status.style.zIndex = '2147483647';
                     status.style.boxShadow = '0 8px 24px rgba(15,23,42,0.25)';
+                    // A site bar owns the bottom of the window, so the pill stays
+                    // above that edge even when the image runs under it.
                     const statusLeft = Math.min(window.innerWidth - 278, Math.max(8, picked.rect.right - 278));
-                    const statusTop = Math.min(window.innerHeight - 52, Math.max(8, picked.rect.bottom - 52));
+                    const statusTop = Math.max(8, Math.min(
+                        picked.rect.bottom - 52,
+                        window.innerHeight - 52 - BOTTOM_CLEARANCE,
+                    ));
                     status.style.left = `${statusLeft}px`;
                     status.style.top = `${statusTop}px`;
 
@@ -767,7 +774,7 @@ function startBatchSelection(): void {
         bar.id = BATCH_BAR_ID;
         bar.style.position = 'fixed';
         bar.style.left = '50%';
-        bar.style.bottom = '20px';
+        bar.style.bottom = `${BOTTOM_CLEARANCE}px`;
         bar.style.transform = 'translateX(-50%)';
         bar.style.zIndex = '2147483647';
         bar.style.display = 'flex';
@@ -983,8 +990,10 @@ function startBatchSelection(): void {
         menu.setAttribute('popover', 'manual');
         menu.style.position = 'fixed';
         menu.style.margin = '0';
-        menu.style.left = `${Math.min(x, window.innerWidth - 230)}px`;
-        menu.style.top = `${Math.min(y, window.innerHeight - 150)}px`;
+        // Width plus padding and border is 234px; keep the taller three-item
+        // menu inside the viewport as well.
+        menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - 242))}px`;
+        menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - 150))}px`;
         menu.style.width = '220px';
         menu.style.padding = '6px';
         menu.style.borderRadius = '8px';
@@ -999,6 +1008,7 @@ function startBatchSelection(): void {
         const icons = {
             unselectAll: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M6 18L18 6"/></svg>',
             translate: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M6 4.5h9.2a2 2 0 0 1 2 2V13a2 2 0 0 1-2 2H9.2L6 17.6V15H5.2a2 2 0 0 1-2-2V6.5a2 2 0 0 1 2-2z"/><path d="M8.1 7.4v4.6M11.1 7.4v4.6M14.1 7.4v4.6"/></svg>',
+            visibility: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.7 12S6 5.8 12 5.8 21.3 12 21.3 12 18 18.2 12 18.2 2.7 12 2.7 12z"/><circle cx="12" cy="12" r="2.7"/></svg>',
         };
         const addDivider = () => {
             const divider = document.createElement('div');
@@ -1008,7 +1018,13 @@ function startBatchSelection(): void {
             divider.style.background = '#e2d1bd';
             menu.append(divider);
         };
-        const addItem = (label: string, run: () => void, icon: string) => {
+        const addItem = (
+            label: string,
+            run: () => void,
+            icon: string,
+            options: { enabled?: boolean; hint?: string } = {},
+        ) => {
+            const enabled = options.enabled !== false;
             const item = document.createElement('button');
             item.type = 'button';
             item.style.display = 'flex';
@@ -1024,6 +1040,14 @@ function startBatchSelection(): void {
             item.style.cursor = 'pointer';
             item.style.pointerEvents = 'auto';
             item.style.transition = 'background 120ms ease, color 120ms ease';
+            if (!enabled) {
+                // Keep the row in the menu so the control stays discoverable
+                // on a page that has nothing to show yet.
+                item.disabled = true;
+                item.style.opacity = '0.45';
+                item.style.cursor = 'default';
+                if (options.hint) item.title = options.hint;
+            }
             const iconNode = document.createElement('span');
             iconNode.innerHTML = icon;
             iconNode.style.display = 'inline-flex';
@@ -1033,16 +1057,19 @@ function startBatchSelection(): void {
             textNode.textContent = label;
             item.append(iconNode, textNode);
             item.addEventListener('mouseenter', () => {
+                if (!enabled) return;
                 item.style.background = '#f5e7d7';
                 item.style.color = '#3f2f22';
             });
             item.addEventListener('mouseleave', () => {
+                if (!enabled) return;
                 item.style.background = 'transparent';
                 item.style.color = '#4a3828';
             });
             item.addEventListener('click', (event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                if (!enabled) return;
                 closePickMenu();
                 run();
             });
@@ -1051,6 +1078,18 @@ function startBatchSelection(): void {
         addItem(`Translate selected (${selection.length})`, () => { void confirmSelection(); }, icons.translate);
         addDivider();
         addItem('Unselect all', unselectAll, icons.unselectAll);
+        addDivider();
+        const overlay = readOverlayState();
+        addItem('Show/Hide Translation', () => {
+            const visible = toggleOverlayVisibility();
+            if (visible !== null) {
+                // The popup switch reads the same flag, so keep it in step.
+                void chrome.storage.local.set({ [SHOW_TRANSLATION_KEY]: visible }).catch(() => undefined);
+            }
+        }, icons.visibility, {
+            enabled: overlay.present,
+            hint: 'Translate this page first.',
+        });
         menu.addEventListener('contextmenu', (event) => event.preventDefault());
         document.documentElement.append(menu);
         try {
@@ -1323,7 +1362,7 @@ function updateBatchProgress(state: BatchState): void {
         element.setAttribute('data-comic-translator-batch-progress', 'true');
         element.style.position = 'fixed';
         element.style.right = '18px';
-        element.style.bottom = '18px';
+        element.style.bottom = `${BOTTOM_CLEARANCE}px`;
         element.style.zIndex = '2147483647';
         element.style.display = 'flex';
         element.style.alignItems = 'center';

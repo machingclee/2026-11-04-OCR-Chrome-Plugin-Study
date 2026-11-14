@@ -13,7 +13,7 @@ ort.env.wasm.numThreads = 1;
 const webgpu = typeof navigator !== 'undefined' && 'gpu' in navigator;
 
 import { foldAngle, mainCluster, majorAxis, minAreaRect } from './rect';
-import type { Box, DetectionResult, Prepared, TextBlock } from './types';
+import type { Box, DetectionResult, Prepared, TextBlock, TextMask } from './types';
 
 let sessionPromise: Promise<ort.InferenceSession> | null = null;
 
@@ -324,82 +324,6 @@ function maskFill(pixels: number[], count: number, aabbArea: number): number {
     const area = tight > 0 ? tight : aabbArea;
     return area > 0 ? count / area : 0;
 }
-const BLOCK_SCORE = 0.35;
-const BLOCK_NMS = 0.4;
-
-function pickBlockTensor(outputs: Record<string, ort.Tensor>): ort.Tensor | null {
-    const entries = Object.entries(outputs);
-    const named = entries.find(([key]) => key.toLowerCase().includes('blk'));
-    const ordered = named ? [named, ...entries.filter(([key]) => key !== named[0])] : entries;
-
-    for (const [, value] of ordered) {
-        if (!(value instanceof ort.Tensor)) continue;
-        const dims = value.dims;
-        if (dims.length === 3 && dims[2] >= 6) return value;
-    }
-    return null;
-}
-
-function intersectionOverUnion(a: TextBlock, b: TextBlock): number {
-    const left = Math.max(a.x, b.x);
-    const top = Math.max(a.y, b.y);
-    const right = Math.min(a.x + a.width, b.x + b.width);
-    const bottom = Math.min(a.y + a.height, b.y + b.height);
-    if (right <= left || bottom <= top) return 0;
-    const shared = (right - left) * (bottom - top);
-    return shared / (a.width * a.height + b.width * b.height - shared);
-}
-
-/**
- * The blk output lists candidate text blocks as rows of (cx, cy, w, h, object, classes).
- * The result is a gate, not a source of geometry, and it also keeps the thin ruby
- * lines apart: a block covers a whole bubble, so a ruby column stays a separate
- * line for readingOrder.separateRuby to place on its host.
- */
-function toBlkBoxes(tensor: ort.Tensor, prepared: Prepared): TextBlock[] {
-    const data = tensor.data as Float32Array;
-    const rows = tensor.dims[1] ?? 0;
-    const columns = tensor.dims[2] ?? 0;
-    const candidates: TextBlock[] = [];
-
-    for (let row = 0; row < rows; row += 1) {
-        const base = row * columns;
-        const cx = data[base];
-        const cy = data[base + 1];
-        const width = data[base + 2];
-        const height = data[base + 3];
-        const objectness = data[base + 4];
-        if (!Number.isFinite(cx + cy + width + height + objectness)) continue;
-
-        let bestClass = 0;
-        for (let index = 5; index < columns; index += 1) bestClass = Math.max(bestClass, data[base + index]);
-        if (objectness * bestClass < BLOCK_SCORE) continue;
-
-        const x = (cx - width / 2 - prepared.padX) / prepared.scale;
-        const y = (cy - height / 2 - prepared.padY) / prepared.scale;
-        const boxWidth = width / prepared.scale;
-        const boxHeight = height / prepared.scale;
-        if (boxWidth < 6 || boxHeight < 6) continue;
-        // The target project drops a very wide block, which is usually a border.
-        if (boxWidth / boxHeight > 1.8) continue;
-        if (boxWidth > prepared.width * 0.35 || boxHeight > prepared.height * 0.45) continue;
-
-        candidates.push({
-            x: Math.max(0, x),
-            y: Math.max(0, y),
-            width: Math.min(boxWidth, prepared.width - Math.max(0, x)),
-            height: Math.min(boxHeight, prepared.height - Math.max(0, y)),
-            score: objectness * bestClass,
-        });
-    }
-
-    candidates.sort((a, b) => b.score - a.score);
-    const kept: TextBlock[] = [];
-    for (const candidate of candidates) {
-        if (kept.every((block) => intersectionOverUnion(candidate, block) < BLOCK_NMS)) kept.push(candidate);
-    }
-    return kept;
-}
 
 function pickSegMask(outputs: Record<string, ort.Tensor>): Float32Array | null {
     const entries = Object.entries(outputs);
@@ -468,6 +392,9 @@ function toSegBoxes(seg: Float32Array, prepared: Prepared): Box[] {
     const gap = Math.max(4, Math.round(size / 200));
     const boxes: Box[] = [];
     for (const cluster of clusters) {
+        // Merging blanks the entries it absorbed; reading one would produce a
+        // box of NaN that every later stage has to carry and filter.
+        if (cluster === null) continue;
         let merged = { ...cluster };
         let changed = true;
         while (changed) {
@@ -640,25 +567,22 @@ function centreInside(box: Box, x: number, y: number): boolean {
     return x >= box.x && x <= box.x + box.width && y >= box.y && y <= box.y + box.height;
 }
 
-/**
- * SEG part centres of one straight line sit on it. A gap on the minor axis is
- * another line. A side blob that is not itself a line stays out.
- */
-function columnGroups(members: number[], parts: SegPart[]): number[][] | null {
-    if (members.length < 2) return null;
-    const centres = members.map((index) => ({ index, x: parts[index].cx, y: parts[index].cy }));
-    const axis = majorAxis(centres);
-    if (axis === null) return null;
-    const acrossX = -Math.sin(axis);
-    const acrossY = Math.cos(axis);
-    const ranked = centres
+type Centre = { index: number; x: number; y: number };
+
+/** Centres more than this far apart, across the strokes, belong to another line. */
+const COLUMN_GAP = 8;
+
+function runsAcross(entries: Centre[], along: number): number[][] {
+    const acrossX = -Math.sin(along);
+    const acrossY = Math.cos(along);
+    const ranked = entries
         .map((entry) => ({ ...entry, across: entry.x * acrossX + entry.y * acrossY }))
         .sort((a, b) => a.across - b.across);
     const runs: number[][] = [];
     let run: number[] = [];
     let previous = Number.NEGATIVE_INFINITY;
     for (const entry of ranked) {
-        if (run.length > 0 && entry.across - previous > 8) {
+        if (run.length > 0 && entry.across - previous > COLUMN_GAP) {
             runs.push(run);
             run = [];
         }
@@ -666,7 +590,17 @@ function columnGroups(members: number[], parts: SegPart[]): number[][] | null {
         previous = entry.across;
     }
     if (run.length > 0) runs.push(run);
+    return runs;
+}
 
+/**
+ * A separated group has to be a line running the other way. Splitting a
+ * vertical column top from bottom produces tall pieces and is rejected.
+ */
+function lineGroups(runs: number[][], parts: SegPart[], along: number): number[][] | null {
+    const acrossX = -Math.sin(along);
+    const acrossY = Math.cos(along);
+    const splitOnX = Math.abs(acrossX) >= Math.abs(acrossY);
     const lines = runs.filter((group) => {
         let minX = Infinity;
         let minY = Infinity;
@@ -679,11 +613,132 @@ function columnGroups(members: number[], parts: SegPart[]): number[][] | null {
             if (part.maxX > maxX) maxX = part.maxX;
             if (part.maxY > maxY) maxY = part.maxY;
         }
-        const long = Math.max(maxX - minX, maxY - minY);
-        const short = Math.max(1, Math.min(maxX - minX, maxY - minY));
-        return long >= 12 && long >= short * 1.8;
+        const width = maxX - minX;
+        const height = maxY - minY;
+        const long = Math.max(width, height);
+        const short = Math.max(1, Math.min(width, height));
+        if (long < 12 || long < short * 1.8) return false;
+        const vertical = height >= width;
+        return splitOnX ? vertical : !vertical;
     });
     return lines.length >= 2 ? lines : null;
+}
+
+/**
+ * SEG part centres of one straight line sit on it. The ink, not the centres,
+ * picks the text direction: two side-by-side centres would otherwise make the
+ * axis the gap between the columns. A side blob that is not itself a line stays out.
+ */
+function columnGroups(members: number[], parts: SegPart[]): number[][] | null {
+    if (members.length < 2) return null;
+    const centres = members.map((index) => ({ index, x: parts[index].cx, y: parts[index].cy }));
+    const ink = members.flatMap((index) => parts[index].points);
+    const axis = majorAxis(ink) ?? majorAxis(centres);
+    if (axis === null) return null;
+    return lineGroups(runsAcross(centres, axis), parts, axis)
+        ?? lineGroups(runsAcross(centres, axis + Math.PI / 2), parts, axis + Math.PI / 2);
+}
+
+/**
+ * Two straight lines can still be one seg component when a faint bridge joins
+ * them. The dense seg map has a valley between the strokes; split there.
+ */
+function boxesFromInkValley(
+    part: SegPart,
+    seg: Float32Array,
+    prepared: Prepared,
+    score: number,
+): Box[] | null {
+    const size = DETECTOR_INPUT_SIZE;
+    const x0 = Math.max(0, Math.floor(part.minX * prepared.scale + prepared.padX));
+    const y0 = Math.max(0, Math.floor(part.minY * prepared.scale + prepared.padY));
+    const x1 = Math.min(size - 1, Math.ceil(part.maxX * prepared.scale + prepared.padX));
+    const y1 = Math.min(size - 1, Math.ceil(part.maxY * prepared.scale + prepared.padY));
+    const points: { x: number; y: number }[] = [];
+    for (let my = y0; my <= y1; my += 1) {
+        const row = my * size;
+        for (let mx = x0; mx <= x1; mx += 1) {
+            if (seg[row + mx] < 0.46) continue;
+            points.push({
+                x: (mx - prepared.padX) / prepared.scale,
+                y: (my - prepared.padY) / prepared.scale,
+            });
+        }
+    }
+    if (points.length < 32) return null;
+    const axis = majorAxis(points);
+    if (axis === null) return null;
+
+    const grouped = (along: number): { x: number; y: number }[][] | null => {
+        const acrossX = -Math.sin(along);
+        const acrossY = Math.cos(along);
+        const splitOnX = Math.abs(acrossX) >= Math.abs(acrossY);
+        let min = Infinity;
+        let max = -Infinity;
+        const projected = points.map((point) => {
+            const across = point.x * acrossX + point.y * acrossY;
+            if (across < min) min = across;
+            if (across > max) max = across;
+            return { point, across };
+        });
+        const span = Math.ceil(max - min);
+        if (span < 4) return null;
+        const hist = new Int32Array(span + 1);
+        for (const entry of projected) {
+            const bin = Math.max(0, Math.min(span, Math.round(entry.across - min)));
+            hist[bin] += 1;
+        }
+        let peak = 0;
+        let total = 0;
+        for (const value of hist) {
+            if (value > peak) peak = value;
+            total += value;
+        }
+        if (peak < 4) return null;
+        const cuts: number[] = [];
+        let seen = 0;
+        let inValley = false;
+        for (let index = 0; index < hist.length; index += 1) {
+            const before = seen;
+            seen += hist[index];
+            const after = total - seen;
+            const valley = before >= total * 0.15 && after >= total * 0.15 && hist[index] <= peak * 0.45;
+            if (valley && !inValley) cuts.push(min + index);
+            inValley = valley;
+        }
+        if (cuts.length === 0) return null;
+        const buckets: { x: number; y: number }[][] = Array.from({ length: cuts.length + 1 }, () => []);
+        for (const entry of projected) {
+            let bucket = 0;
+            while (bucket < cuts.length && entry.across >= cuts[bucket]) bucket += 1;
+            buckets[bucket].push(entry.point);
+        }
+        const lines = buckets.filter((group) => {
+            if (group.length < 16) return false;
+            let minX = Infinity;
+            let minY = Infinity;
+            let maxX = -Infinity;
+            let maxY = -Infinity;
+            for (const point of group) {
+                if (point.x < minX) minX = point.x;
+                if (point.y < minY) minY = point.y;
+                if (point.x > maxX) maxX = point.x;
+                if (point.y > maxY) maxY = point.y;
+            }
+            const width = maxX - minX;
+            const height = maxY - minY;
+            const long = Math.max(width, height);
+            const short = Math.max(1, Math.min(width, height));
+            if (long < 12 || long < short * 1.8) return false;
+            const vertical = height >= width;
+            return splitOnX ? vertical : !vertical;
+        });
+        return lines.length >= 2 ? lines : null;
+    };
+
+    const lines = grouped(axis) ?? grouped(axis + Math.PI / 2);
+    if (!lines) return null;
+    return lines.map((group) => boxAtAngle(group, uprightAngle(majorAxis(group) ?? axis), score, prepared));
 }
 
 /** One column, from the seg parts that sit on that line. */
@@ -981,6 +1036,7 @@ export function extendCutEnds<T extends Box>(
         from: number,
         to: number,
         acrossX: boolean,
+        stopAtValley: boolean,
     ): number => {
         let peak = band(start, from, to, acrossX);
         for (let back = 1; back <= 6; back += 1) {
@@ -993,7 +1049,10 @@ export function extendCutEnds<T extends Box>(
         let empty = 0;
         let cursor = start;
         let last = start;
-        while (empty <= hole) {
+        // The thin side must stop at the next column. Along the line, a glyph
+        // gap is still this column, so det is followed across that gap.
+        const emptyLimit = stopAtValley ? hole : Math.max(hole, Math.round((to - from) * 0.8));
+        while (empty <= emptyLimit) {
             const next = cursor + step;
             if (next < low || next > high) break;
             cursor = next;
@@ -1002,7 +1061,12 @@ export function extendCutEnds<T extends Box>(
             if (score < trough) {
                 trough = score;
                 troughAt = cursor;
-            } else if (trough < peak * 0.45 && score > trough + 0.1 && score > peak * 0.35) {
+            } else if (
+                stopAtValley
+                && trough < peak * 0.45
+                && score > trough + 0.1
+                && score > peak * 0.35
+            ) {
                 // The score fell into the gap and is climbing into the next line.
                 return troughAt;
             }
@@ -1020,25 +1084,26 @@ export function extendCutEnds<T extends Box>(
     let y = box.y;
     let right = box.x + box.width;
     let bottom = box.y + box.height;
-    const growX = () => {
-        const left = walk(x, -1, minX, maxX, y, bottom, true);
-        const far = walk(right, 1, minX, maxX, y, bottom, true);
+    const growX = (stopAtValley: boolean) => {
+        const left = walk(x, -1, minX, maxX, y, bottom, true, stopAtValley);
+        const far = walk(right, 1, minX, maxX, y, bottom, true, stopAtValley);
         if (left < x) x = Math.max(minX, left - 2);
         if (far > right) right = Math.min(maxX, far + 2);
     };
-    const growY = () => {
-        const top = walk(y, -1, minY, maxY, x, right, false);
-        const far = walk(bottom, 1, minY, maxY, x, right, false);
+    const growY = (stopAtValley: boolean) => {
+        const top = walk(y, -1, minY, maxY, x, right, false, stopAtValley);
+        const far = walk(bottom, 1, minY, maxY, x, right, false, stopAtValley);
         if (top < y) y = Math.max(minY, top - 2);
         if (far > bottom) bottom = Math.min(maxY, far + 2);
     };
     // Open the thin side first, so the long side can see the det beside the seed.
+    // Only that thin side treats a valley as the next line.
     if (vertical) {
-        growX();
-        growY();
+        growX(true);
+        growY(false);
     } else {
-        growY();
-        growX();
+        growY(true);
+        growX(false);
     }
     if (x === box.x && y === box.y && right === box.x + box.width && bottom === box.y + box.height) return box;
     return {
@@ -1073,13 +1138,22 @@ function alignDetToSeg(
     for (const index of order) {
         const pieces = splitAtBubbleEdges(boxes[index], regions);
         const along = boxes[index].height >= boxes[index].width;
-        const finish = (box: Box, originX: number, originY: number): Box => {
+        const finish = (box: Box, originX: number, originY: number, holdCross = false): Box => {
             const clipped = stopAtBubbles(box, originX, originY, regions);
+            // A column that was just split off its neighbour must not walk
+            // sideways. The det map still bridges the gap, and that walk
+            // pulls the other line back into this box.
+            const bounds = holdCross
+                ? along
+                    ? { x: clipped.x, y: 0, width: clipped.width, height: prepared.height }
+                    : { x: 0, y: clipped.y, width: prepared.width, height: clipped.height }
+                : undefined;
             return extendCutEnds(
                 clipped,
                 { data: det, scale: prepared.scale, padX: prepared.padX, padY: prepared.padY },
                 prepared,
                 along,
+                bounds,
             );
         };
         for (const seed of pieces) {
@@ -1108,12 +1182,38 @@ function alignDetToSeg(
                 }
                 centreX /= group.length;
                 centreY /= group.length;
-                result.push(finish(boxForColumn(group, seed, parts, prepared), centreX, centreY));
+                result.push(finish(boxForColumn(group, seed, parts, prepared), centreX, centreY, true));
             }
             for (const index of members) {
                 if (!covered.has(index)) chosen[index] = false;
             }
             continue;
+        }
+        if (members.length > 0) {
+            let minX = Infinity;
+            let minY = Infinity;
+            let maxX = -Infinity;
+            let maxY = -Infinity;
+            for (const index of members) {
+                const part = parts[index];
+                if (part.minX < minX) minX = part.minX;
+                if (part.minY < minY) minY = part.minY;
+                if (part.maxX > maxX) maxX = part.maxX;
+                if (part.maxY > maxY) maxY = part.maxY;
+            }
+            const split = boxesFromInkValley(
+                { points: [], minX, minY, maxX, maxY, cx: (minX + maxX) / 2, cy: (minY + maxY) / 2 },
+                seg,
+                prepared,
+                seed.score,
+            );
+            if (split) {
+                for (const index of members) claimed[index] = true;
+                for (const box of split) {
+                    result.push(finish(box, box.x + box.width / 2, box.y + box.height / 2, true));
+                }
+                continue;
+            }
         }
         const cloud = members.flatMap((partIndex) => parts[partIndex].points);
         const core = mainCluster(cloud);
@@ -1360,8 +1460,6 @@ async function runPass(source: PixelSource, regions: PageRect[]): Promise<Pass> 
     const map = pickTextMap(typed);
     if (!map) throw new Error('The detector returned no score map.');
 
-    const blockTensor = pickBlockTensor(typed);
-    const blocks = blockTensor ? toBlkBoxes(blockTensor, prepared) : [];
     const seg = pickSegMask(typed);
     const cores = toDetBoxes(map, prepared);
     const detBoxes = seg ? alignDetToSeg(cores, seg, map, prepared, regions) : cores.map(unclip);
@@ -1372,7 +1470,7 @@ async function runPass(source: PixelSource, regions: PageRect[]): Promise<Pass> 
     const boxes = suppressOverlaps([...detBoxes, ...extra]);
     return {
         boxes,
-        blocks,
+        blocks: [],
         mask: seg ? { data: seg, ...letterbox } : null,
         det: { data: map, ...letterbox },
     };
@@ -1387,6 +1485,229 @@ export function suppressOverlaps<T extends Box>(boxes: T[]): T[] {
         kept.push(box);
     }
     return kept;
+}
+
+const SEG_LINE = 0.46;
+
+function segAt(mask: TextMask, pageX: number, pageY: number): number {
+    const x = Math.round(pageX * mask.scale + mask.padX);
+    const y = Math.round(pageY * mask.scale + mask.padY);
+    if (x < 0 || y < 0 || x >= DETECTOR_INPUT_SIZE || y >= DETECTOR_INPUT_SIZE) return 0;
+    return mask.data[y * DETECTOR_INPUT_SIZE + x];
+}
+
+/** One cut across a box that holds two parallel lines. Null when the ink is a single line. */
+function cutParallel<T extends Box>(box: T, mask: TextMask, det: TextMask | null): [T, T] | null {
+    if (Math.abs(box.angle ?? 0) >= 0.01) return null;
+    const vertical = box.height >= box.width;
+    const span = Math.round(vertical ? box.width : box.height);
+    const alongSpan = Math.round(vertical ? box.height : box.width);
+    if (span < 8 || alongSpan < 12) return null;
+
+    const hist = new Int32Array(span);
+    const across0 = vertical ? box.x : box.y;
+    const along0 = vertical ? box.y : box.x;
+    for (let across = 0; across < span; across += 1) {
+        for (let along = 0; along < alongSpan; along += 1) {
+            const x = vertical ? across0 + across + 0.5 : along0 + along + 0.5;
+            const y = vertical ? along0 + along + 0.5 : across0 + across + 0.5;
+            if (segAt(mask, x, y) >= SEG_LINE) hist[across] += 1;
+        }
+    }
+
+    let peak = 0;
+    let total = 0;
+    for (const value of hist) {
+        if (value > peak) peak = value;
+        total += value;
+    }
+    if (peak < 4 || total < 16) return null;
+
+    let seen = 0;
+    let cut = -1;
+    let depth = Infinity;
+    for (let index = 0; index < hist.length; index += 1) {
+        const before = seen;
+        seen += hist[index];
+        const after = total - seen;
+        if (before < total * 0.2 || after < total * 0.2) continue;
+        if (hist[index] > peak * 0.45) continue;
+        if (hist[index] < depth) {
+            depth = hist[index];
+            cut = index;
+        }
+    }
+    if (cut < 1) return null;
+
+    // det marks whole lines, not strokes. A real gap between two lines is empty
+    // on det as well, while the gap between the radicals of one glyph is not:
+    // the line response keeps covering it. Without this, a column of kanji like
+    // 招待状 is cut into a sliver and its remainder, which reads as two lines.
+    if (det) {
+        let detPeak = 0;
+        let detAtCut = 0;
+        for (let across = 0; across < span; across += 1) {
+            let best = 0;
+            for (let along = 0; along < alongSpan; along += 1) {
+                const x = vertical ? across0 + across + 0.5 : along0 + along + 0.5;
+                const y = vertical ? along0 + along + 0.5 : across0 + across + 0.5;
+                const score = segAt(det, x, y);
+                if (score > best) best = score;
+            }
+            if (best > detPeak) detPeak = best;
+            if (across === cut) detAtCut = best;
+        }
+        if (detPeak > 0.3 && detAtCut > detPeak * 0.5) return null;
+    }
+
+    const piece = (from: number, to: number): T | null => {
+        if (to - from < 4) return null;
+        let ink = false;
+        for (let across = from; across < to && !ink; across += 1) {
+            for (let along = 0; along < alongSpan; along += 1) {
+                const x = vertical ? across0 + across + 0.5 : along0 + along + 0.5;
+                const y = vertical ? along0 + along + 0.5 : across0 + across + 0.5;
+                if (segAt(mask, x, y) < SEG_LINE) continue;
+                ink = true;
+                break;
+            }
+        }
+        if (!ink) return null;
+        // Keep the column's length. Seg at the ends is often fainter than det,
+        // and trimming to the seg core drops the last glyphs.
+        const next: T = vertical
+            ? { ...box, x: across0 + from, width: to - from }
+            : { ...box, y: across0 + from, height: to - from };
+        const long = Math.max(next.width, next.height);
+        const short = Math.max(1, Math.min(next.width, next.height));
+        if (long < short * 1.4) return null;
+        next.angle = 0;
+        next.lineLength = undefined;
+        next.lineThickness = undefined;
+        return next;
+    };
+
+    const left = piece(0, cut);
+    const right = piece(cut, span);
+    if (!left || !right) return null;
+    // A gap between the radicals of one glyph is a valley too, and cutting
+    // there turns a single column into a sliver plus the rest of the column.
+    // Two real lines each carry about a line's thickness, so a cut that leaves
+    // a sliver is not a pair of lines.
+    const floor = Math.max(8, Math.round(span * 0.35));
+    if (cut < floor || span - cut < floor) return null;
+    return [left, right];
+}
+
+/**
+ * det marks a line as a solid band, so two columns that one box swallowed leave
+ * an empty strip between their bands. Cut there. Seg cannot be used for this: it
+ * marks strokes, and strokes from both columns reach into the gap.
+ */
+function cutAtDetGaps<T extends Box>(box: T, det: TextMask, thickness: number): T[] | null {
+    if (Math.abs(box.angle ?? 0) >= 0.01) return null;
+    const vertical = box.height >= box.width;
+    const span = Math.round(vertical ? box.width : box.height);
+    const alongSpan = Math.round(vertical ? box.height : box.width);
+    if (span < 12 || alongSpan < 12) return null;
+    const across0 = vertical ? box.x : box.y;
+    const along0 = vertical ? box.y : box.x;
+
+    const profile = new Float32Array(span);
+    let peak = 0;
+    for (let across = 0; across < span; across += 1) {
+        let best = 0;
+        for (let along = 0; along < alongSpan; along += 1) {
+            const x = vertical ? across0 + across + 0.5 : along0 + along + 0.5;
+            const y = vertical ? along0 + along + 0.5 : across0 + across + 0.5;
+            const score = segAt(det, x, y);
+            if (score > best) best = score;
+        }
+        profile[across] = best;
+        if (best > peak) peak = best;
+    }
+    if (peak < DETECTOR_SCORE_THRESHOLD) return null;
+
+    // A strip this empty is a margin between lines, not a thin stroke.
+    const empty = Math.max(0.05, peak * 0.15);
+    const cuts: number[] = [];
+    let run = -1;
+    for (let across = 0; across <= span; across += 1) {
+        const blank = across < span && profile[across] <= empty;
+        if (blank) {
+            if (run < 0) run = across;
+            continue;
+        }
+        if (run >= 0) {
+            // Only a gap that two strokes share is a cut. A margin at the start
+            // or the end of the box belongs to the line beside it: cutting there
+            // carved the empty paper of a balloon into strips of its own, and
+            // every strip then read the same column again.
+            if (run > 0 && across < span && across - run >= 3) {
+                cuts.push(Math.round((run + across - 1) / 2));
+            }
+            run = -1;
+        }
+    }
+    const inner = cuts.filter((cut) => cut >= 4 && cut <= span - 4);
+    if (inner.length === 0) return null;
+
+    const bounds = [0, ...inner, span];
+    // A piece has to be able to hold a line. The page's own median line
+    // thickness is the honest measure; the box's own size is a fallback.
+    const floor = Math.max(8, Math.round(thickness > 0 ? thickness * 0.55 : span * 0.3));
+    const pieces: T[] = [];
+    let from = 0;
+    for (let index = 1; index < bounds.length; index += 1) {
+        const to = bounds[index];
+        const last = index === bounds.length - 1;
+        // A strip too thin to be a line stays with the piece it touches, so no
+        // part of the box is dropped when a margin sits close to the edge. That
+        // includes the last strip: dropping it would delete a whole column.
+        if (to - from < floor) {
+            if (!last) continue;
+            if (pieces.length === 0) break;
+            const previous = pieces[pieces.length - 1];
+            pieces[pieces.length - 1] = vertical
+                ? { ...previous, width: across0 + to - previous.x }
+                : { ...previous, height: across0 + to - previous.y };
+            break;
+        }
+        pieces.push(vertical
+            ? { ...box, x: across0 + from, width: to - from, angle: 0, lineLength: undefined, lineThickness: undefined }
+            : { ...box, y: across0 + from, height: to - from, angle: 0, lineLength: undefined, lineThickness: undefined });
+        from = to;
+    }
+    return pieces.length >= 2 ? pieces : null;
+}
+
+/**
+ * A detection box sometimes holds two parallel lines. det has an empty strip
+ * between them, and seg has a valley between their strokes; the box is cut
+ * there before OCR sees both columns at once.
+ */
+export function splitParallelLines<T extends Box>(
+    boxes: T[],
+    mask: TextMask | null,
+    det: TextMask | null = null,
+    /** Median line thickness on the page, so a piece is judged against a line. */
+    thickness = 0,
+): T[] {
+    if (!mask && !det) return boxes;
+    const out: T[] = [];
+    const pending = [...boxes];
+    while (pending.length > 0) {
+        const box = pending.pop() as T;
+        const gaps = det ? cutAtDetGaps(box, det, thickness) : null;
+        if (gaps) {
+            pending.push(...gaps);
+            continue;
+        }
+        const pair = mask ? cutParallel(box, mask, det) : null;
+        if (!pair) out.push(box);
+        else pending.push(pair[0], pair[1]);
+    }
+    return out;
 }
 
 function overlapRatio(a: Box, b: Box): number {

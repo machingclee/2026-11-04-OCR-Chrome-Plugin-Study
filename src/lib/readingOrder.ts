@@ -79,7 +79,11 @@ export function mergeAligned(boxes: Box[]): Box[] {
                 const sameColumn = xOverlap >= minWidth * 0.6;
                 const sameRow = yOverlap >= minHeight * 0.6;
                 const bothTall = isTall(a) && isTall(b);
-                const columnLimit = minWidth * (bothTall ? 0.7 : 1.25);
+                // The break inside a split stroke is about a stroke wide, not a
+                // whole box. A kana box above a sound effect can share its x and
+                // sit a box width away; joining that pair makes one box that no
+                // balloon contains, and the kana then falls off the page.
+                const columnLimit = minWidth * (bothTall ? 0.7 : 0.5);
                 const stack = sameColumn && yGap <= columnLimit
                     && (isTall(a) || isTall(b) || yGap < minHeight);
                 const join = sameRow && isWide(a) && isWide(b) && xGap <= minHeight * 0.7;

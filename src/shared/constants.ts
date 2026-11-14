@@ -28,6 +28,8 @@ export const LAST_RESULT_KEY = 'lastDetection';
 export const BATCH_STATE_KEY = 'translationBatch';
 /** One compact detection per selected page, so the debug view can step through them. */
 export const DEBUG_PAGES_KEY = 'debugPages';
+/** Session-only cursor into the debug pages, so the popup reopens on the same page. */
+export const DEBUG_INDEX_KEY = 'debugIndex';
 
 /** Bump only when the stored detection shape changes, not on every build. */
 export const DETECTION_CACHE_VERSION = 'detection-v3';

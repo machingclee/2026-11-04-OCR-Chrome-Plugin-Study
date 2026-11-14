@@ -2,6 +2,10 @@ import type { Box, TextMask } from './types';
 
 const MODEL_SIZE = 1024;
 const GLYPH = 0.25;
+/** seg above this is a stroke, so a paper sample skips it. */
+const GLYPH_PAPER = 0.3;
+/** det above this is paint. Same floor the DET overlay paints from. */
+const DET_PAINT = 0.05;
 
 function segAt(mask: TextMask, pageX: number, pageY: number): number {
     const x = Math.round(pageX * mask.scale + mask.padX);
@@ -165,4 +169,79 @@ export function refineMask(
     }
     // One more pixel on the combined mask, the target project's kernel of 3.
     return dilate(grown, pageWidth, pageHeight, 3);
+}
+
+function median(values: number[]): number {
+    if (values.length === 0) return 255;
+    values.sort((left, right) => left - right);
+    return values[values.length >> 1];
+}
+
+/**
+ * Median colour of the paper inside a page rectangle, leaving out every pixel
+ * the seg plane calls a stroke.
+ *
+ * The old sample was a ring just outside the text. That ring is paper only while
+ * the text keeps its distance from the balloon wall: a group whose columns fill
+ * the balloon has the balloon outline on that ring, the outline is black, and
+ * every label of that balloon got a black background. The paper behind the
+ * glyphs is inside the box, between the strokes, so it is sampled there.
+ */
+export function paperColour(
+    pixels: Uint8ClampedArray,
+    width: number,
+    height: number,
+    rect: { x: number; y: number; width: number; height: number },
+    mask: TextMask | null,
+): [number, number, number] {
+    const x0 = Math.max(0, Math.floor(rect.x));
+    const y0 = Math.max(0, Math.floor(rect.y));
+    const x1 = Math.min(width - 1, Math.ceil(rect.x + rect.width));
+    const y1 = Math.min(height - 1, Math.ceil(rect.y + rect.height));
+    if (x1 < x0 || y1 < y0) return [255, 255, 255];
+
+    const reds: number[] = [];
+    const greens: number[] = [];
+    const blues: number[] = [];
+    for (let y = y0; y <= y1; y += 1) {
+        for (let x = x0; x <= x1; x += 1) {
+            if (mask && segAt(mask, x + 0.5, y + 0.5) >= GLYPH_PAPER) continue;
+            const offset = (y * width + x) * 4;
+            reds.push(pixels[offset]);
+            greens.push(pixels[offset + 1]);
+            blues.push(pixels[offset + 2]);
+        }
+    }
+    if (reds.length === 0) return [255, 255, 255];
+    return [median(reds), median(greens), median(blues)];
+}
+
+/**
+ * True when a page rectangle holds paint from either plane.
+ *
+ * The detector itself applies a mean-score floor, but every pass after it (merge
+ * two boxes, cut a box into strips, fit it to the paint, grow it to the next
+ * stroke) hands a child the parent's score. A box that was moved over empty
+ * paper therefore survives to the overlay, which then annotates a silent stretch
+ * of balloon or a sleeve. A line has to sit on paint to be a line.
+ */
+export function paintSamples(
+    box: { x: number; y: number; width: number; height: number },
+    det: TextMask | null,
+    strokes: TextMask | null,
+): number {
+    if (!det && !strokes) return 0;
+    const columns = 12;
+    const rows = 12;
+    let painted = 0;
+    for (let row = 0; row < rows; row += 1) {
+        const y = box.y + (box.height * (row + 0.5)) / rows;
+        for (let column = 0; column < columns; column += 1) {
+            const x = box.x + (box.width * (column + 0.5)) / columns;
+            const onDet = det ? segAt(det, x, y) >= DET_PAINT : false;
+            const onSeg = strokes ? segAt(strokes, x, y) >= GLYPH_PAPER : false;
+            if (onDet || onSeg) painted += 1;
+        }
+    }
+    return painted;
 }
