@@ -26,6 +26,10 @@ export const OVERLAY_TARGET_ATTRIBUTE = 'data-comic-translator-target';
 
 export const LAST_RESULT_KEY = 'lastDetection';
 export const BATCH_STATE_KEY = 'translationBatch';
+/** One compact detection per selected page, so the debug view can step through them. */
+export const DEBUG_PAGES_KEY = 'debugPages';
+/** Session-only cursor into the debug pages, so the popup reopens on the same page. */
+export const DEBUG_INDEX_KEY = 'debugIndex';
 
 /** Bump only when the stored detection shape changes, not on every build. */
 export const DETECTION_CACHE_VERSION = 'detection-v3';
@@ -49,6 +53,14 @@ export const GEMINI_KEY = 'geminiKey';
 export const TRANSLATOR_KEY = 'translator';
 export const TRANSLATORS = ['gemini', 'deepseek', 'builtin'] as const;
 export type TranslatorChoice = (typeof TRANSLATORS)[number];
+
+/** Whether the translated text is shown over the page. */
+export const SHOW_TRANSLATION_KEY = 'showTranslation';
+
+/** Popup tab for this browser session only (cleared when Chrome exits). */
+export const POPUP_VIEW_KEY = 'popupView';
+export const POPUP_VIEWS = ['production', 'debug'] as const;
+export type PopupView = (typeof POPUP_VIEWS)[number];
 
 /** Id of the temporary declarativeNetRequest rule that sets Referer. */
 export const REFERER_RULE_ID = 1;
@@ -82,6 +94,5 @@ export const BUBBLE_MASK_THRESHOLD = 0.5;
 /** AOT inpainting, 512 square, minus one to one, hole zeroed after the scale. */
 export const INPAINT_MODEL_PATH = 'models/aot_inpaint_512.onnx';
 export const INPAINT_INPUT_SIZE = 512;
-export const INPAINT_MASK_GROW = 2;
 
 

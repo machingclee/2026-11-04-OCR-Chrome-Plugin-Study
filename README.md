@@ -25,8 +25,23 @@ the models, which are not committed.
 1. Open `chrome://extensions`.
 2. Turn on Developer mode.
 3. Choose Load unpacked and select the `dist` directory.
-4. Pick an image on a page, press Detect boxes, then Translate the page.
-   The translation is placed over the image in the tab; Clear overlay removes it.
+4. Press `Opt+T` / `Alt+T` on a page (or press Pick an image in the debug
+   view), then click an image. It gets a check mark, and that check mark
+   translates the page in place. Detect boxes only inspects the detection in
+   the popup. With the picker on, right-click an image and choose **Show/Hide
+   Translation** to compare the result with the original page; the item is
+   greyed out on a page that has no translation yet. The **Translation** switch
+   in the popup does the same thing.
+
+## Shortcuts
+
+| Keys (Mac / Windows) | Action |
+| --- | --- |
+| `Opt+T` / `Alt+T` | Pick comic images on the page; drag to select several |
+
+The keys in `manifest.json` are suggestions. If one clashes with another
+extension, rebind it at `chrome://extensions/shortcuts`; the popup reads the
+bound key and prints it in its hint box.
 
 ## Models
 

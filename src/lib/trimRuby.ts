@@ -94,9 +94,8 @@ export function trimMergedRuby<T extends Box & { direction?: 'vertical' | 'horiz
         const extent = run.end - run.start + 1;
         const length = run.alongEnd - run.alongStart + 1;
         const gap = Math.max(0, Math.max(run.start, host.start) - Math.min(run.end, host.end));
-        return extent <= hostExtent * 0.7
-            && length <= hostLength * 0.6
-            && run.peak <= host.peak * 0.65
+        return extent <= hostExtent / 1.6
+            && length <= hostLength * 1.15
             && gap <= hostExtent * 1.5;
     });
     if (readings.length === 0) return line;

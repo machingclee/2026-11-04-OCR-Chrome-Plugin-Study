@@ -1,0 +1,83 @@
+<!doctype html>
+<!--
+  Manual fixture for the image picker's blob: handling.
+
+  Serve this folder over http rather than opening it as a file, so the content
+  script is allowed to run:
+
+      cd docs/blob-fixture && python3 -m http.server 8765
+      # then visit http://127.0.0.1:8765/
+
+  Three cards, one per source shape the picker has to survive:
+    1. plain <img src="page.png">        -> fetched from the network as before
+    2. <img src="data:...">              -> inline bytes, decodes without a fetch
+    3. <img> whose currentSrc is blob:   -> only the pixel capture can keep it
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Picker fixture: blob images</title>
+<style>
+    body { margin: 0; padding: 24px; background: #f4f1ec; font: 14px/1.5 system-ui, sans-serif; color: #1f2937; }
+    h1 { font-size: 16px; margin: 0 0 4px; }
+    p { margin: 0 0 20px; color: #4b5563; }
+    .row { display: flex; flex-wrap: wrap; gap: 16px; }
+    figure { margin: 0; background: #fff; border: 1px solid #e2d1bd; border-radius: 8px; padding: 10px; }
+    figcaption { margin-top: 8px; font-size: 12px; color: #4a3828; }
+    img { display: block; width: 320px; height: auto; background: #eee; }
+    .bg { width: 320px; height: 213px; background-image: url("page.png"); background-size: cover; border-radius: 4px; }
+</style>
+</head>
+<body>
+<h1>Picker fixture: blob images</h1>
+<p>Pick each image with the extension. All three should translate; none should report “no stable URL”.</p>
+<div class="row">
+    <figure>
+        <img id="plain" src="page.png" alt="plain network image">
+        <figcaption>1. Plain network URL</figcaption>
+    </figure>
+    <figure>
+        <img id="inline" alt="inline data URL image">
+        <figcaption>2. data: URL (fetched, then inlined)</figcaption>
+    </figure>
+    <figure>
+        <img id="blob" alt="blob URL image">
+        <figcaption>3. blob: URL (canvas.toBlob)</figcaption>
+    </figure>
+    <figure>
+        <div class="bg"></div>
+        <figcaption>4. Relative CSS background</figcaption>
+    </figure>
+</div>
+
+<script>
+    const toBlob = (canvas) => new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+
+    // 2. Inline the same pixels, so the picker has bytes but no network URL.
+    (async () => {
+        const response = await fetch('page.png');
+        const blob = await response.blob();
+        const reader = new FileReader();
+        reader.onload = () => { document.getElementById('inline').src = reader.result; };
+        reader.readAsDataURL(blob);
+    })();
+
+    // 3. Route the same pixels through an object URL: the shape that used to be
+    //    rejected, and the one the canvas capture exists for.
+    (async () => {
+        const image = new Image();
+        image.src = 'page.png';
+        await image.decode();
+        const canvas = document.createElement('canvas');
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        canvas.getContext('2d').drawImage(image, 0, 0);
+        const blob = await toBlob(canvas);
+        const target = document.getElementById('blob');
+        target.src = URL.createObjectURL(blob);
+        // Keep currentSrc honest when the page swaps the source later.
+        document.title = `blob ready: ${target.currentSrc.slice(0, 5)}`;
+    })();
+</script>
+</body>
+</html>

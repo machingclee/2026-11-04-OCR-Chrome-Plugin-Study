@@ -4,7 +4,7 @@ export type MessageTarget =
     | typeof SERVICE_WORKER_TARGET
     | typeof OFFSCREEN_TARGET;
 
-export type MessageType = 'detect' | 'translate' | 'translate-batch' | 'batch-progress' | 'cancel-batch' | 'translate-builtin' | 'ping';
+export type MessageType = 'detect' | 'translate' | 'translate-batch' | 'batch-progress' | 'batch-status' | 'cancel-batch' | 'translate-builtin' | 'ping';
 
 export type RubyBox = {
     x: number;
@@ -34,8 +34,20 @@ export type BoxData = {
 export type DetectRequest = {
     target: typeof SERVICE_WORKER_TARGET;
     type: 'detect';
+    /** Fetchable URL, or '' when only captured pixels are available. */
     imageUrl: string;
+    /** Picked pixels, for pages that serve images from a blob: URL. */
+    imageDataUrl?: string;
     tabPageUrl?: string;
+};
+
+/** One text block from the detector blk output, in page pixels. */
+export type BlockData = {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    score: number;
 };
 
 /** One speech balloon, in page pixels. */
@@ -45,6 +57,8 @@ export type BubbleData = {
     width: number;
     height: number;
     outline?: { x: number; y: number }[];
+    /** Median colour of the paper inside the balloon, sampled in the offscreen pass. */
+    paper?: [number, number, number];
 };
 
 /** One reading group: the box that holds it and the text inside, line by line. */
@@ -70,8 +84,6 @@ export type GroupData = {
     vertical?: boolean;
     /** True when the group came from a balloon rather than a block. */
     balloon?: boolean;
-    /** Small JPEG data URL for the optional Gemini region classifier. */
-    visionCrop?: string;
 };
 
 /** One absolutely positioned translation, in the image's own pixels. */
@@ -82,6 +94,8 @@ export type OverlayItem = {
     height: number;
     text: string;
     vertical: boolean;
+    /** Radians. The box is the upright crop; the page rotates it around its centre. */
+    angle?: number;
     /** All spans from one bubble share this id for group fitting. */
     groupId?: number;
     /** Label colour sampled from the paper; defaults to white. */
@@ -130,6 +144,8 @@ export type OffscreenDetectRequest = {
     target: typeof OFFSCREEN_TARGET;
     type: 'detect';
     imageUrl: string;
+    /** Picked pixels, for pages that serve images from a blob: URL. */
+    imageDataUrl?: string;
 };
 
 export type OffscreenBuiltinTranslateRequest = {
@@ -137,6 +153,34 @@ export type OffscreenBuiltinTranslateRequest = {
     type: 'translate-builtin';
     lines: string[];
 };
+
+/**
+ * One page rectangle to erase. A box inside a balloon names the flat paper
+ * behind its glyphs, so that rectangle is filled instead of inpainted; the
+ * balloon outline keeps the fill off the wall.
+ */
+export type InpaintBox = {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    angle?: number;
+    /** Paper colour behind these glyphs; when set, no model runs here. */
+    paper?: [number, number, number];
+    /** Balloon outline in image pixels. */
+    clip?: { x: number; y: number }[];
+};
+
+/** Erase only these page rectangles. Sound effects never appear in the list. */
+export type OffscreenInpaintRequest = {
+    target: typeof OFFSCREEN_TARGET;
+    type: 'inpaint';
+    boxes: InpaintBox[];
+};
+
+export type OffscreenInpaintResponse =
+    | { ok: true; erasedUrl: string | null }
+    | { ok: false; error: string };
 
 export type OffscreenBuiltinTranslateResponse =
     | { ok: true; texts: string[] }
@@ -160,9 +204,11 @@ export type IncomingMessage =
     | DetectRequest
     | TranslateRequest
     | TranslateBatchRequest
+    | BatchStatusRequest
     | CancelBatchRequest
     | OffscreenDetectRequest
     | OffscreenBuiltinTranslateRequest
+    | OffscreenInpaintRequest
     | OffscreenPing;
 
 /** Wall-clock cost of each stage, in milliseconds. */
@@ -188,7 +234,15 @@ export type DetectResponse =
           groups: GroupData[];
           bubbleError: string | null;
           bubbles: BubbleData[];
+          /** Text blocks from the blk head. */
+          blocks: BlockData[];
           erasedUrl: string | null;
+          /** The seg map is still held, so a later pass can erase only the lines we translate. */
+          canInpaint: boolean;
+          /** Det score map painted back onto the page. Null when the plane was empty. */
+          detUrl: string | null;
+          /** Seg score map painted back onto the page. Null when the plane was empty. */
+          segUrl: string | null;
           originalUrl: string | null;
           timings?: DetectTimings;
       }
@@ -217,7 +271,10 @@ export type TranslateSettings = {
 export type TranslateRequest = {
     target: typeof SERVICE_WORKER_TARGET;
     type: 'translate';
+    /** Fetchable URL, or '' when only captured pixels are available. */
     imageUrl: string;
+    /** Captured pixels, when the page gave no URL that can be fetched later. */
+    imageDataUrl?: string;
     tabPageUrl?: string;
     tabId?: number;
     token?: string;
@@ -241,14 +298,41 @@ export type TranslateResponse =
     | { ok: false; error: string };
 
 
+/** A selected page kept for the debug viewer. Crops and mask images are left out. */
+export type DebugPage = {
+    token?: string;
+    imageUrl: string;
+    boxes: BoxData[];
+    bubbles: BubbleData[];
+    /** Blk boxes for this page. Absent on results saved before they were drawn. */
+    blocks?: BlockData[];
+    groups: GroupData[];
+    ms: number;
+    warm?: boolean;
+    timings?: DetectTimings;
+    /** Det score map for this page. Omitted when storage cannot hold the image. */
+    detUrl?: string | null;
+    /** Seg score map for this page. Omitted when storage cannot hold the image. */
+    segUrl?: string | null;
+    /** False until detection for this page has finished. */
+    ready: boolean;
+};
+
 export type BatchItem = {
     imageUrl: string;
     token?: string;
+    /**
+     * Captured pixels for items whose image is a blob: URL. Kept in memory by
+     * the service worker, because batch state is persisted to local storage.
+     */
+    imageDataUrl?: string;
 };
 
 export type BatchItemState = BatchItem & {
     status: 'pending' | 'running' | 'done' | 'error';
     error?: string;
+    /** True when the pixels live only in memory and cannot survive a restart. */
+    captured?: boolean;
 };
 
 export type BatchState = {
@@ -276,6 +360,16 @@ export type CancelBatchRequest = {
     target: typeof SERVICE_WORKER_TARGET;
     type: 'cancel-batch';
     batchId: string;
+};
+
+export type BatchStatusRequest = {
+    target: typeof SERVICE_WORKER_TARGET;
+    type: 'batch-status';
+};
+
+export type BatchStatusResponse = {
+    running: boolean;
+    batchId: string | null;
 };
 
 export type BatchProgressMessage = {

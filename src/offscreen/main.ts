@@ -1,10 +1,11 @@
-import { detectBoxes, isSessionReady } from '../lib/detector';
-import { detectBubbles } from '../lib/bubble';
+import { detectBoxes, extendCutEnds, isSessionReady, splitParallelLines, stopAtBubbles, suppressOverlaps } from '../lib/detector';
+import { renderScoreOverlay } from '../lib/scoreOverlay';
+import { detectBubbles, sampleBubblePaper } from '../lib/bubble';
 import { cropPreviews } from '../lib/regions';
-import { expandToInk } from '../lib/expand';
+import { expandToInk, fitAcross } from '../lib/expand';
 import { trimMergedRuby } from '../lib/trimRuby';
-import { inpaintPage } from '../lib/inpaint';
-import { refineMask } from '../lib/mask';
+import { erasePage } from '../lib/erase';
+import { paintSamples, paperColour } from '../lib/mask';
 import { canTranslate, translateAll } from '../lib/translate';
 import { groupByRegion, splitGroupByColumnGap, toOrderedTextLines } from '../lib/readingOrder';
 import { recognizeLine } from '../lib/ocr/recognize';
@@ -16,12 +17,44 @@ import type {
     GroupData,
     IncomingMessage,
     OffscreenDetectRequest,
+    OffscreenInpaintRequest,
+    OffscreenInpaintResponse,
 } from '../shared/types';
-import type { TextLine, TextMask } from '../lib/types';
+import type { Bubble, TextLine, TextMask } from '../lib/types';
 import serviceWorkerResponseFactory from '../shared/factories/serviceWorkerResponseFactory';
 
 /** Each crop is a data url in storage, so the strip stops at this many. */
 const MAX_PREVIEWS = 30;
+
+/** The page from the last detection, so translation can erase only the lines it keeps. */
+let heldPage: { image: ImageData; textMask: TextMask } | null = null;
+
+/** Decode inline pixels locally: no round trip, and no data: fetch to trust. */
+function decodeImageDataUrl(dataUrl: string): Blob | null {
+    const comma = dataUrl.indexOf(',');
+    if (comma < 0) return null;
+    const header = dataUrl.slice(5, comma);
+    const payload = dataUrl.slice(comma + 1);
+    try {
+        const bytes = header.endsWith(';base64')
+            ? Uint8Array.from(atob(payload), (character) => character.charCodeAt(0))
+            : new TextEncoder().encode(decodeURIComponent(payload));
+        return new Blob([bytes], { type: header.split(';')[0] || 'image/png' });
+    } catch {
+        return null;
+    }
+}
+
+async function fetchImageBlob(url: string): Promise<Blob> {
+    // A data: URL already holds the bytes; decoding it here avoids a fetch.
+    const inline = url.startsWith('data:') ? decodeImageDataUrl(url) : null;
+    if (inline) return inline;
+    if (url.startsWith('data:')) throw new Error('The inline image could not be decoded.');
+
+    const response = await fetch(url, { credentials: 'include' });
+    if (!response.ok) throw new Error(`Image fetch failed with ${response.status}.`);
+    return response.blob();
+}
 
 /** Phone/UI strings that must not be sent to the translator as dialogue. */
 const UI_LINE = /^(?:(?:上午|下午|午前|午後)\s*)?\d{1,2}:\d{2}$|^(?:未接來電|購買次數|搜尋|訊號|電量|Wi-?Fi|LTE|5G|4G)$/i;
@@ -64,10 +97,10 @@ function skipAsNonDialogue(
     const shortSide = Math.min(line.width, line.height);
     const huge = medianThickness > 0 && shortSide > medianThickness * 2.2;
 
-    // A huge kana run is a sound effect, not dialogue. This stays true when the
-    // bubble model mistakes the SFX for a balloon, which is what produced the
-    // large white patch and the translated SFX.
-    if (kanaOnly && normalised.length <= 6 && huge) return true;
+    // A huge repeated kana run is a sound effect, not dialogue. This stays true
+    // when the bubble model mistakes the SFX for a balloon. A name such as
+    // アリスッ is kana too, but it does not repeat, so it stays.
+    if (kanaOnly && normalised.length <= 6 && huge && isSfxLine(text)) return true;
 
     // Large lettering is often OCR'd as unrelated kanji. When the OCR score is
     // low, that reading is unreliable even if the script is not kana.
@@ -140,16 +173,11 @@ function groupFontSize(lines: BoxData[], group: { x: number; y: number; width: n
     return Math.max(6, Math.round(sizes[sizes.length >> 1] * 0.9));
 }
 
-function median(values: number[]): number {
-    if (values.length === 0) return 255;
-    values.sort((left, right) => left - right);
-    return values[values.length >> 1];
-}
-
 /**
- * Give each label the colour of the paper just outside its text. A flat patch
- * of the right tone disappears into a balloon or a screentone much better than
- * a pure white sticker. This is sampling only; it does not change the image.
+ * Give each label the colour of the paper behind its text. A flat patch of the
+ * right tone disappears into a balloon or a screentone much better than a pure
+ * white sticker. The glyph fill stays dark; the overlay draws the white stroke.
+ * This is sampling only; it does not change the image.
  */
 function paintGroupColours(
     bitmap: ImageBitmap,
@@ -169,37 +197,12 @@ function paintGroupColours(
     for (const group of groups) {
         group.rectangle = !textMask;
         const rect = unionOfLines(group, lines);
-        const growX = Math.max(2, Math.round(rect.width * 0.08));
-        const growY = Math.max(2, Math.round(rect.height * 0.08));
-        const x0 = Math.max(0, Math.floor(rect.x - growX));
-        const y0 = Math.max(0, Math.floor(rect.y - growY));
-        const x1 = Math.min(bitmap.width - 1, Math.ceil(rect.x + rect.width + growX));
-        const y1 = Math.min(bitmap.height - 1, Math.ceil(rect.y + rect.height + growY));
-        if (x1 <= x0 || y1 <= y0) continue;
-
-        const reds: number[] = [];
-        const greens: number[] = [];
-        const blues: number[] = [];
-        const take = (x: number, y: number): void => {
-            const offset = (y * bitmap.width + x) * 4;
-            reds.push(pixels[offset]);
-            greens.push(pixels[offset + 1]);
-            blues.push(pixels[offset + 2]);
-        };
-        for (let x = x0; x <= x1; x += 1) {
-            take(x, y0);
-            take(x, y1);
-        }
-        for (let y = y0 + 1; y < y1; y += 1) {
-            take(x0, y);
-            take(x1, y);
-        }
-
-        const red = median(reds);
-        const green = median(greens);
-        const blue = median(blues);
+        // Paper sits between the strokes, inside the text box. A ring just
+        // outside it is the balloon outline for a group that fills its balloon.
+        const [red, green, blue] = paperColour(pixels, bitmap.width, bitmap.height, rect, textMask);
         group.background = `rgb(${red}, ${green}, ${blue})`;
-        group.color = red * 0.299 + green * 0.587 + blue * 0.114 >= 140 ? '#111111' : '#ffffff';
+        // The label always carries a white stroke, so a white fill would disappear into it.
+        group.color = '#111111';
 
         if (!textMask) continue;
         // The seg mask is the source of truth for glyphs, not the line box.
@@ -260,6 +263,55 @@ function paintGroupColours(
     }
 }
 
+/**
+ * Keep one box per piece of paint. A box with no paint is not a line, and two
+ * boxes over the same glyphs are one line seen twice: the second one reads the
+ * same column again, the balloon then holds that line twice, and the translator
+ * answers with two identical columns. The box that samples more paint wins,
+ * because it is the one the glyphs sit in.
+ */
+function distinctLines<T extends { x: number; y: number; width: number; height: number }>(
+    lines: T[],
+    det: TextMask | null,
+    mask: TextMask | null,
+): T[] {
+    const painted = lines.map((line) => paintSamples(line, det, mask));
+    const dropped = new Set<number>();
+    const overlap = (a: T, b: T): number => {
+        const width = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+        const height = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+        if (width <= 0 || height <= 0) return 0;
+        return (width * height) / Math.min(a.width * a.height, b.width * b.height);
+    };
+    for (let index = 0; index < lines.length; index += 1) {
+        if (painted[index] < 4) {
+            dropped.add(index);
+            continue;
+        }
+        for (let other = index + 1; other < lines.length; other += 1) {
+            if (dropped.has(other) || overlap(lines[index], lines[other]) < 0.3) continue;
+            dropped.add(painted[other] > painted[index] ? index : other);
+        }
+    }
+    return lines.filter((_, index) => !dropped.has(index));
+}
+
+/**
+ * Sample the paper inside every balloon, so the erase pass can fill it flat
+ * instead of asking the model to invent a bubble.
+ */
+function paintBubblePaper(bitmap: ImageBitmap, bubbles: Bubble[], textMask: TextMask | null): void {
+    if (bubbles.length === 0) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) return;
+    context.drawImage(bitmap, 0, 0);
+    const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+    sampleBubblePaper(pixels, bitmap.width, bitmap.height, bubbles, textMask);
+}
+
 async function recognizeLines(
     bitmap: ImageBitmap,
     lines: TextLine[],
@@ -276,26 +328,6 @@ async function recognizeLines(
     return collected;
 }
 
-/** Small surrounding crop for the optional Gemini real-text/SFX check. */
-function visionCrop(bitmap: ImageBitmap, group: GroupData): string {
-    const padX = group.width * 0.25;
-    const padY = group.height * 0.25;
-    const x = Math.max(0, group.x - padX);
-    const y = Math.max(0, group.y - padY);
-    const right = Math.min(bitmap.width, group.x + group.width + padX);
-    const bottom = Math.min(bitmap.height, group.y + group.height + padY);
-    const width = Math.max(1, right - x);
-    const height = Math.max(1, bottom - y);
-    const scale = Math.min(1, 384 / Math.max(width, height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(width * scale));
-    canvas.height = Math.max(1, Math.round(height * scale));
-    const context = canvas.getContext('2d');
-    if (!context) return '';
-    context.drawImage(bitmap, x, y, width, height, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL('image/jpeg', 0.65);
-}
-
 async function runDetection(request: OffscreenDetectRequest): Promise<DetectResponse> {
     const started = performance.now();
     const warm = isSessionReady();
@@ -303,23 +335,20 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
 
     try {
         const fetchStarted = performance.now();
-        const response = await fetch(request.imageUrl, { credentials: 'include' });
-        if (!response.ok) {
-            return { ok: false, error: `Image fetch failed with ${response.status}.` };
-        }
+        // A blob: page cannot be fetched from here, so the picker sends pixels.
+        const inline = typeof request.imageDataUrl === 'string' && request.imageDataUrl.length > 0
+            ? request.imageDataUrl
+            : '';
+        const blob = inline
+            ? decodeImageDataUrl(inline)
+            : await fetchImageBlob(request.imageUrl);
+        if (!blob) return { ok: false, error: 'The captured image could not be decoded.' };
 
-        const bitmap = await createImageBitmap(await response.blob());
+        const bitmap = await createImageBitmap(blob);
         timings.fetch = Math.round(performance.now() - fetchStarted);
 
-        // One whole-page pass, as in the target project. Tiling was measured and
-        // removed: it cost one full pass per tile for very little text gain.
-        const detectStarted = performance.now();
-        const detected = await detectBoxes(bitmap);
-        timings.detect = Math.round(performance.now() - detectStarted);
-        const ordered = toOrderedTextLines(detected.detBoxes, [], true);
-
-        // ORT is single-threaded here, so running the balloon session beside the
-        // detector only queues work on the same thread. Measure it instead.
+        // Balloons first, so a column that grows to finish a sentence stops at the
+        // balloon edge instead of running into the balloon below.
         let bubbleError: string | null = null;
         const bubbleStarted = performance.now();
         const bubbles = await detectBubbles(bitmap).catch((cause: unknown) => {
@@ -327,18 +356,110 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             return null;
         });
         timings.bubble = Math.round(performance.now() - bubbleStarted);
+        const balloonList = bubbles ? bubbles.bubbles : [];
+
+        // One whole-page pass, as in the target project. Tiling was measured and
+        // removed: it cost one full pass per tile for very little text gain.
+        const detectStarted = performance.now();
+        const detected = await detectBoxes(bitmap, balloonList.map((bubble) => ({
+            x: bubble.x,
+            y: bubble.y,
+            width: bubble.width,
+            height: bubble.height,
+        })));
+        timings.detect = Math.round(performance.now() - detectStarted);
+        const ordered = toOrderedTextLines(detected.detBoxes, [], true);
 
         const groupStarted = performance.now();
-        const balloonList = bubbles ? bubbles.bubbles : [];
-        const grouped = groupByRegion(ordered, balloonList, detected.blkBoxes, false);
+        const grouped = groupByRegion(ordered, balloonList, [], false);
 
-        const lines = grouped.lines.map((line) =>
-            trimMergedRuby({ ...line, ...expandToInk(line, detected.mask) }, detected.mask),
-        );
+        const balloonRects = balloonList.map((bubble) => ({
+            x: bubble.x,
+            y: bubble.y,
+            width: bubble.width,
+            height: bubble.height,
+        }));
+        const lines = grouped.lines.map((line) => {
+            const grown = {
+                ...line,
+                ...expandToInk(
+                    line,
+                    detected.mask,
+                    balloonRects,
+                    grouped.lines.filter((other) => other !== line),
+                ),
+            };
+            // Ink past a balloon edge belongs to the next line. Keep the part
+            // that started on this side of the edge, then follow det back out
+            // from both ends until the mask runs out.
+            const limited = stopAtBubbles(
+                grown,
+                line.x + line.width / 2,
+                line.y + line.height / 2,
+                balloonRects,
+            );
+            const vertical = grown.height >= grown.width;
+            // A few pixels covers the stroke edge. Walking further crosses the
+            // det bridge into the next column and glues the two lines back together.
+            const slack = 3;
+            const bounds = vertical
+                ? { x: limited.x - slack, y: 0, width: limited.width + slack * 2, height: bitmap.height }
+                : { x: 0, y: limited.y - slack, width: bitmap.width, height: limited.height + slack * 2 };
+            const restored = detected.det
+                ? extendCutEnds(
+                    limited,
+                    detected.det,
+                    { width: bitmap.width, height: bitmap.height },
+                    vertical,
+                    bounds,
+                )
+                : limited;
+            // det runs straight through a balloon wall, so the walk above can put
+            // back what the clip just removed: a sound effect above a balloon
+            // then swallows the balloon's lines and survives suppression.
+            const halted = stopAtBubbles(
+                restored,
+                line.x + line.width / 2,
+                line.y + line.height / 2,
+                balloonRects,
+            );
+            return trimMergedRuby(halted, detected.mask);
+        });
+        // A piece of a split box is only a line if it can hold a line, so the
+        // split compares against the page's own median line thickness.
+        const lineSizes = lines.map((line) => Math.min(line.width, line.height))
+            .filter((size) => size >= 4)
+            .sort((left, right) => left - right);
+        const lineThickness = lineSizes.length > 0 ? lineSizes[lineSizes.length >> 1] : 0;
+        const separated = splitParallelLines(lines, detected.mask, detected.det, lineThickness);
         timings.group = Math.round(performance.now() - groupStarted);
 
         const ocrStarted = performance.now();
-        const collected = await recognizeLines(bitmap, lines);
+        // The box set is settled once overlaps are dropped, so it is safe to
+        // fit. Every line is fitted on both axes: it reaches out to ink the box
+        // missed, trims margin that holds none, and stops at the midpoint of the
+        // gap to the next box, so no two boxes touch. Both planes count as
+        // paint, because det is the shrunken line response and seg is the stroke
+        // it marks; a box cut to det alone sits inside the glyphs. Ruby is a
+        // wall too, or a fitted line would read its own reading as text.
+        const settled = suppressOverlaps(separated);
+        const fitted = fitAcross(
+            settled,
+            { x: 0, y: 0, width: bitmap.width, height: bitmap.height },
+            detected.det,
+            detected.mask,
+            balloonRects,
+            settled.flatMap((line) => line.ruby),
+        );
+        // Every pass above hands a child the parent's score, so a box can end up
+        // over paper that holds no paint at all, or two boxes can end up over the
+        // same glyphs. The first is not a line; the second is one line read
+        // twice, which is how a balloon got the same sentence in two columns.
+        const paintedLines = distinctLines(fitted, detected.det, detected.mask);
+        if (paintedLines.length !== fitted.length) {
+            console.info(`Dropped ${fitted.length - paintedLines.length} line boxes with no paint or no own text.`);
+        }
+        const collected = await recognizeLines(bitmap, paintedLines);
         timings.ocr = Math.round(performance.now() - ocrStarted);
         timings.extras = Math.round(performance.now() - started - timings.fetch - timings.detect - timings.group - timings.ocr);
 
@@ -391,7 +512,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         // paragraph that can only be placed in one of them.
         const splitGroups: GroupData[] = [];
         for (const group of groups) {
-            const clusters = splitGroupByColumnGap(group, usable, detected.blkBoxes);
+            const clusters = splitGroupByColumnGap(group, usable);
             if (clusters.length <= 1) {
                 splitGroups.push(group);
                 continue;
@@ -420,21 +541,8 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             }
         }
 
+        paintBubblePaper(bitmap, balloonList, detected.mask);
         paintGroupColours(bitmap, splitGroups, usable, detected.mask);
-
-        const fontSizes = splitGroups
-            .map((group) => group.fontSize ?? 0)
-            .filter((size) => size > 0)
-            .sort((left, right) => left - right);
-        const medianFont = fontSizes.length > 0 ? fontSizes[fontSizes.length >> 1] : 0;
-        const pageArea = bitmap.width * bitmap.height;
-        for (const group of splitGroups) {
-            const outside = !group.balloon;
-            const huge = (group.fontSize ?? 0) > medianFont * 1.5;
-            const large = group.width * group.height > pageArea * 0.015;
-            if (!outside && !huge && !large) continue;
-            group.visionCrop = visionCrop(bitmap, group);
-        }
 
         const previews = cropPreviews(bitmap, collected.slice(0, MAX_PREVIEWS));
 
@@ -445,54 +553,36 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         originalContext?.drawImage(bitmap, 0, 0);
         const originalUrl = originalContext ? originalCanvas.toDataURL('image/webp', 0.95) : null;
 
-        let erasedUrl: string | null = null;
-        if (detected.mask && usable.length > 0) {
-            const inpaintStarted = performance.now();
+        heldPage = null;
+        if (detected.mask) {
             const canvas = document.createElement('canvas');
             canvas.width = bitmap.width;
             canvas.height = bitmap.height;
             const context = canvas.getContext('2d', { willReadFrequently: true });
             if (context) {
                 context.drawImage(bitmap, 0, 0);
-                const image = context.getImageData(0, 0, canvas.width, canvas.height);
-                let mask = refineMask(detected.detBoxes, detected.mask, canvas.width, canvas.height);
-                let maskPixels = 0;
-                for (const value of mask) if (value === 1) maskPixels += 1;
-                // Use only the refined seg mask. Filling whole detection boxes
-                // here turned long line boxes into broad inpaint bands.
-                const painted = maskPixels > 0
-                    ? await inpaintPage(image, mask).catch(() => null)
-                    : null;
-                if (painted) {
-                    // Keep only the inpainted mask pixels. The rest of the layer
-                    // stays transparent, so the original page remains visible.
-                    const overlay = document.createElement('canvas');
-                    overlay.width = canvas.width;
-                    overlay.height = canvas.height;
-                    const overlayContext = overlay.getContext('2d');
-                    if (overlayContext) {
-                        const cutout = overlayContext.createImageData(canvas.width, canvas.height);
-                        for (let index = 0; index < mask.length; index += 1) {
-                            if (mask[index] !== 1) continue;
-                            const offset = index * 4;
-                            cutout.data[offset] = painted.data[offset];
-                            cutout.data[offset + 1] = painted.data[offset + 1];
-                            cutout.data[offset + 2] = painted.data[offset + 2];
-                            cutout.data[offset + 3] = 255;
-                        }
-                        overlayContext.putImageData(cutout, 0, 0);
-                        erasedUrl = overlay.toDataURL('image/png');
-                    }
-                }
+                heldPage = {
+                    image: context.getImageData(0, 0, canvas.width, canvas.height),
+                    textMask: detected.mask,
+                };
             }
-            timings.extras += Math.round(performance.now() - inpaintStarted);
         }
+
+        const detUrl = detected.det
+            ? renderScoreOverlay(detected.det, bitmap.width, bitmap.height, [255, 120, 20])
+            : null;
+        const segUrl = detected.mask
+            ? renderScoreOverlay(detected.mask, bitmap.width, bitmap.height, [20, 190, 255])
+            : null;
 
         return {
             ok: true,
             boxes: collected,
             previews,
-            erasedUrl,
+            detUrl,
+            segUrl,
+            erasedUrl: null,
+            canInpaint: heldPage !== null,
             originalUrl,
             imageWidth: bitmap.width,
             imageHeight: bitmap.height,
@@ -505,11 +595,40 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
                 width: bubble.width,
                 height: bubble.height,
                 outline: bubble.outline,
+                paper: bubble.paper,
             })),
+            blocks: [],
             ms: Math.round(performance.now() - started),
             warm,
             timings,
         };
+    } catch (cause) {
+        return { ok: false, error: cause instanceof Error ? cause.message : String(cause) };
+    }
+}
+
+/**
+ * Erase the strokes inside the boxes that received a translation. Sound effects
+ * are omitted from that list, so their ink stays on the page. The detector mask
+ * says where the ink is. A box on balloon paper is filled flat; the rest is
+ * inpainted, because only the paint around it can say what belongs there.
+ */
+async function runInpaint(request: OffscreenInpaintRequest): Promise<OffscreenInpaintResponse> {
+    const page = heldPage;
+    if (!page || request.boxes.length === 0) return { ok: true, erasedUrl: null };
+    try {
+        const erased = await erasePage(page.image, page.textMask, request.boxes);
+        if (erased.covered === 0) return { ok: true, erasedUrl: null };
+
+        const overlay = document.createElement('canvas');
+        overlay.width = page.image.width;
+        overlay.height = page.image.height;
+        const overlayContext = overlay.getContext('2d');
+        if (!overlayContext) return { ok: true, erasedUrl: null };
+        const cutout = overlayContext.createImageData(page.image.width, page.image.height);
+        cutout.data.set(erased.data);
+        overlayContext.putImageData(cutout, 0, 0);
+        return { ok: true, erasedUrl: overlay.toDataURL('image/png') };
     } catch (cause) {
         return { ok: false, error: cause instanceof Error ? cause.message : String(cause) };
     }
@@ -538,6 +657,11 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
 
     if (request.type === 'translate-builtin') {
         runBuiltinTranslate(request.lines).then(sendResponse);
+        return true;
+    }
+
+    if (request.type === 'inpaint') {
+        void runInpaint(request).then(sendResponse);
         return true;
     }
 

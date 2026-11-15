@@ -34,7 +34,14 @@ export type TextBlock = { x: number; y: number; width: number; height: number; s
 /** The seg plane with the letterbox numbers needed to reach it. */
 export type TextMask = { data: Float32Array; scale: number; padX: number; padY: number };
 
-export type DetectionResult = { detBoxes: Box[]; blkBoxes: TextBlock[]; mask: TextMask | null };
+export type DetectionResult = {
+    detBoxes: Box[];
+    blkBoxes: TextBlock[];
+    /** Seg plane, used to erase strokes. */
+    mask: TextMask | null;
+    /** Det plane, the text-line score map. Same letterbox as mask. */
+    det: TextMask | null;
+};
 
 /** The letterboxed tensor plus the mapping back to page pixels. */
 export type Prepared = {
@@ -64,6 +71,8 @@ export type Bubble = {
     score: number;
     /** A small polygon that follows the balloon edge, in page pixels. */
     outline: { x: number; y: number }[];
+    /** Median colour of the paper inside the balloon, when it was sampled. */
+    paper?: [number, number, number];
     /** The balloon itself, at prototype resolution. */
     shape: Float32Array;
     shapeSize: number;

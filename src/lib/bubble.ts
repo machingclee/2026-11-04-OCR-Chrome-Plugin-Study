@@ -1,4 +1,5 @@
 import * as ort from 'onnxruntime-web/webgpu';
+import { DETECTOR_INPUT_SIZE } from '../shared/constants';
 import {
     BUBBLE_INPUT_SIZE,
     BUBBLE_MASK_THRESHOLD,
@@ -6,7 +7,8 @@ import {
     BUBBLE_NMS,
     BUBBLE_SCORE_THRESHOLD,
 } from '../shared/constants';
-import type { Bubble, BubbleMask, Box } from './types';
+import { insidePolygon } from './rect';
+import type { Bubble, BubbleMask, Box, TextMask } from './types';
 
 if (ort.env?.wasm) ort.env.wasm.numThreads = 1;
 
@@ -204,4 +206,62 @@ export async function detectBubbles(bitmap: ImageBitmap): Promise<{ mask: Bubble
     }));
 
     return { mask: { data: mask, scale, padX, padY, size }, bubbles };
+}
+
+/** The seg plane the text mask was letterboxed into. */
+const SEG_MODEL_SIZE = DETECTOR_INPUT_SIZE;
+/** seg above this is a stroke, not paper. Same threshold the erase pass uses. */
+const PAPER_INK = 0.3;
+
+/** Read the seg value that belongs to one page pixel. */
+function inkAt(mask: TextMask, pageX: number, pageY: number): number {
+    const x = Math.round(pageX * mask.scale + mask.padX);
+    const y = Math.round(pageY * mask.scale + mask.padY);
+    if (x < 0 || y < 0 || x >= SEG_MODEL_SIZE || y >= SEG_MODEL_SIZE) return 0;
+    return mask.data[y * SEG_MODEL_SIZE + x];
+}
+
+function median(values: number[]): number {
+    if (values.length === 0) return 255;
+    values.sort((left, right) => left - right);
+    return values[values.length >> 1];
+}
+
+/**
+ * Median colour of the paper inside every balloon. The erase pass fills a
+ * balloon with this instead of asking a generative model to invent one: the
+ * inside of a balloon is flat paper, and a fill cannot come back black. Stroke
+ * pixels are left out of the sample, or a balloon full of text reports its own
+ * ink as its paper.
+ */
+export function sampleBubblePaper(
+    pixels: Uint8ClampedArray,
+    width: number,
+    height: number,
+    bubbles: Bubble[],
+    textMask: TextMask | null,
+): void {
+    for (const bubble of bubbles) {
+        const outline = bubble.outline;
+        if (!outline || outline.length < 3) continue;
+        const x0 = Math.max(0, Math.floor(bubble.x));
+        const y0 = Math.max(0, Math.floor(bubble.y));
+        const x1 = Math.min(width, Math.ceil(bubble.x + bubble.width));
+        const y1 = Math.min(height, Math.ceil(bubble.y + bubble.height));
+        const reds: number[] = [];
+        const greens: number[] = [];
+        const blues: number[] = [];
+        for (let y = y0; y < y1; y += 1) {
+            for (let x = x0; x < x1; x += 1) {
+                if (!insidePolygon(outline, x + 0.5, y + 0.5)) continue;
+                if (textMask && inkAt(textMask, x + 0.5, y + 0.5) >= PAPER_INK) continue;
+                const offset = (y * width + x) * 4;
+                reds.push(pixels[offset]);
+                greens.push(pixels[offset + 1]);
+                blues.push(pixels[offset + 2]);
+            }
+        }
+        if (reds.length === 0) continue;
+        bubble.paper = [median(reds), median(greens), median(blues)];
+    }
 }
