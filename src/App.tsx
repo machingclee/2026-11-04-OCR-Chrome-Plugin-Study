@@ -1,13 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     CONTENT_SCRIPT_FILE,
     DEEPSEEK_KEY,
     DETECTION_CACHE_VERSION,
     OCR_MIN_CONFIDENCE,
-    GEMINI_KEY,
-    TRANSLATOR_KEY,
     POPUP_VIEW_KEY,
-    type TranslatorChoice,
     type PopupView,
     LAST_RESULT_KEY,
     DEBUG_PAGES_KEY,
@@ -16,9 +13,16 @@ import {
     PICKED_IMAGE_TARGET_KEY,
     PICKED_IMAGE_URL_KEY,
     SHOW_TRANSLATION_KEY,
+    PICKER_SESSION_ATTRIBUTE,
+    REASONING_EFFORT_KEY,
+    REASONING_EFFORTS,
+    DEFAULT_REASONING_EFFORT,
+    type ReasoningEffort,
 } from './shared/constants';
 import type {
     BatchStatusResponse,
+    BlockData,
+    BlockReadingData,
     BoxData,
     DebugPage,
     DetectResponse,
@@ -27,47 +31,8 @@ import type {
 import serviceWorkerRequestFactory from './shared/factories/serviceWorkerRequestFactory';
 import { setOverlayOpacityInPage } from './shared/overlayVisibility';
 import { cropSize } from './lib/warp';
+import { blockCropDataUrl } from './lib/ocr/blockCrop';
 
-const TRANSLATOR_CHOICES: {
-    value: TranslatorChoice;
-    name: string;
-    description: string;
-    icon: ReactNode;
-}[] = [
-    {
-        value: 'gemini',
-        name: 'Gemini',
-        description: '2.5 Flash, Free-tier',
-        icon: (
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="currentColor">
-                <path d="M12 2.2 13.7 8.6 20.2 10.2 13.7 11.8 12 18.2 10.3 11.8 3.8 10.2 10.3 8.6 12 2.2Z" />
-                <path d="M18.2 14.6 18.9 16.8 21.1 17.5 18.9 18.2 18.2 20.4 17.5 18.2 15.3 17.5 17.5 16.8 18.2 14.6Z" />
-            </svg>
-        ),
-    },
-    {
-        value: 'deepseek',
-        name: 'DeepSeek',
-        description: 'Flash model',
-        icon: (
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="currentColor">
-                <path d="M23.748 4.651c-.254-.124-.364.113-.512.233-.051.04-.094.09-.137.137-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.155-.708-.311-.955-.65-.172-.24-.219-.509-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.094.172.187.129.323-.082.28-.18.553-.266.833-.055.179-.137.218-.328.14a5.5 5.5 0 0 1-1.737-1.179c-.857-.828-1.631-1.743-2.597-2.46a12 12 0 0 0-.689-.47c-.985-.957.13-1.743.387-1.836.27-.098.094-.433-.778-.428-.872.003-1.67.295-2.687.685a3 3 0 0 1-.465.136 9.6 9.6 0 0 0-2.883-.101c-1.885.21-3.39 1.1-4.497 2.622C.082 8.776-.231 10.854.152 13.02c.403 2.284 1.568 4.175 3.36 5.653 1.857 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.132-.284 4.994-1.86.47.234.962.328 1.78.398.629.058 1.235-.031 1.705-.129.735-.155.684-.836.418-.961-2.155-1.004-1.682-.595-2.112-.926 1.095-1.295 2.768-3.598 3.284-6.733.05-.346.115-.834.108-1.114-.004-.171.035-.238.23-.257a4.2 4.2 0 0 0 1.545-.475c1.397-.763 1.96-2.016 2.093-3.517.02-.23-.004-.467-.247-.588M11.58 18.168c-2.088-1.642-3.101-2.183-3.52-2.16-.39.024-.32.472-.234.763.09.288.207.487.371.74.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.168-1.361-.801-2.5-1.86-3.301-3.306-.775-1.393-1.225-2.888-1.299-4.482-.02-.385.094-.522.477-.592a4.7 4.7 0 0 1 1.53-.038c2.131.311 3.946 1.264 5.467 2.774.868.86 1.525 1.887 2.202 2.89.72 1.066 1.494 2.082 2.48 2.915.348.291.626.513.892.677-.802.09-2.14.109-3.055-.615zm1.001-6.44a.306.306 0 0 1 .415-.287.3.3 0 0 1 .113.074.3.3 0 0 1 .086.214c0 .17-.136.307-.308.307a.303.303 0 0 1-.306-.307m3.11 1.596c-.2.081-.4.151-.591.16a1.25 1.25 0 0 1-.798-.254c-.274-.23-.47-.358-.551-.758a1.7 1.7 0 0 1 .015-.588c.07-.327-.007-.537-.238-.727-.188-.156-.426-.199-.689-.199a.6.6 0 0 1-.254-.078.253.253 0 0 1-.114-.358 1 1 0 0 1 .192-.21c.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.392.451.462.576.685.915.176.264.336.536.446.848.066.194-.02.353-.25.45" />
-            </svg>
-        ),
-    },
-    {
-        value: 'builtin',
-        name: 'Browser',
-        description: 'Device default',
-        icon: (
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
-                <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
-                <path d="M3.5 8.5h17" />
-                <path d="M7 6.5h.01M10 6.5h.01" strokeLinecap="round" />
-            </svg>
-        ),
-    },
-];
 
 type BubbleStroke = {
     x: number;
@@ -110,8 +75,17 @@ function formatShortcut(value: string, platform: 'mac' | 'windows'): string {
 }
 
 function ocrScore(value: number | undefined): string {
-    if (typeof value !== 'number' || !Number.isFinite(value)) return 'OCR n/a';
-    return `OCR ${(value * 100).toFixed(1)}%`;
+    if (typeof value !== 'number' || !Number.isFinite(value)) return 'score n/a';
+    return `score ${(value * 100).toFixed(0)}%`;
+}
+
+function prettyJson(raw: string): string {
+    if (!raw) return 'no answer';
+    try {
+        return JSON.stringify(JSON.parse(raw), null, 2);
+    } catch {
+        return raw;
+    }
 }
 
 function stageBreakdown(timings?: DetectTimings): string {
@@ -130,6 +104,9 @@ type LastResult = {
     boxes: BoxData[];
     previews?: string[];
     bubbles?: BubbleStroke[];
+    /** The blk boxes, which are the crops the reader was given. */
+    blocks?: BlockData[];
+    blockReadings?: BlockReadingData[];
     groups?: GroupStroke[];
     detUrl?: string | null;
     segUrl?: string | null;
@@ -138,19 +115,42 @@ type LastResult = {
     timings?: DetectTimings;
 };
 
+
+/**
+ * Whether the document that was picked from still exists. The picker marks the
+ * document element, and a reload replaces the DOM, so a missing mark means every
+ * stored box belongs to a page that is gone.
+ */
+async function pickedDocumentAlive(): Promise<boolean | null> {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => []);
+    if (!tab?.id) return null;
+    try {
+        const frames = await chrome.scripting.executeScript({
+            target: { tabId: tab.id, allFrames: true },
+            args: [PICKER_SESSION_ATTRIBUTE],
+            func: (attribute: string) => document.documentElement.hasAttribute(attribute),
+        });
+        return frames.some((frame) => frame.result === true);
+    } catch {
+        // A restricted page cannot answer, which is not the same as a reload.
+        return null;
+    }
+}
+
 export default function App() {
     const [imageUrl, setImageUrl] = useState<string | null>(null);
     const [boxes, setBoxes] = useState<BoxData[]>([]);
-    const [previews, setPreviews] = useState<string[]>([]);
     const [size, setSize] = useState({ width: 0, height: 0 });
     const [status, setStatus] = useState('No image picked yet.');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [bubbles, setBubbles] = useState<BubbleStroke[]>([]);
+    const [blocks, setBlocks] = useState<BlockData[]>([]);
+    const [blockReadings, setBlockReadings] = useState<BlockReadingData[]>([]);
+    const [blockThumbs, setBlockThumbs] = useState<Record<number, string>>({});
     const [groups, setGroups] = useState<GroupStroke[]>([]);
     const [deepSeekKey, setDeepSeekKey] = useState('');
-    const [geminiKey, setGeminiKey] = useState('');
-    const [translator, setTranslator] = useState<TranslatorChoice>('gemini');
+    const [effort, setEffort] = useState<ReasoningEffort>(DEFAULT_REASONING_EFFORT);
     const [dirty, setDirty] = useState(false);
     const [view, setView] = useState<PopupView>('production');
     const [translationVisible, setTranslationVisible] = useState(true);
@@ -237,8 +237,9 @@ export default function App() {
         const loadable = page.imageUrl.startsWith('http') || page.imageUrl.startsWith('data:');
         setImageUrl(loadable ? page.imageUrl : null);
         setBoxes(page.boxes);
-        setPreviews([]);
         setBubbles(page.bubbles ?? []);
+        setBlocks(page.blocks ?? []);
+        setBlockReadings([]);
         setGroups(page.groups ?? []);
         setDetUrl(page.detUrl ?? null);
         setSegUrl(page.segUrl ?? null);
@@ -256,35 +257,20 @@ export default function App() {
                 PICKED_IMAGE_URL_KEY,
                 PICKED_IMAGE_TARGET_KEY,
                 DEEPSEEK_KEY,
-                GEMINI_KEY,
-                TRANSLATOR_KEY,
-                LAST_RESULT_KEY,
+                REASONING_EFFORT_KEY,
+                                        LAST_RESULT_KEY,
                 DEBUG_PAGES_KEY,
                 SHOW_TRANSLATION_KEY,
             ]),
             chrome.storage.session.get([POPUP_VIEW_KEY, DEBUG_INDEX_KEY]),
         ])
-            .then(([local, session]) => {
+            .then(async ([local, session]) => {
                 const pickedImageUrl = local[PICKED_IMAGE_URL_KEY];
                 const storedDeepSeek = local[DEEPSEEK_KEY];
                 if (typeof storedDeepSeek === 'string') setDeepSeekKey(storedDeepSeek);
-                const storedGemini = local[GEMINI_KEY];
-                if (typeof storedGemini === 'string') setGeminiKey(storedGemini);
-                // Remember the translator. If there is no saved choice yet, prefer
-                // DeepSeek when its key exists; otherwise Gemini.
-                const storedChoice = local[TRANSLATOR_KEY];
-                let choice: TranslatorChoice;
-                if (storedChoice === 'gemini' || storedChoice === 'deepseek' || storedChoice === 'builtin') {
-                    choice = storedChoice;
-                } else if (typeof storedDeepSeek === 'string' && storedDeepSeek.trim().length > 0) {
-                    choice = 'deepseek';
-                } else {
-                    choice = 'gemini';
-                }
-                setTranslator(choice);
-                if (storedChoice !== choice) {
-                    void chrome.storage.local.set({ [TRANSLATOR_KEY]: choice });
-                }
+                const storedEffort = local[REASONING_EFFORT_KEY];
+                const level = REASONING_EFFORTS.find((value) => value === storedEffort);
+                if (level) setEffort(level);
                 const storedView = session[POPUP_VIEW_KEY];
                 if (storedView === 'production' || storedView === 'debug') {
                     setView(storedView);
@@ -294,9 +280,39 @@ export default function App() {
                 setTranslationVisible(visible);
                 if (!visible) void applyOverlayOpacity(false);
                 settingsLoaded.current = true;
+                const hasStored = (typeof pickedImageUrl === 'string' && pickedImageUrl.length > 0)
+                    || (Array.isArray(local[DEBUG_PAGES_KEY]) && (local[DEBUG_PAGES_KEY] as unknown[]).length > 0)
+                    || Boolean(local[LAST_RESULT_KEY]);
+                if (hasStored && (await pickedDocumentAlive()) === false) {
+                    // The page reloaded or navigated away. Drop the pick and every
+                    // box that described the old document, so the popup starts
+                    // empty instead of showing a result nothing on screen matches.
+                    await chrome.storage.local.remove([
+                        PICKED_IMAGE_URL_KEY,
+                        PICKED_IMAGE_TARGET_KEY,
+                        LAST_RESULT_KEY,
+                        DEBUG_PAGES_KEY,
+                    ]).catch(() => undefined);
+                    await chrome.storage.session.remove(DEBUG_INDEX_KEY).catch(() => undefined);
+                    setImageUrl(null);
+                    setBoxes([]);
+                    setBubbles([]);
+                    setBlocks([]);
+                    setBlockReadings([]);
+                    setGroups([]);
+                    setDebugPages([]);
+                    setDetUrl(null);
+                    setSegUrl(null);
+                    setStatus('No image picked yet.');
+                    return;
+                }
                 const storedPages = local[DEBUG_PAGES_KEY];
-                if (Array.isArray(storedPages) && storedPages.length > 1) {
-                    const pages = storedPages as DebugPage[];
+                const pages = Array.isArray(storedPages) ? storedPages as DebugPage[] : [];
+                const picked = typeof pickedImageUrl === 'string' ? pickedImageUrl : '';
+                // A stored batch belongs to the pick that started it. Showing it
+                // for a newer pick prints another page's text over this image.
+                const fromThisPick = picked.length === 0 || pages.some((page) => page.imageUrl === picked);
+                if (pages.length > 1 && fromThisPick) {
                     setDebugPages(pages);
                     // Reopen on the page that was being inspected, but a fresh
                     // batch can be shorter than the one that saved the index.
@@ -306,6 +322,10 @@ export default function App() {
                         : 0;
                     showDebugPage(pages, index);
                     return;
+                }
+                if (pages.length > 0 && !fromThisPick) {
+                    setDebugPages([]);
+                    void chrome.storage.local.remove(DEBUG_PAGES_KEY).catch(() => undefined);
                 }
                 const lastResult = local[LAST_RESULT_KEY] as LastResult | undefined;
 
@@ -319,8 +339,11 @@ export default function App() {
                 const fresh = lastResult?.version === DETECTION_CACHE_VERSION;
                 if (fresh && lastResult.imageUrl === pickedImageUrl && Array.isArray(lastResult.boxes)) {
                     setBoxes(lastResult.boxes);
-                    setPreviews(Array.isArray(lastResult.previews) ? lastResult.previews : []);
                     setBubbles(Array.isArray(lastResult.bubbles) ? lastResult.bubbles : []);
+                    // The blk boxes are the detection, so a restored page draws
+                    // them and shows the block cards that go with them.
+                    setBlocks(Array.isArray(lastResult.blocks) ? lastResult.blocks : []);
+                    setBlockReadings(Array.isArray(lastResult.blockReadings) ? lastResult.blockReadings : []);
                     setGroups(Array.isArray(lastResult.groups) ? lastResult.groups : []);
                     setDetUrl(lastResult.detUrl ?? null);
                     setSegUrl(lastResult.segUrl ?? null);
@@ -405,7 +428,6 @@ export default function App() {
         setBusy(true);
         setError(null);
         setBoxes([]);
-        setPreviews([]);
         setDetUrl(null);
         setSegUrl(null);
         setStatus('Asking the background worker.');
@@ -418,7 +440,12 @@ export default function App() {
             if (!response.ok) throw new Error(response.error);
 
             setBoxes(response.boxes);
-            setPreviews(response.previews);
+            setBlocks(response.blocks ?? []);
+            setBlockReadings(response.blockReadings ?? []);
+            // The debug client falls back to a stored batch on reopen, and that
+            // batch is about a different image now.
+            setDebugPages([]);
+            void chrome.storage.local.remove(DEBUG_PAGES_KEY).catch(() => undefined);
             setBubbles(response.bubbles ?? []);
             setGroups(response.groups ?? []);
             setDetUrl(response.detUrl);
@@ -429,8 +456,12 @@ export default function App() {
             const lowConfidence = response.boxes.filter((box) =>
                 box.text.length > 0 && box.confidence < OCR_MIN_CONFIDENCE,
             ).length;
+            const cloudLines = response.ocrCloudLines ?? 0;
+            const reader = cloudLines > 0
+                ? `, read by ${response.ocrProvider} (${cloudLines} regions)`
+                : '';
             setStatus(
-                `${response.boxes.length} lines (${vertical} vertical, ${ruby} ruby), ${read} read (${lowConfidence} below OCR floor), ${response.bubbles?.length ?? 0} balloons, ${response.groupedLines} grouped, image ${response.imageWidth}x${response.imageHeight}, ${seconds(response.ms)} (${response.warm ? 'reused session' : 'cold session'}${stageSummary(response.timings)}).`,
+                `${response.boxes.length} lines (${vertical} vertical, ${ruby} ruby), ${read} read (${lowConfidence} below OCR floor${reader}), ${response.bubbles?.length ?? 0} balloons, ${response.groupedLines} grouped, image ${response.imageWidth}x${response.imageHeight}, ${seconds(response.ms)} (${response.warm ? 'reused session' : 'cold session'}${stageSummary(response.timings)}).`,
             );
             return response;
         } catch (cause) {
@@ -452,7 +483,8 @@ export default function App() {
                 return
             }
 
-            // handled in src/background/index.ts
+            // handled in src/background/index.ts, which resolves the reader from
+            // the saved translator, so every detect path reads the same way.
             const request = serviceWorkerRequestFactory.ofDetection(targetImageUrl, tabPageUrl);
             const response = (await chrome.runtime.sendMessage(request)) as DetectResponse | undefined;
             return response;
@@ -486,8 +518,9 @@ export default function App() {
             debugIndexRef.current = 0;
             setImageUrl(null);
             setBoxes([]);
-            setPreviews([]);
-            setBubbles([]);
+                setBubbles([]);
+            setBlocks([]);
+            setBlockReadings([]);
             setGroups([]);
             setDetUrl(null);
             setSegUrl(null);
@@ -505,12 +538,26 @@ export default function App() {
         }).catch(() => undefined);
     }, []);
 
+    // The effort is saved the moment it changes, unlike the key, which is only
+    // written when the user says so. A level that had to be saved by hand is a
+    // level the next popup forgets.
+    const handleEffortChange = useCallback(async (level: ReasoningEffort) => {
+        setEffort(level);
+        try {
+            await chrome.storage.local.set({ [REASONING_EFFORT_KEY]: level });
+            setStatus(`Thinking effort set to ${level === 'off' ? 'off' : level}.`);
+        } catch (cause) {
+            setError(`Could not save the thinking effort: ${cause instanceof Error ? cause.message : String(cause)}`);
+        }
+    }, []);
+
     const handleSaveSettings = useCallback(async () => {
         try {
             await chrome.storage.local.set({
-                [GEMINI_KEY]: geminiKey.trim(),
+
                 [DEEPSEEK_KEY]: deepSeekKey.trim(),
-                [TRANSLATOR_KEY]: translator,
+                [REASONING_EFFORT_KEY]: effort,
+
             });
             setDirty(false);
             setStatus('Settings saved.');
@@ -518,7 +565,7 @@ export default function App() {
             setError(`Could not save settings: ${cause instanceof Error ? cause.message : String(cause)}`);
             setDirty(true);
         }
-    }, [deepSeekKey, geminiKey, translator]);
+    }, [deepSeekKey, effort]);
 
     const handleDownloadImage = useCallback(() => {
         if (!imageUrl) return;
@@ -537,6 +584,44 @@ export default function App() {
             }
         });
     }, [imageUrl]);
+
+    // The blocks are the detection now, so the debug view shows the crops the
+    // reader was given: the BLK box with its margin, upscaled, grid drawn. The
+    // stored answer does not carry those images, so the popup cuts the same
+    // crop here, with the same code the offscreen pass uses.
+    useEffect(() => {
+        setBlockThumbs({});
+        if (!imageUrl || blocks.length === 0) return;
+        let cancelled = false;
+        void (async () => {
+            const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+                const element = new Image();
+                element.crossOrigin = 'anonymous';
+                element.onload = () => resolve(element);
+                element.onerror = () => reject(new Error('The page image did not load.'));
+                element.src = imageUrl;
+            }).catch(() => null);
+            if (!image || cancelled) return;
+            const thumbs: Record<number, string> = {};
+            blocks.forEach((block, index) => {
+                try {
+                    thumbs[index] = blockCropDataUrl(
+                        image,
+                        image.naturalWidth,
+                        image.naturalHeight,
+                        block,
+                        blockReadings[index]?.boxes ?? [],
+                    ).dataUrl;
+                } catch {
+                    // A refused canvas leaves the card without a crop.
+                }
+            });
+            if (!cancelled) setBlockThumbs(thumbs);
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [blocks, blockReadings, imageUrl]);
 
     const handleDownloadCombined = useCallback(async () => {
         if (!imageUrl) return;
@@ -566,6 +651,30 @@ export default function App() {
             context.lineWidth = scale;
             for (const bubble of bubbles) {
                 context.strokeRect(bubble.x, bubble.y, bubble.width, bubble.height);
+            }
+            context.restore();
+
+            // Blocks from the blk head, in yellow: the region-level boxes the
+            // model proposes before any line is recognised.
+            if (blocks.length > 0) {
+                context.save();
+                context.strokeStyle = '#e6b800';
+                context.lineWidth = scale * 2;
+                for (const block of blocks) {
+                    context.strokeRect(block.x, block.y, block.width, block.height);
+                }
+                context.restore();
+            }
+
+            // The detector's line boxes, in the same blue the reader's crop
+            // carries them, so the picture matches what was sent.
+            context.save();
+            context.strokeStyle = '#1d4ed8';
+            context.lineWidth = scale;
+            for (const reading of blockReadings) {
+                for (const box of reading.boxes ?? []) {
+                    context.strokeRect(box.x, box.y, box.width, box.height);
+                }
             }
             context.restore();
 
@@ -609,11 +718,11 @@ export default function App() {
                 });
             });
             window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
-            setStatus(`Saved the page with det, seg and ${boxes.length} boxes drawn on it as ${name}.`);
+            setStatus(`Saved the page with det, seg, ${blocks.length} blocks and ${boxes.length} boxes drawn on it as ${name}.`);
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));
         }
-    }, [bubbles, boxes, detUrl, imageUrl, segUrl, size.height, size.width]);
+    }, [blocks, blockReadings, bubbles, boxes, detUrl, imageUrl, segUrl, size.height, size.width]);
 
     const onMac = /Mac|iPhone|iPad/i.test(navigator.userAgent);
     const macShortcut = onMac ? formatShortcut(activeShortcut, 'mac') : 'Opt+T';
@@ -703,70 +812,44 @@ export default function App() {
                         )}
                     </div>
 
-                    <div className="mt-2">
-                        <p className="text-xs font-medium text-slate-600">Translator</p>
-                        <div className="mt-2 ml-2 border-l-2 border-[#e9e0d3] pl-3">
-                            <div className="flex flex-col gap-2" role="radiogroup" aria-label="Translator">
-                                {TRANSLATOR_CHOICES.map((choice) => {
-                                    const selected = translator === choice.value;
-                                    return (
-                                        <label
-                                            key={choice.value}
-                                            className={`flex cursor-pointer items-center gap-2 rounded border px-2.5 py-1.5 transition focus-within:ring-2 focus-within:ring-[#eadfd2] ${selected ? 'border-[#b3815c] bg-[#f3eee8] text-[#5f4a38]' : 'border-[#ded2c4] bg-white text-slate-700 hover:bg-[#fbf8f4]'}`}
-                                        >
-                                            <input
-                                                type="radio"
-                                                name="translator"
-                                                value={choice.value}
-                                                checked={selected}
-                                                onChange={() => {
-                                                    setTranslator(choice.value);
-                                                    setDirty(true);
-                                                }}
-                                                className="accent-[#b3815c]"
-                                            />
-                                            <span className={`shrink-0 ${selected ? 'text-[#b3815c]' : 'text-[#8a6a4f]'}`}>{choice.icon}</span>
-                                            <span className="shrink-0 text-xs font-semibold">{choice.name}</span>
-                                            <span className={`truncate text-[11px] font-medium ${selected ? 'text-[#7a5c43]' : 'text-slate-500'}`}>{choice.description}</span>
-                                        </label>
-                                    );
-                                })}
-                            </div>
-                        </div>
-
-                        {/* The API key field sits at the same level as the
-                            "Translator" label, outside the option indent. */}
-                        {translator !== 'builtin' ? (
-                            <div className="mt-3 flex flex-col gap-2">
-                                <label className={`flex flex-col gap-1 text-xs font-medium text-slate-600 ${translator === 'gemini' ? '' : 'hidden'}`}>
-                                    Gemini API key
-                                    <input
-                                        type="password"
-                                        value={geminiKey}
-                                        placeholder="AIza..."
-                                        onChange={(event) => {
-                                            setGeminiKey(event.target.value);
-                                            setDirty(true);
-                                        }}
-                                        className="rounded border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#b08a68] focus:ring-2 focus:ring-[#eadfd2]"
-                                    />
-                                </label>
-
-                                <label className={`flex flex-col gap-1 text-xs font-medium text-slate-600 ${translator === 'deepseek' ? '' : 'hidden'}`}>
-                                    DeepSeek API key
-                                    <input
-                                        type="password"
-                                        value={deepSeekKey}
-                                        placeholder="sk-..."
-                                        onChange={(event) => {
-                                            setDeepSeekKey(event.target.value);
-                                            setDirty(true);
-                                        }}
-                                        className="rounded border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#b08a68] focus:ring-2 focus:ring-[#eadfd2]"
-                                    />
-                                </label>
-                            </div>
-                        ) : null}
+                    <div className="mt-2 flex flex-col gap-2">
+                        <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                            DeepSeek API key
+                            <input
+                                type="password"
+                                value={deepSeekKey}
+                                placeholder="sk-..."
+                                onChange={(event) => {
+                                    setDeepSeekKey(event.target.value);
+                                    setDirty(true);
+                                }}
+                                className="rounded border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#b08a68] focus:ring-2 focus:ring-[#eadfd2]"
+                            />
+                        </label>
+                        <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                            Translation effort
+                            <select
+                                value={effort}
+                                onChange={(event) => {
+                                    const level = REASONING_EFFORTS.find((value) => value === event.target.value);
+                                    if (level) void handleEffortChange(level);
+                                }}
+                                className="rounded border border-slate-300 bg-white px-2 py-2 text-sm text-slate-900 outline-none transition focus:border-[#b08a68] focus:ring-2 focus:ring-[#eadfd2]"
+                            >
+                                <option value="off">Off, answer immediately</option>
+                                <option value="low">Low</option>
+                                <option value="high">High (default)</option>
+                                <option value="max">Max</option>
+                            </select>
+                        </label>
+                        <p className="text-[11px] font-medium text-[#8a6a4f]">
+                            Reading a block never thinks: it transcribes the text and places it. This level is the
+                            translation that follows, one request per block, with the rest of the page as context.
+                            High is the default; max buys the hardest look at a block at the cost of waiting.
+                        </p>
+                        <p className="text-[11px] font-medium text-[#8a6a4f]">
+                            DeepSeek reads each block and writes its translation. Without a key no translation runs.
+                        </p>
                     </div>
                 </section>
                 ) : null}
@@ -848,7 +931,11 @@ export default function App() {
                                     {segUrl ? <span className="map-key seg"><i />SEG</span> : null}
                                 </span>
                             ) : null}
-                            <span className="whitespace-nowrap text-xs text-slate-500">{boxes.length} boxes</span>
+                            {blocks.length > 0 ? <span className="map-key blk"><i />BLK</span> : null}
+                            {blockReadings.some((reading) => (reading.boxes ?? []).length > 0)
+                                ? <span className="map-key line"><i />TEXT</span>
+                                : null}
+                            <span className="whitespace-nowrap text-xs text-slate-500">{boxes.length} boxes{blocks.length > 0 ? `, ${blocks.length} blocks` : ''}</span>
                             <button
                                 type="button"
                                 onClick={handleDownloadImage}
@@ -860,7 +947,7 @@ export default function App() {
                                 type="button"
                                 onClick={() => void handleDownloadCombined()}
                                 disabled={!imageUrl || (boxes.length === 0 && !detUrl && !segUrl)}
-                                title="Download this page with the det map, the seg map and every box drawn on it (JPEG)."
+                                title="Download this page with the det map, the seg map, the blk blocks and every box drawn on it (JPEG)."
                                 className="whitespace-nowrap rounded border border-[#ded2c4] bg-white px-2 py-1 text-xs font-medium text-[#6d523b] transition hover:bg-[#f3eee8] disabled:cursor-not-allowed disabled:opacity-40"
                             >
                                 Download combined
@@ -880,6 +967,36 @@ export default function App() {
                         />
                         {detUrl ? <img src={detUrl} alt="" className="map map-det" /> : null}
                         {segUrl ? <img src={segUrl} alt="" className="map map-seg" /> : null}
+                        {blocks.map((block, index) => (
+                            <span
+                                key={`block-${index}-${block.x}-${block.y}`}
+                                className="block"
+                                title={`BLK ${(block.score ?? 0).toFixed(2)}`}
+                                style={{
+                                    left: `${(block.x / size.width) * 100}%`,
+                                    top: `${(block.y / size.height) * 100}%`,
+                                    width: `${(block.width / size.width) * 100}%`,
+                                    height: `${(block.height / size.height) * 100}%`,
+                                }}
+                            />
+                        ))}
+                        {size.width > 0
+                            ? blockReadings.flatMap((reading, readingIndex) => (
+                                (reading.boxes ?? []).map((box, boxIndex) => (
+                                    <span
+                                        key={`det-${readingIndex}-${boxIndex}-${box.x}-${box.y}`}
+                                        className="det-box"
+                                        title="Line box drawn on the reader's crop"
+                                        style={{
+                                            left: `${(box.x / size.width) * 100}%`,
+                                            top: `${(box.y / size.height) * 100}%`,
+                                            width: `${(box.width / size.width) * 100}%`,
+                                            height: `${(box.height / size.height) * 100}%`,
+                                        }}
+                                    />
+                                ))
+                            ))
+                            : null}
                         {bubbles.map((bubble) => (
                             <span
                                 key={`bubble-${bubble.x}-${bubble.y}`}
@@ -903,7 +1020,7 @@ export default function App() {
                                         key={`${box.x}-${box.y}-${box.width}-${box.height}-${angle}`}
                                         className="box"
                                         data-direction={box.direction}
-                                        title={`${box.text || 'no text'} - ${ocrScore(box.confidence)}`}
+                                        title={`${box.kind === 'sfx' ? '[sfx] ' : ''}${box.text || 'no text'} - ${ocrScore(box.confidence)}`}
                                         style={{
                                             left: `${((centreX - width / 2) / size.width) * 100}%`,
                                             top: `${((centreY - height / 2) / size.height) * 100}%`,
@@ -935,19 +1052,71 @@ export default function App() {
                 </section>
             ) : null}
 
-            {previews.length > 0 ? (
+            {view === 'debug' && blocks.length === 0 ? (
+                <section className="rounded-md border border-[#e7dfd4] bg-white p-3 shadow-sm">
+                    <h2 className="text-sm font-semibold">No blocks on this page</h2>
+                    <p className="mt-1 text-xs text-slate-500">
+                        {status || 'Run Detect boxes on this page to see its blocks.'}
+                    </p>
+                </section>
+            ) : null}
+
+            {blocks.length > 0 ? (
                 <section className={`rounded-md border border-[#e7dfd4] bg-white p-3 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
-                    <h2 className="text-sm font-semibold">Text regions</h2>
-                    <ol className="mt-2 flex gap-3 overflow-x-auto pb-1">
-                        {boxes.map((box, index) => (
-                            <li key={index} className="w-40 shrink-0">
-                                {previews[index] ? (
-                                    <img src={previews[index]} alt={`Text region ${index + 1}`} className="max-h-28 w-full rounded border border-[#e7dfd4] bg-white object-contain" />
-                                ) : null}
-                                <p className="mt-1 text-xs leading-4 text-slate-600">{box.text || 'no text'}</p>
-                                <span className="ocr-score">{ocrScore(box.confidence)}</span>
-                            </li>
-                        ))}
+                    <h2 className="text-sm font-semibold">Blocks ({blocks.length})</h2>
+                    <p className="mt-1 text-xs text-slate-500">
+                        One card per blk box: the image DeepSeek was sent, which is the blk box with its
+                        margin, upscaled and covered by the cell grid, then the regions it answered with.
+                    </p>
+                    <ol className="mt-2 flex flex-col gap-3">
+                        {blocks.map((block, index) => {
+                            const reading = blockReadings[index];
+                            // The sent crop when the page is live, and the same
+                            // crop cut here after a restore.
+                            const thumb = reading?.cropUrl ?? blockThumbs[index];
+                            return (
+                                <li key={`block-${index}`} className="rounded border border-[#e7dfd4] p-2">
+                                    {thumb ? (
+                                        <img
+                                            src={thumb}
+                                            alt=""
+                                            title="What the reader was sent: the blk crop with its cell grid"
+                                            className="mb-1 max-h-40 rounded border border-[#e7dfd4]"
+                                        />
+                                    ) : (
+                                        <div className="mb-1 flex h-16 w-24 items-center justify-center rounded border border-dashed border-[#ded2c4] text-[11px] text-slate-400">
+                                            no crop
+                                        </div>
+                                    )}
+                                    <p className="text-xs font-medium text-slate-700">
+                                        BLK {index + 1}: {Math.round(block.x)},{Math.round(block.y)}{' '}
+                                        {Math.round(block.width)}×{Math.round(block.height)}
+                                    </p>
+                                    {reading ? (
+                                        <>
+                                            {reading.translation ? (
+                                                <p className="mt-1 text-[11px] font-medium text-[#7a5c43]">
+                                                    {reading.translation}
+                                                </p>
+                                            ) : null}
+                                            <ul className="mt-1 space-y-0.5">
+                                                {reading.regions.map((region, regionIndex) => (
+                                                    <li key={regionIndex} className="text-[11px] leading-4 text-slate-600">
+                                                        {regionIndex + 1}. {region.text} · {Math.round(region.x)},{Math.round(region.y)}{' '}
+                                                        {Math.round(region.width)}×{Math.round(region.height)} · {region.direction} · {region.kind}
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                            <pre className="mt-1 max-h-48 overflow-auto rounded bg-[#f6f3ef] p-2 text-[11px] leading-4 text-slate-700">
+                                                {prettyJson(reading.raw)}
+                                            </pre>
+                                        </>
+                                    ) : (
+                                        <p className="mt-1 text-[11px] text-slate-500">No reader answer for this block.</p>
+                                    )}
+                                </li>
+                            );
+                        })}
                     </ol>
                 </section>
             ) : null}

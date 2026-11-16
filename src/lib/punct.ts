@@ -69,7 +69,7 @@ export function toVertical(text: string): string {
 /** A mark that may not start a line, which is where a break is forbidden. */
 const NO_START = new Set([
     '。', '，', '、', '！', '？', '；', '：', '!', '?', '︕', '︖', '︒', '︐', '︔', '︓',
-    ')', '）', '」', '』', '】', '〕', '︶', '﹂', '﹄', '⋮', '︙', '︱',
+    ')', '）', '」', '』', '】', '〕', '︶', '﹂', '﹄', '⋮', '︙', '︱', '…', '⋯',
 ]);
 
 /** A mark that may not end a line. */
@@ -77,6 +77,7 @@ const NO_END = new Set(['(', '（', '「', '『', '【', '〔', '︵', '﹁', '�
 
 const STRONG = new Set(['。', '！', '？', '!', '?', '；', ';', '︕', '︖', '︒']);
 const SOFT = new Set(['，', '、', ',', '：', ':', '…', '⋮', '︙', '︐', '︔', '︓']);
+const PHRASE_END = new Set([...STRONG, ...SOFT]);
 
 function score(character: string): number {
     if (STRONG.has(character)) return 3;
@@ -104,6 +105,11 @@ export function bestBreak(characters: string[], limit: number): number {
     return bestScore > 0 ? best : -1;
 }
 
+/** Whether a mark may close a column; an opening bracket may not. */
+export function canEndLine(character: string): boolean {
+    return !NO_END.has(character);
+}
+
 /** Whether a mark may lead a column at all. */
 export function canStartLine(character: string): boolean {
     return !NO_START.has(character);
@@ -126,6 +132,69 @@ export function safeBreak(characters: string[], limit: number): number {
         cut -= 1;
     }
     return Math.max(1, cut);
+}
+
+/**
+ * Split a run into parts by weight, keeping each part near its share.
+ *
+ * The renderer wraps a column that holds more text than its box, which turns
+ * one label into two visible columns. So the split follows the weights closely
+ * and only nudges a boundary by a character or two to avoid starting a part
+ * with a mark that may not begin a line.
+ */
+export function splitByWeight(characters: string[], weights: number[], preferred: number[] = []): string[] {
+    const total = weights.reduce((sum, weight) => sum + Math.max(1, weight), 0);
+    // A cut at a phrase boundary the translator chose, or right after a mark,
+    // keeps a word such as 外星人 in one column. It may move the share by up to
+    // two characters; past that the weights win.
+    const phraseBreaks = new Set(preferred);
+    characters.forEach((character, index) => {
+        const next = characters[index + 1] ?? '';
+        if (PHRASE_END.has(character) && !NO_START.has(next) && !PHRASE_END.has(next)) phraseBreaks.add(index + 1);
+    });
+    const parts: string[] = [];
+    let cursor = 0;
+    let counted = 0;
+    weights.forEach((weight, index) => {
+        const left = characters.length - cursor;
+        if (left <= 0) {
+            parts.push('');
+            return;
+        }
+        if (index === weights.length - 1) {
+            parts.push(characters.slice(cursor).join(''));
+            cursor = characters.length;
+            return;
+        }
+        counted += Math.max(1, weight);
+        const boundary = Math.round((characters.length * counted) / total);
+        let cut = Math.max(1, Math.min(left, boundary - cursor));
+        // Leave at least one character for every part still to come.
+        const room = left - (weights.length - 1 - index);
+        let snapped = -1;
+        for (let shift = 0; shift <= 2 && snapped < 0; shift += 1) {
+            for (const candidate of shift === 0 ? [cut] : [cut - shift, cut + shift]) {
+                if (candidate >= 1 && candidate <= room && phraseBreaks.has(cursor + candidate)) {
+                    snapped = candidate;
+                    break;
+                }
+            }
+        }
+        if (snapped > 0) {
+            parts.push(characters.slice(cursor, cursor + snapped).join(''));
+            cursor += snapped;
+            return;
+        }
+        for (let step = 0; step < 2 && cut > 1; step += 1) {
+            const previous = characters[cursor + cut - 1];
+            const next = characters[cursor + cut];
+            if (!NO_END.has(previous) && !NO_START.has(next)) break;
+            cut -= 1;
+        }
+        parts.push(characters.slice(cursor, cursor + cut).join(''));
+        cursor += cut;
+    });
+    return parts;
 }
 
 /** Group runs of marks so a split can never fall inside "?!". */

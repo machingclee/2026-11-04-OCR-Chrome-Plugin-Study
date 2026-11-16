@@ -1,10 +1,19 @@
+import { DEFAULT_REASONING_EFFORT } from '../shared/constants';
+import type { ReasoningEffort } from '../shared/constants';
 import { buildUserPrompt, readRegions, SYSTEM_PROMPT, type PromptRegion, type RegionAnswer } from './translatePrompt';
 
 const ENDPOINT = 'https://api.deepseek.com/chat/completions';
 const MODEL = 'deepseek-flash';
 const REQUEST_TIMEOUT_MS = 120_000;
 
-export async function translateWithDeepSeek(regions: PromptRegion[], apiKey: string, signal?: AbortSignal): Promise<RegionAnswer[]> {
+export async function translateWithDeepSeek(
+    regions: PromptRegion[],
+    apiKey: string,
+    signal?: AbortSignal,
+    effort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
+    /** The other blocks of the page, kept as context and not translated. */
+    context: string[] = [],
+): Promise<RegionAnswer[]> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     const stop = () => controller.abort();
@@ -23,11 +32,16 @@ export async function translateWithDeepSeek(regions: PromptRegion[], apiKey: str
                 model: MODEL,
                 temperature: 0.3,
                 response_format: { type: 'json_object' },
-                // Thinking is on by default at high effort. A page of JSON does not need that chain of thought.
-                thinking: { type: 'disabled' },
+                // The effort comes from the popup, so one setting governs the
+                // reading and the translation alike. There is one request per
+                // page here, so the cost is bounded by the page rather than by
+                // the number of blocks.
+                ...(effort === 'off'
+                    ? { thinking: { type: 'disabled' } }
+                    : { thinking: { type: 'enabled' }, reasoning_effort: effort }),
                 messages: [
                     { role: 'system', content: SYSTEM_PROMPT },
-                    { role: 'user', content: buildUserPrompt(regions, '繁體中文') },
+                    { role: 'user', content: buildUserPrompt(regions, '繁體中文', context) },
                 ],
             }),
         });
@@ -45,8 +59,13 @@ export async function translateWithDeepSeek(regions: PromptRegion[], apiKey: str
         throw new Error(`DeepSeek answered ${response.status}. ${detail.slice(0, 160)}`);
     }
 
-    const payload = (await response.json()) as { choices?: { message?: { content?: string } }[] };
+    const payload = (await response.json()) as {
+        choices?: { message?: { content?: string } }[];
+        usage?: { completion_tokens?: number; completion_tokens_details?: { reasoning_tokens?: number } };
+    };
     const content = payload.choices?.[0]?.message?.content;
     if (!content) throw new Error('DeepSeek returned no content.');
+    console.info(`[translate] deepseek effort ${effort}, tokens ${payload.usage?.completion_tokens ?? '?'}, `
+        + `reasoning ${payload.usage?.completion_tokens_details?.reasoning_tokens ?? 0}`);
     return readRegions(content, regions);
 }

@@ -5,19 +5,23 @@ import {
     CONTENT_SCRIPT_FILE,
     DEEPSEEK_KEY,
     FONT_KEY,
-    GEMINI_KEY,
     DEBUG_PAGES_KEY,
     LAST_RESULT_KEY,
     LEADING_KEY,
     OFFSCREEN_HTML,
+    REASONING_EFFORT_KEY,
+    REASONING_EFFORTS,
+    DEFAULT_REASONING_EFFORT,
     REFERER_RULE_ID,
     SERVICE_WORKER_TARGET,
     TRANSLATOR_KEY,
     WEIGHT_KEY,
 } from '../shared/constants';
+import type { ReasoningEffort } from '../shared/constants';
 import type {
     DetectRequest,
     DetectResponse,
+    OcrRequest,
     IncomingMessage,
     OverlayRequest,
     OverlayResponse,
@@ -157,10 +161,30 @@ async function startPickMode(): Promise<void> {
  * that fill off the balloon wall. A box outside every balloon stays plain and
  * is inpainted as before.
  */
+type Rectangle = { x: number; y: number; width: number; height: number };
+
+function overlaps(left: Rectangle, right: Rectangle): boolean {
+    return left.x < right.x + right.width && right.x < left.x + left.width
+        && left.y < right.y + right.height && right.y < left.y + left.height;
+}
+
+/** Share of `box` covered by `other`. */
+function overlapShare(box: Rectangle, other: Rectangle): number {
+    const shared = Math.max(0, Math.min(box.x + box.width, other.x + other.width) - Math.max(box.x, other.x))
+        * Math.max(0, Math.min(box.y + box.height, other.y + other.height) - Math.max(box.y, other.y));
+    return shared / Math.max(1, box.width * box.height);
+}
+
 function withPaper(
-    boxes: { x: number; y: number; width: number; height: number; angle?: number }[],
+    boxes: InpaintBox[],
     bubbles: BubbleData[],
+    pageWidth: number,
+    pageHeight: number,
 ): InpaintBox[] {
+    // A balloon outline that covers a large part of the page is a bad outline,
+    // and clipping a fill to it would paint the whole page with paper. Such a
+    // balloon is ignored and the box goes through the inpaint pass instead.
+    const pageArea = pageWidth * pageHeight;
     return boxes.map((box) => {
         const centreX = box.x + box.width / 2;
         const centreY = box.y + box.height / 2;
@@ -172,9 +196,34 @@ function withPaper(
                 balloon = bubble;
             }
         }
-        if (!balloon?.paper || !balloon.outline || balloon.outline.length < 3) return { ...box };
-        return { ...box, paper: balloon.paper, clip: balloon.outline };
+        if (!balloon) return { ...box };
+        if (balloon.width * balloon.height > pageArea * 0.4) return { ...box };
+        // A balloon is always flat filled, never sent to the model. Its own
+        // paper tone is used when the sample exists, and white when it does not:
+        // a balloon the sampler could not read is still one flat colour, and a
+        // generative fill can only guess at it. The balloon's outline is not
+        // passed as a clip: a seg outline is coarse, and a fill that stops at
+        // its edge leaves the bottom of a column on the page.
+        return { ...box, paper: balloon.paper ?? [255, 255, 255] };
     });
+}
+
+/**
+ * Who reads the text. A request can name a reader, but the saved translator is
+ * the source of truth, so the popup button, the translation flow and the batch
+ * flow all read the same way.
+ */
+async function resolveOcr(request: DetectRequest): Promise<OcrRequest | undefined> {
+    if (request.local) return undefined;
+    if (request.ocr) {
+        if (request.ocr.provider === 'local') return undefined;
+        const named = request.ocr.key.trim();
+        if (named.length === 0) return undefined;
+        return { provider: request.ocr.provider, key: named };
+    }
+    const settings = await readSettings();
+    const key = settings.deepSeekKey.trim();
+    return key.length > 0 ? { provider: 'deepseek', key } : undefined;
 }
 
 async function runDetection(request: DetectRequest): Promise<DetectResponse> {
@@ -186,6 +235,7 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
     };
 
     await ensureOffscreenReady();
+    const ocr = await resolveOcr(request);
 
     // Only a network URL needs the page's referer; data: URLs carry their bytes.
     const withReferer = typeof request.tabPageUrl === 'string'
@@ -197,7 +247,7 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
 
     try {
         const response = (await chrome.runtime.sendMessage(
-            offscreenRequestFactory.ofDetection(request.imageUrl, imageDataUrl),
+            offscreenRequestFactory.ofDetection(request.imageUrl, imageDataUrl, ocr),
         )) as DetectResponse | undefined;
 
         if (!response) return { ok: false, error: 'The offscreen document sent no answer.' };
@@ -210,6 +260,14 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
                 previews: response.previews,
                 bubbles: response.bubbles,
                 blocks: response.blocks,
+                // The JSON is what the panel exists for; the crop is a live-only
+                // thumbnail, so it is dropped before storing.
+                blockReadings: response.blockReadings?.map((reading) => ({
+                    block: reading.block,
+                    raw: reading.raw,
+                    boxes: reading.boxes,
+                    regions: reading.regions,
+                })),
                 groups: response.groups,
                 erasedUrl: response.erasedUrl,
                 originalUrl: response.originalUrl,
@@ -220,19 +278,25 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
                 timings: response.timings,
             };
 
-            // Local storage holds 10 MB. Crops and the two score maps are the
-            // large parts, so they are the first thing to drop.
-            const tooBig = JSON.stringify(payload).length > 5_000_000;
-            const stored = tooBig ? { ...payload, previews: [], detUrl: null, segUrl: null } : payload;
+            // Local storage holds 10 MB. The score maps go first, then the crops
+            // are trimmed rather than dropped: a reopened debug view should still
+            // show every line, even when only some crops fit.
+            const sizeOf = (value: unknown): number => JSON.stringify(value).length;
+            const LADDER: ((value: typeof payload) => typeof payload)[] = [
+                (value) => value,
+                (value) => ({ ...value, detUrl: null, segUrl: null }),
+                (value) => ({ ...value, detUrl: null, segUrl: null, previews: value.previews.slice(0, 30) }),
+                (value) => ({ ...value, detUrl: null, segUrl: null, previews: value.previews.slice(0, 12) }),
+                (value) => ({ ...value, detUrl: null, segUrl: null, previews: [] }),
+            ];
+            const slim = LADDER.find((step) => sizeOf(step(payload)) <= 5_000_000) ?? LADDER[LADDER.length - 1];
             try {
-                await chrome.storage.local.set({ [LAST_RESULT_KEY]: stored });
+                await chrome.storage.local.set({ [LAST_RESULT_KEY]: slim(payload) });
             } catch (cause) {
                 console.warn('The last result did not fit in session storage.', cause);
-                if (!tooBig) {
-                    await chrome.storage.local
-                        .set({ [LAST_RESULT_KEY]: { ...payload, previews: [], detUrl: null, segUrl: null } })
-                        .catch(() => undefined);
-                }
+                await chrome.storage.local
+                    .set({ [LAST_RESULT_KEY]: { ...payload, detUrl: null, segUrl: null, previews: [] } })
+                    .catch(() => undefined);
             }
         }
         return response;
@@ -269,8 +333,13 @@ async function rememberDebugPage(page: DebugPage): Promise<void> {
         await write(next);
     } catch (cause) {
         console.warn('Debug pages did not fit with the score maps.', cause);
-        const slim = next.map((item) => ({ ...item, detUrl: undefined, segUrl: undefined }));
-        await write(slim).catch(() => undefined);
+        // Maps first, then crops. A page without its crops still lists every
+        // line, which is better than a popup that cannot save anything.
+        await write(next.map((item) => ({ ...item, detUrl: undefined, segUrl: undefined })))
+            .catch(async () => {
+                await write(next.map((item) => ({ ...item, detUrl: undefined, segUrl: undefined, previews: [] })))
+                    .catch(() => undefined);
+            });
     }
 }
 
@@ -345,6 +414,7 @@ async function startBatch(request: TranslateBatchRequest, sender: chrome.runtime
                 token: item.token,
                 imageUrl: item.imageUrl,
                 boxes: [],
+                previews: [],
                 bubbles: [],
                 blocks: [],
                 groups: [],
@@ -474,21 +544,58 @@ async function resumeBatch(): Promise<void> {
 async function readSettings(): Promise<TranslateSettings> {
     const local = await chrome.storage.local.get([
         DEEPSEEK_KEY,
-        GEMINI_KEY,
         TRANSLATOR_KEY,
         FONT_KEY,
         LEADING_KEY,
         WEIGHT_KEY,
+        REASONING_EFFORT_KEY,
     ]);
-    const translator = local[TRANSLATOR_KEY];
     return {
-        translator: translator === 'deepseek' || translator === 'builtin' ? translator : 'gemini',
+        translator: 'deepseek',
         deepSeekKey: typeof local[DEEPSEEK_KEY] === 'string' ? local[DEEPSEEK_KEY] : '',
-        geminiKey: typeof local[GEMINI_KEY] === 'string' ? local[GEMINI_KEY] : '',
+        effort: readEffort(local[REASONING_EFFORT_KEY]),
         font: 'sans',
         leading: 1,
         weight: 'normal',
     };
+}
+
+/** A stored level, or the default when the value is missing or unknown. */
+function readEffort(value: unknown): ReasoningEffort {
+    return REASONING_EFFORTS.find((effort) => effort === value) ?? DEFAULT_REASONING_EFFORT;
+}
+
+/**
+ * Write each block's translation back into the stored block readings, matching
+ * a block to its reading by the box both were built from.
+ */
+async function assignBlockTranslations(
+    groups: { x: number; y: number; width: number; height: number }[],
+    answers: { text?: string; columns?: string[] }[],
+): Promise<void> {
+    const stored = await chrome.storage.local.get([LAST_RESULT_KEY]).catch(() => null);
+    const last = stored?.[LAST_RESULT_KEY] as { blockReadings?: { block: { x: number; y: number; width: number; height: number }; translation?: string }[] } | undefined;
+    const readings = last?.blockReadings;
+    if (!readings) return;
+    let changed = false;
+    groups.forEach((group, index) => {
+        const answer = answers[index];
+        const columns = (answer?.columns ?? []).map((column) => column.trim()).filter(Boolean);
+        const text = (columns.length > 0 ? columns.join('') : answer?.text ?? '').trim();
+        if (text.length === 0) return;
+        const reading = readings.find((entry) => (
+            Math.abs(entry.block.x - group.x) < 1
+            && Math.abs(entry.block.y - group.y) < 1
+            && Math.abs(entry.block.width - group.width) < 1
+            && Math.abs(entry.block.height - group.height) < 1
+        ));
+        if (!reading || reading.translation === text) return;
+        reading.translation = text;
+        changed = true;
+    });
+    if (changed) {
+        await chrome.storage.local.set({ [LAST_RESULT_KEY]: last }).catch(() => undefined);
+    }
 }
 
 async function resolveTabId(request: TranslateRequest, sender: chrome.runtime.MessageSender): Promise<number> {
@@ -529,6 +636,7 @@ async function runTranslation(request: TranslateRequest, sender: chrome.runtime.
             token: request.token,
             imageUrl: request.imageUrl,
             boxes: detection.boxes,
+            previews: detection.previews,
             bubbles: detection.bubbles,
             blocks: detection.blocks,
             groups: detection.groups.map((group) => ({ ...group, maskUrl: undefined })),
@@ -550,42 +658,44 @@ async function runTranslation(request: TranslateRequest, sender: chrome.runtime.
             imageHeight: detection.imageHeight,
             settings,
             signal,
-            translateBuiltin: async (lines) => {
-                const response = (await chrome.runtime.sendMessage(
-                    offscreenRequestFactory.ofBuiltinTranslate(lines),
-                )) as { ok: true; texts: string[] } | { ok: false; error: string } | undefined;
-                if (!response) throw new Error('The offscreen document sent no answer.');
-                if (!response.ok) throw new Error(response.error);
-                return response.texts;
-            },
         });
 
-        if (job.active !== settings.translator) {
-            await chrome.storage.local.set({ [TRANSLATOR_KEY]: job.active });
-        }
+        // The second pass answers per block, and those answers belong to the
+        // block that produced them: writing them back is what lets the debug
+        // panel show a block's translation next to the text it read.
+        await assignBlockTranslations(detection.groups, job.answers);
 
         let erasedUrl = detection.erasedUrl;
         if (signal?.aborted) throw new Error('Cancelled.');
         if (detection.canInpaint && job.items.length > 0) {
             notifyProgress(tabId, 'inpainting');
-            const rubyBoxes = detection.boxes.flatMap((line) => line.ruby.map((ruby) => ({
-                x: ruby.x,
-                y: ruby.y,
-                width: ruby.width,
-                height: ruby.height,
-            })));
+            // BLK + DET. The gate is the blk box of every block that read
+            // dialogue; inside it the det plane says where the text is (see
+            // maskOfBlock). A sound effect inside such a block keeps its ink.
+            const dialogueBlocks = (detection.blockReadings ?? [])
+                .filter((reading) => reading.regions.some((region) => region.kind !== 'sfx' && region.text.trim().length > 0))
+                .map((reading) => ({
+                    ...reading.block,
+                    kind: 'block' as const,
+                    keep: [
+                        ...reading.regions
+                            .filter((region) => region.kind === 'sfx')
+                            .map((region) => ({ x: region.x, y: region.y, width: region.width, height: region.height })),
+                        // Lines the translation left out keep their ink.
+                        ...job.keep.filter((line) => overlaps(line, reading.block)),
+                    ],
+                }));
+            // Without block readings (the on-device reader) the regions are
+            // all there is.
+            const fallback = dialogueBlocks.length > 0
+                ? []
+                : (detection.eraseBoxes ?? job.erase.map((box) => ({ ...box, kind: 'region' as const })))
+                    .filter((box) => !job.keep.some((line) => overlapShare(line, box) > 0.5));
             const painted = (await chrome.runtime.sendMessage(
                 offscreenRequestFactory.ofInpaint(withPaper([
-                    ...job.erase,
-                    ...job.items.map((item) => ({
-                        x: item.x,
-                        y: item.y,
-                        width: item.width,
-                        height: item.height,
-                        angle: item.angle,
-                    })),
-                    ...rubyBoxes,
-                ], detection.bubbles)),
+                    ...dialogueBlocks,
+                    ...fallback,
+                ], detection.bubbles, detection.imageWidth, detection.imageHeight)),
             )) as OffscreenInpaintResponse | undefined;
             if (!painted) throw new Error('The offscreen document sent no inpaint answer.');
             if (!painted.ok) throw new Error(painted.error);

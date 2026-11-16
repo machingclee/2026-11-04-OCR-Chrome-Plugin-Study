@@ -5,6 +5,7 @@ const WRAPPER_ATTR = 'data-comic-translator-wrapper';
 const LAYER_ATTR = 'data-comic-translator-layer';
 const BOX_ATTR = 'data-comic-translator-box';
 const INCLINED_ATTR = 'data-comic-translator-inclined';
+const VERTICAL_ATTR = 'data-comic-translator-vertical';
 const INPAINT_ATTR = 'data-comic-translator-inpaint';
 const TEXT_ATTR = 'data-comic-translator-text';
 const IMAGE_STYLE_ATTR = 'data-comic-translator-image-style';
@@ -13,8 +14,8 @@ const OPACITY_ATTR = 'data-comic-translator-overlay-opacity';
 
 const stopWatchers = new Map<HTMLElement, () => void>();
 
-/** Translated glyphs sit a little under the measured source size. */
-const TRANSLATED_FONT_SCALE = 0.9;
+/** The label is drawn at the measured source size, so it covers the original. */
+const TRANSLATED_FONT_SCALE = 1;
 
 type ImageStyle = {
     display: string;
@@ -45,6 +46,15 @@ function findTarget(request: OverlayRequest): HTMLElement | null {
         const marked = document.querySelector<HTMLElement>(
             `[${OVERLAY_TARGET_ATTRIBUTE}="${CSS.escape(request.token)}"]`,
         );
+        // A reader reuses the picked node for the next page. The token survives
+        // that swap, so a translation that finished late would otherwise be
+        // drawn over the new image.
+        if (marked && request.imageUrl) {
+            const current = marked instanceof HTMLImageElement
+                ? absoluteUrl(marked.currentSrc || marked.src)
+                : backgroundUrl(marked);
+            if (current && current !== absoluteUrl(request.imageUrl)) return null;
+        }
         if (marked) return marked;
     }
 
@@ -367,9 +377,13 @@ function enableItemDrag(box: HTMLElement, angle: number): void {
     });
 }
 
-/** White halo around the glyphs. Stroke is centered, so twice the 3.5% radius stays outside the fill. */
+/**
+ * White halo around the glyphs. A stroke is centred on the edge, so only half of
+ * this width sits outside the fill; the halo reads as a fifth of the em across a
+ * dark panel, which is the weight a printed manga label has.
+ */
 function applyWhiteStroke(box: HTMLElement, fontSize: number): void {
-    const width = Math.max(1, Math.round(fontSize * 0.07));
+    const width = Math.max(2, Math.round(fontSize * 0.2));
     box.style.setProperty('-webkit-text-stroke', `${width}px #ffffff`);
     box.style.setProperty('paint-order', 'stroke fill');
 }
@@ -387,7 +401,13 @@ function makeBox(
     if (item.groupId !== undefined) box.setAttribute('data-comic-translator-group', String(item.groupId));
     const inclined = Math.abs(item.angle ?? 0) >= 0.01;
     if (inclined) box.setAttribute(INCLINED_ATTR, 'true');
-    box.textContent = item.text;
+    // Upright text is one block per glyph, stacked by the stylesheet. A vertical
+    // writing mode wraps the overflow into a second column, which is the extra
+    // column on the page. Inclined lines stay on the writing mode, because the
+    // whole line is rotated as one box.
+    const upright = item.vertical && !inclined;
+    if (upright) box.setAttribute(VERTICAL_ATTR, 'true');
+    else box.textContent = item.text;
 
     const style = box.style;
     style.position = 'absolute';
@@ -395,6 +415,14 @@ function makeBox(
     style.top = `${(item.y / height) * 100}%`;
     style.width = `${(item.width / width) * 100}%`;
     style.height = `${(item.height / height) * 100}%`;
+    if (upright) {
+        // The stylesheet makes an upright column exactly 1em wide, whatever its
+        // slot. Anchored by its left edge, a column whose font was shrunk to
+        // fit sat off to one side of the source column, and a larger one ran
+        // into its neighbour. It is centred on the slot instead.
+        style.left = `${((item.x + item.width / 2) / width) * 100}%`;
+        style.marginLeft = '-0.5em';
+    }
     style.boxSizing = 'border-box';
     style.display = 'flex';
     style.alignItems = 'center';
@@ -449,7 +477,7 @@ function makeBox(
         style.transformOrigin = 'center';
     }
 
-    if (item.vertical) {
+    if (item.vertical && !upright) {
         // A flex container swaps its axes in vertical writing mode, which can
         // leave a short column at the left edge. A grid centres the text on both
         // axes, so a lone vertical ellipsis sits in the middle of its balloon.
@@ -458,14 +486,12 @@ function makeBox(
         // U+FE19, whose dots already sit in the centre of the em box.
         style.textOrientation = 'upright';
         style.display = 'grid';
-        // Vertical writing swaps the grid axes: align centre across the
-        // column, but start at the top so short columns do not float down.
         style.placeItems = 'center start';
-        // Let the text use the number of columns the balloon has room for.
-        // The word joiner in toVertical keeps a trailing ellipsis with the
-        // preceding glyph instead of forcing the whole label into one column.
-        style.whiteSpace = 'pre-wrap';
+        style.whiteSpace = 'nowrap';
+        style.wordBreak = 'keep-all';
         style.lineBreak = 'strict';
+        style.padding = '0';
+        style.overflow = 'visible';
     }
 
     const boxWidth = Math.max(1, item.width * scale);
@@ -477,6 +503,20 @@ function makeBox(
     const fallback = Math.min(boxHeight * 0.8, boxWidth * 0.9);
     const size = Math.max(7, (sourceSize > 0 ? sourceSize : fallback) * TRANSLATED_FONT_SCALE);
     box.style.fontSize = `${size}px`;
+    // A label shorter than the cells it was given is spread over them. The
+    // space is in em so it follows the font when the fit shrinks the label.
+    if (item.spacing && item.spacing > 0) {
+        box.style.letterSpacing = `${item.spacing.toFixed(2)}em`;
+        if (upright) box.style.gap = `${item.spacing.toFixed(2)}em`;
+    }
+    if (upright) {
+        for (const character of [...item.text]) {
+            if (character === '\u2060' || character === '\n' || character === '\r') continue;
+            const glyph = document.createElement('span');
+            glyph.textContent = character;
+            box.appendChild(glyph);
+        }
+    }
     applyWhiteStroke(box, size);
     box.dataset.comicTranslatorSourceSize = String(size);
     return box;
@@ -496,7 +536,11 @@ function textFits(box: HTMLElement): boolean {
         const boxRect = box.getBoundingClientRect();
         return rect.width <= boxRect.width + 1 && rect.height <= boxRect.height + 1;
     }
+    // An upright column is one glyph wide and as tall as its text. Shrinking it
+    // to the detected box is what made a long line wrap into the next column.
+    if (box.hasAttribute(VERTICAL_ATTR)) return true;
     const style = getComputedStyle(box);
+    if (style.writingMode.startsWith('vertical')) return true;
     const paddingX = Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight);
     const paddingY = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
     return rect.width <= box.clientWidth - paddingX + 1
@@ -509,17 +553,12 @@ function estimatedFits(box: HTMLElement, size: number, leading: number): boolean
     if (characters === 0) return true;
 
     const style = getComputedStyle(box);
+    if (box.hasAttribute(VERTICAL_ATTR) || style.writingMode.startsWith('vertical')) return true;
     const paddingX = Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight);
     const paddingY = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
     const width = box.clientWidth - paddingX;
     const height = box.clientHeight - paddingY;
     if (width <= 0 || height <= 0) return false;
-
-    if (style.writingMode.startsWith('vertical')) {
-        const perColumn = Math.max(1, Math.floor(height / size));
-        const columns = Math.ceil(characters / perColumn);
-        return columns * size * leading <= width + 1;
-    }
 
     const perLine = Math.max(1, Math.floor(width / size));
     const lines = Math.ceil(characters / perLine);
@@ -555,6 +594,10 @@ function fitBoxes(layer: HTMLElement, leading: number): void {
 function ensureBoxStyle(): void {
     const css = [
         `span[${BOX_ATTR}="true"]:not([${INCLINED_ATTR}]) { overflow: visible !important; height: unset !important; padding-top: 0px !important; }`,
+        // One glyph per row. Vertical writing mode wraps a line that is longer
+        // than its box into a second column; a column of blocks cannot wrap.
+        `span[${BOX_ATTR}="true"][${VERTICAL_ATTR}="true"] { display: flex !important; flex-flow: column nowrap !important; writing-mode: horizontal-tb !important; width: 1em !important; min-width: 1em !important; max-width: 1em !important; height: auto !important; max-height: none !important; overflow: visible !important; white-space: normal !important; align-items: center !important; justify-content: flex-start !important; padding: 0 !important; }`,
+        `span[${BOX_ATTR}="true"][${VERTICAL_ATTR}="true"] > span { display: block !important; box-sizing: border-box !important; width: 1em !important; height: 1em !important; line-height: 1 !important; margin: 0 !important; padding: 0 !important; flex: 0 0 auto !important; text-align: center !important; writing-mode: horizontal-tb !important; white-space: nowrap !important; }`,
         // The switch hides the whole layer with opacity. An invisible label must
         // not keep swallowing drags that belong to the original page.
         `html[${OPACITY_ATTR}="0"] span[${BOX_ATTR}="true"] { pointer-events: none !important; }`,

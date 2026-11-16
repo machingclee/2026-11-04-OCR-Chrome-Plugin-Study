@@ -95,8 +95,27 @@ body {
   position: absolute;
   z-index: 3;
   box-sizing: border-box;
-  border: 1px solid #1f9d55;
+  border: 2px solid #e6b800;
   pointer-events: none;
+}
+
+/* The detector's line boxes inside a block: the same blue rectangles the
+   reader sees drawn on its crop. */
+.det-box {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  border: 1px solid #1d4ed8;
+  background: rgba(29, 78, 216, 0.1);
+  pointer-events: none;
+}
+
+.map-key.blk i {
+  background: #e6b800;
+}
+
+.map-key.line i {
+  background: #1d4ed8;
 }
 
 .ocr-score {

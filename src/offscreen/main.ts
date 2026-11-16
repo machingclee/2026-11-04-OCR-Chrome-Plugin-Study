@@ -1,12 +1,10 @@
-import { detectBoxes, extendCutEnds, isSessionReady, splitParallelLines, stopAtBubbles, suppressOverlaps } from '../lib/detector';
 import { renderScoreOverlay } from '../lib/scoreOverlay';
 import { detectBubbles, sampleBubblePaper } from '../lib/bubble';
 import { cropPreviews } from '../lib/regions';
-import { expandToInk, fitAcross } from '../lib/expand';
-import { trimMergedRuby } from '../lib/trimRuby';
-import { erasePage } from '../lib/erase';
-import { paintSamples, paperColour } from '../lib/mask';
-import { canTranslate, translateAll } from '../lib/translate';
+import { detectLines, isSessionReady } from '../lib/detect';
+import { readBlockRegions, recognizeLinesInCloud } from '../lib/ocr/cloudOcr';
+import { erasePage, type ErasePlanes } from '../lib/erase';
+import { inkBounds, paintSamples, paperColour } from '../lib/mask';
 import { groupByRegion, splitGroupByColumnGap, toOrderedTextLines } from '../lib/readingOrder';
 import { recognizeLine } from '../lib/ocr/recognize';
 import { DETECTOR_INPUT_SIZE, OCR_MIN_CONFIDENCE, OFFSCREEN_TARGET } from '../shared/constants';
@@ -24,10 +22,10 @@ import type { Bubble, TextLine, TextMask } from '../lib/types';
 import serviceWorkerResponseFactory from '../shared/factories/serviceWorkerResponseFactory';
 
 /** Each crop is a data url in storage, so the strip stops at this many. */
-const MAX_PREVIEWS = 30;
+const MAX_PREVIEWS = 60;
 
 /** The page from the last detection, so translation can erase only the lines it keeps. */
-let heldPage: { image: ImageData; textMask: TextMask } | null = null;
+let heldPage: { image: ImageData; planes: ErasePlanes } | null = null;
 
 /** Decode inline pixels locally: no round trip, and no data: fetch to trust. */
 function decodeImageDataUrl(dataUrl: string): Blob | null {
@@ -179,11 +177,17 @@ function groupFontSize(lines: BoxData[], group: { x: number; y: number; width: n
  * white sticker. The glyph fill stays dark; the overlay draws the white stroke.
  * This is sampling only; it does not change the image.
  */
+/**
+ * `plain` drops the paper rectangle for a group the reader built. The
+ * glyph-shaped paper is kept: it covers ink the erase left behind, and because
+ * it follows the original glyphs it does not read as a white block.
+ */
 function paintGroupColours(
     bitmap: ImageBitmap,
     groups: GroupData[],
     lines: BoxData[],
     textMask: TextMask | null,
+    plain: boolean,
 ): void {
     if (groups.length === 0) return;
     const canvas = document.createElement('canvas');
@@ -195,19 +199,33 @@ function paintGroupColours(
     const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
 
     for (const group of groups) {
+        // A reader group is text only. The erase has already removed the ink,
+        // so there is nothing for a paper shape, a rectangle or a patch to do:
+        // the label is the translated glyphs and their white halo.
+        if (plain) {
+            group.rectangle = false;
+            group.background = 'transparent';
+            group.color = '#111111';
+            group.maskUrl = undefined;
+            group.maskBox = undefined;
+            continue;
+        }
         group.rectangle = !textMask;
         const rect = unionOfLines(group, lines);
-        // Paper sits between the strokes, inside the text box. A ring just
-        // outside it is the balloon outline for a group that fills its balloon.
         const [red, green, blue] = paperColour(pixels, bitmap.width, bitmap.height, rect, textMask);
         group.background = `rgb(${red}, ${green}, ${blue})`;
-        // The label always carries a white stroke, so a white fill would disappear into it.
         group.color = '#111111';
 
-        if (!textMask) continue;
+        if (!textMask && !plain) continue;
         // The seg mask is the source of truth for glyphs, not the line box.
         // A box that spills outside a balloon therefore cannot paint the paper
         // outside it: only pixels the detector calls ink are in this image.
+        //
+        // A reader group is different. Its box is already tight around the
+        // text, so the page's own pixels are the best mask: they are full
+        // resolution and antialiased, where the seg plane is a 1024 map and a
+        // 30 px glyph becomes a handful of blocks. Reading the page is what
+        // makes the halo follow the characters instead of boxing them.
         const pad = 1;
         const mx0 = Math.max(0, Math.floor(rect.x - pad));
         const my0 = Math.max(0, Math.floor(rect.y - pad));
@@ -221,7 +239,7 @@ function paintGroupColours(
         let inkPixels = 0;
         for (let y = 0; y < cropHeight; y += 1) {
             for (let x = 0; x < cropWidth; x += 1) {
-                if (inkAt(textMask, mx0 + x + 0.5, my0 + y + 0.5) < 0.3) continue;
+                if (inkAt(textMask as TextMask, mx0 + x + 0.5, my0 + y + 0.5) < 0.3) continue;
                 marked[y * cropWidth + x] = 1;
                 inkPixels += 1;
             }
@@ -312,6 +330,110 @@ function paintBubblePaper(bitmap: ImageBitmap, bubbles: Bubble[], textMask: Text
     sampleBubblePaper(pixels, bitmap.width, bitmap.height, bubbles, textMask);
 }
 
+
+/** Median luminance of one box, which is its paper for text-heavy areas. */
+function boxLuma(pixels: Uint8ClampedArray, pageWidth: number, box: { x: number; y: number; width: number; height: number }): number {
+    const x0 = Math.max(0, Math.floor(box.x));
+    const y0 = Math.max(0, Math.floor(box.y));
+    const x1 = Math.min(pageWidth, Math.ceil(box.x + box.width));
+    const values: number[] = [];
+    for (let y = y0; y < box.height + y0; y += 3) {
+        const offset = y * pageWidth * 4;
+        for (let x = x0; x < x1; x += 3) {
+            const index = offset + x * 4;
+            values.push(0.299 * pixels[index] + 0.587 * pixels[index + 1] + 0.114 * pixels[index + 2]);
+        }
+    }
+    if (values.length === 0) return 255;
+    values.sort((left, right) => left - right);
+    return values[values.length >> 1];
+}
+
+/**
+ * The ink of one line, cut from the page itself.
+ *
+ * The seg plane is a 1024 map and a reading beside a column is part of the same
+ * blob there. The page is full resolution, so a band of dark pixels that holds
+ * the box centre is the line, and a furigana reading printed above or beside it
+ * falls in its own band and is left out. That is what keeps a label from being
+ * placed where the reading starts.
+ */
+function pageInkBounds(
+    pixels: Uint8ClampedArray,
+    pageWidth: number,
+    pageHeight: number,
+    box: { x: number; y: number; width: number; height: number },
+    paperLuma: number,
+): { x: number; y: number; width: number; height: number } | null {
+    const vertical = box.height >= box.width;
+    const pad = Math.max(4, Math.min(12, Math.round(Math.min(box.width, box.height) * 0.5)));
+    const x0 = Math.max(0, Math.floor(box.x - pad));
+    const y0 = Math.max(0, Math.floor(box.y - pad));
+    const x1 = Math.min(pageWidth - 1, Math.ceil(box.x + box.width + pad));
+    const y1 = Math.min(pageHeight - 1, Math.ceil(box.y + box.height + pad));
+    const width = x1 - x0 + 1;
+    const height = y1 - y0 + 1;
+    if (width <= 0 || height <= 0) return null;
+    const ink = (x: number, y: number): boolean => {
+        const offset = (y * pageWidth + x) * 4;
+        return 0.299 * pixels[offset] + 0.587 * pixels[offset + 1] + 0.114 * pixels[offset + 2] < paperLuma - 60;
+    };
+
+    const occupied = new Uint8Array(vertical ? width : height);
+    for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+            if (!ink(x0 + x, y0 + y)) continue;
+            if (vertical) occupied[x] = 1;
+            else occupied[y] = 1;
+        }
+    }
+    const centre = vertical ? (box.x + box.width / 2) - x0 : (box.y + box.height / 2) - y0;
+    let seed = Math.max(0, Math.min(occupied.length - 1, Math.round(centre)));
+    if (!occupied[seed]) {
+        let found = -1;
+        for (let step = 1; step < occupied.length && found < 0; step += 1) {
+            if (seed - step >= 0 && occupied[seed - step]) found = seed - step;
+            else if (seed + step < occupied.length && occupied[seed + step]) found = seed + step;
+        }
+        if (found < 0) return null;
+        seed = found;
+    }
+    let low = seed;
+    let high = seed;
+    let gap = 0;
+    for (let index = seed + 1; index < occupied.length; index += 1) {
+        if (occupied[index]) {
+            high = index;
+            gap = 0;
+        } else if (++gap > 2) break;
+    }
+    gap = 0;
+    for (let index = seed - 1; index >= 0; index -= 1) {
+        if (occupied[index]) {
+            low = index;
+            gap = 0;
+        } else if (++gap > 2) break;
+    }
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+            const across = vertical ? x : y;
+            if (across < low || across > high) continue;
+            if (!ink(x0 + x, y0 + y)) continue;
+            if (x < minX) minX = x;
+            if (y < minY) minY = y;
+            if (x > maxX) maxX = x;
+            if (y > maxY) maxY = y;
+        }
+    }
+    if (maxX < 0) return null;
+    return { x: x0 + minX, y: y0 + minY, width: maxX - minX + 1, height: maxY - minY + 1 };
+}
+
 async function recognizeLines(
     bitmap: ImageBitmap,
     lines: TextLine[],
@@ -358,109 +480,199 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         timings.bubble = Math.round(performance.now() - bubbleStarted);
         const balloonList = bubbles ? bubbles.bubbles : [];
 
-        // One whole-page pass, as in the target project. Tiling was measured and
-        // removed: it cost one full pass per tile for very little text gain.
-        const detectStarted = performance.now();
-        const detected = await detectBoxes(bitmap, balloonList.map((bubble) => ({
-            x: bubble.x,
-            y: bubble.y,
-            width: bubble.width,
-            height: bubble.height,
-        })));
-        timings.detect = Math.round(performance.now() - detectStarted);
-        const ordered = toOrderedTextLines(detected.detBoxes, [], true);
-
-        const groupStarted = performance.now();
-        const grouped = groupByRegion(ordered, balloonList, [], false);
-
+        // One whole-page pass. The boxes come from the det head, widened to the
+        // glyph strokes of their own column, so a line the det head cut short is
+        // still read whole and no box reaches into the column beside it.
         const balloonRects = balloonList.map((bubble) => ({
             x: bubble.x,
             y: bubble.y,
             width: bubble.width,
             height: bubble.height,
         }));
-        const lines = grouped.lines.map((line) => {
-            const grown = {
-                ...line,
-                ...expandToInk(
-                    line,
-                    detected.mask,
-                    balloonRects,
-                    grouped.lines.filter((other) => other !== line),
-                ),
-            };
-            // Ink past a balloon edge belongs to the next line. Keep the part
-            // that started on this side of the edge, then follow det back out
-            // from both ends until the mask runs out.
-            const limited = stopAtBubbles(
-                grown,
-                line.x + line.width / 2,
-                line.y + line.height / 2,
-                balloonRects,
-            );
-            const vertical = grown.height >= grown.width;
-            // A few pixels covers the stroke edge. Walking further crosses the
-            // det bridge into the next column and glues the two lines back together.
-            const slack = 3;
-            const bounds = vertical
-                ? { x: limited.x - slack, y: 0, width: limited.width + slack * 2, height: bitmap.height }
-                : { x: 0, y: limited.y - slack, width: bitmap.width, height: limited.height + slack * 2 };
-            const restored = detected.det
-                ? extendCutEnds(
-                    limited,
-                    detected.det,
-                    { width: bitmap.width, height: bitmap.height },
-                    vertical,
-                    bounds,
-                )
-                : limited;
-            // det runs straight through a balloon wall, so the walk above can put
-            // back what the clip just removed: a sound effect above a balloon
-            // then swallows the balloon's lines and survives suppression.
-            const halted = stopAtBubbles(
-                restored,
-                line.x + line.width / 2,
-                line.y + line.height / 2,
-                balloonRects,
-            );
-            return trimMergedRuby(halted, detected.mask);
-        });
-        // A piece of a split box is only a line if it can hold a line, so the
-        // split compares against the page's own median line thickness.
-        const lineSizes = lines.map((line) => Math.min(line.width, line.height))
-            .filter((size) => size >= 4)
-            .sort((left, right) => left - right);
-        const lineThickness = lineSizes.length > 0 ? lineSizes[lineSizes.length >> 1] : 0;
-        const separated = splitParallelLines(lines, detected.mask, detected.det, lineThickness);
-        timings.group = Math.round(performance.now() - groupStarted);
+        const reader = request.ocr && request.ocr.key.trim().length > 0 ? request.ocr : null;
+        const detectStarted = performance.now();
+        // The blocks are the line source when a reader answers. The det boxes
+        // are still extracted because they are the fallback when every block
+        // comes back empty, and because a page that answers nothing must not
+        // leave the user with no boxes at all.
+        const detected = await detectLines(bitmap, balloonRects);
+        timings.detect = Math.round(performance.now() - detectStarted);
 
-        const ocrStarted = performance.now();
-        // The box set is settled once overlaps are dropped, so it is safe to
-        // fit. Every line is fitted on both axes: it reaches out to ink the box
-        // missed, trims margin that holds none, and stops at the midpoint of the
-        // gap to the next box, so no two boxes touch. Both planes count as
-        // paint, because det is the shrunken line response and seg is the stroke
-        // it marks; a box cut to det alone sits inside the glyphs. Ruby is a
-        // wall too, or a fitted line would read its own reading as text.
-        const settled = suppressOverlaps(separated);
-        const fitted = fitAcross(
-            settled,
-            { x: 0, y: 0, width: bitmap.width, height: bitmap.height },
-            detected.det,
-            detected.mask,
-            balloonRects,
-            settled.flatMap((line) => line.ruby),
-        );
-        // Every pass above hands a child the parent's score, so a box can end up
-        // over paper that holds no paint at all, or two boxes can end up over the
-        // same glyphs. The first is not a line; the second is one line read
-        // twice, which is how a balloon got the same sentence in two columns.
-        const paintedLines = distinctLines(fitted, detected.det, detected.mask);
-        if (paintedLines.length !== fitted.length) {
-            console.info(`Dropped ${fitted.length - paintedLines.length} line boxes with no paint or no own text.`);
+        const groupStarted = performance.now();
+
+        // The block head gives region boxes, and each block is one crop for the
+        // reader. The model then reports the text and where it sits inside the
+        // block, so the block is both the detection unit and the group.
+        let readings = null as Awaited<ReturnType<typeof readBlockRegions>> | null;
+        if (reader && detected.blkBoxes.length > 0) {
+            readings = await readBlockRegions(bitmap, detected.blkBoxes, reader, detected.detBoxes)
+                .catch((cause: unknown) => {
+                    console.warn('Block reading failed, falling back to the line path.', cause);
+                    return null;
+                });
         }
-        const collected = await recognizeLines(bitmap, paintedLines);
-        timings.ocr = Math.round(performance.now() - ocrStarted);
+        const blockReadings = (readings ?? []).filter((reading) => reading.regions.length > 0);
+        const pagePixels = (() => {
+            const canvas = document.createElement('canvas');
+            canvas.width = bitmap.width;
+            canvas.height = bitmap.height;
+            const context = canvas.getContext('2d', { willReadFrequently: true });
+            if (!context) return null;
+            context.drawImage(bitmap, 0, 0);
+            return context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+        })();
+
+        let grouped: ReturnType<typeof groupByRegion>;
+        let collected: BoxData[];
+        let cloud: Awaited<ReturnType<typeof recognizeLinesInCloud>> | null = null;
+
+        if (blockReadings.length > 0) {
+            const lines: BoxData[] = [];
+            const boxes: { x: number; y: number; width: number; height: number; score: number }[] = [];
+            const balloonFlags: boolean[] = [];
+            // The order of the groups is the order the translator reads the page
+            // in, so the context holds: top to bottom, right to left inside a
+            // panel. The blk boxes arrive in score order, which would make the
+            // first region the most confident one rather than the first one.
+            const pageOrder = [...blockReadings].sort((left, right) => (
+                left.block.y - right.block.y || right.block.x - left.block.x
+            ));
+            pageOrder.forEach((reading) => {
+                const ordered = [...reading.regions].sort((left, right) => (
+                    left.direction === 'v' || right.direction === 'v'
+                        ? right.x - left.x
+                        // A horizontal block is read row by row and, inside a
+                        // row, left to right. Without the second key the small
+                        // prefix and the large name can swap places.
+                        : (left.y - right.y) || (left.x - right.x)
+                ));
+                ordered.forEach((region) => {
+                    const line: BoxData = {
+                        ...region,
+                        direction: region.direction === 'v' ? 'vertical' : 'horizontal',
+                        score: reading.block.score,
+                        ruby: [],
+                        // The block score measures the blk box, not the reading.
+                        // Gating the text on it drops a real block that scored
+                        // low, and the erase set is independent of this value, so
+                        // the line would be erased with nothing pasted over it.
+                        confidence: 1,
+                        kind: region.kind,
+                        translation: region.translation,
+                    };
+                    // The model's box is an estimate. The strokes are where the
+                    // glyphs are, so the line is snapped to the ink it covers.
+                    // The width of that ink is also the size the font follows.
+                    const paperLuma = pagePixels ? boxLuma(pagePixels, bitmap.width, line) : 255;
+                    const ink = Math.abs(line.angle ?? 0) < 0.01
+                        ? (pagePixels && paperLuma > 128
+                            ? pageInkBounds(pagePixels, bitmap.width, bitmap.height, line, paperLuma) ?? inkBounds(detected.mask, line)
+                            : inkBounds(detected.mask, line))
+                        : null;
+                    if (ink) {
+                        line.x = ink.x;
+                        line.y = ink.y;
+                        line.width = ink.width;
+                        line.height = ink.height;
+                    }
+                    // The reader read the box off the grid drawn on its crop,
+                    // so the box is data, not an estimate. It is what the label
+                    // covers; the line's own box stays tight around the ink,
+                    // because that box is what gets erased.
+                    const verticalLine = line.direction === 'vertical';
+                    const inclined = Math.abs(line.angle ?? 0) >= 0.01;
+                    if (!inclined) {
+                        let slot = {
+                            x: region.x,
+                            y: region.y,
+                            width: region.width,
+                            height: region.height,
+                        };
+                        // The font is the grid: how many cells the character
+                        // covers, times the size of one cell. Two cells of a 9
+                        // pixel grid are an 18 pixel character.
+                        //
+                        // The box across is a lower bound, because it is drawn
+                        // around the ink and an em is wider than its ink: a two
+                        // cell character can come back as a one cell box, which
+                        // halved the font. The run of characters is the better
+                        // estimate, because its rounding error is divided by the
+                        // number of characters, so the larger of the two is used.
+                        const characters = Math.max(1, [...line.text].length);
+                        const acrossCells = region.cells
+                            ? (verticalLine ? region.cells.width : region.cells.height)
+                            : 0;
+                        const alongCells = region.cells
+                            ? (verticalLine ? region.cells.height : region.cells.width)
+                            : 0;
+                        const read = verticalLine ? slot.width : slot.height;
+                        // The run estimate can only be off by the rounding of the
+                        // across one, so it is allowed one cell more than that.
+                        const em = acrossCells > 0
+                            ? Math.max(acrossCells, Math.min(alongCells / characters, acrossCells + 1))
+                            : 0;
+                        const size = em > 0 && reading.cell > 0 ? em * reading.cell : read;
+                        if (size >= 4) {
+                            // The label's column is one character wide, not the
+                            // width of the reader's box: that box hugs the ink,
+                            // which is narrower than the em, so a label sized to
+                            // the em did not fit its own box and the renderer
+                            // shrank it back down. Centred on the reader's box.
+                            slot = verticalLine
+                                ? { ...slot, x: slot.x + slot.width / 2 - size / 2, width: size }
+                                : { ...slot, y: slot.y + slot.height / 2 - size / 2, height: size };
+                            line.lineLength = verticalLine ? slot.height : slot.width;
+                            // The character is the em; the renderer multiplies
+                            // its input by 1.2.
+                            line.lineThickness = size / 1.2;
+                        }
+                        line.slot = slot;
+                        console.info(`[cell] "${line.text.slice(0, 12)}" box ${Math.round(slot.x)},${Math.round(slot.y)} `
+                            + `${Math.round(slot.width)}x${Math.round(slot.height)} `
+                            + `em ${size.toFixed(1)}px = ${acrossCells} across, ${alongCells}/${characters} along, `
+                            + `cell ${reading.cell}px`);
+                    } else if (region.glyphSize && region.glyphSize >= 4) {
+                        // An inclined line is not on the cell grid, so its size
+                        // stays the advance the model's own text measured.
+                        line.lineThickness = region.glyphSize / 1.2;
+                    }
+                    lines.push(line);
+                });
+                boxes.push(reading.block);
+                const centreX = reading.block.x + reading.block.width / 2;
+                const centreY = reading.block.y + reading.block.height / 2;
+                balloonFlags.push(balloonList.some((bubble) =>
+                    centreX >= bubble.x && centreX <= bubble.x + bubble.width
+                    && centreY >= bubble.y && centreY <= bubble.y + bubble.height));
+            });
+
+            grouped = {
+                lines,
+                grouped: boxes.length,
+                dropped: 0,
+                regions: boxes.length,
+                boxes,
+                balloonFlags,
+            };
+            collected = lines;
+        } else {
+            const ordered = toOrderedTextLines(detected.detBoxes, [], true);
+            grouped = groupByRegion(ordered, balloonList, [], false);
+            // A pass can hand a child the parent's score, so a box can still end
+            // up over paper that holds no paint, or two boxes can end up over the
+            // same glyphs. The first is not a line; the second is one line read
+            // twice, which is how a balloon got the same sentence in two columns.
+            const paintedLines = distinctLines(grouped.lines, detected.det, detected.mask);
+            if (paintedLines.length !== grouped.lines.length) {
+                console.info(`Dropped ${grouped.lines.length - paintedLines.length} line boxes with no paint or no own text.`);
+            }
+            if (reader) {
+                cloud = await recognizeLinesInCloud(bitmap, paintedLines, reader);
+            }
+            collected = cloud ? cloud.lines : await recognizeLines(bitmap, paintedLines);
+        }
+        timings.group = Math.round(performance.now() - groupStarted);
+        timings.ocr = 0;
         timings.extras = Math.round(performance.now() - started - timings.fetch - timings.detect - timings.group - timings.ocr);
 
         const thicknesses = collected
@@ -470,15 +682,23 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         const medianThickness = thicknesses.length > 0 ? thicknesses[thicknesses.length >> 1] : 0;
         const usable = collected.filter((line) =>
             line.confidence >= OCR_MIN_CONFIDENCE
-            && !skipAsNonDialogue(line, balloonList, medianThickness),
+            // The reader already said this one is a sound effect, so it is not
+            // translated and not covered.
+            && line.kind !== 'sfx'
+            // A line the reader returned is trusted: it saw the crop, so the
+            // kana and size heuristics that guard the on-device recogniser do
+            // not apply to it. An empty text is how it says there is no text.
+            && (line.kind ? true : !skipAsNonDialogue(line, balloonList, medianThickness)),
         );
 
         const groups: GroupData[] = [];
         const perGroup: string[][] = grouped.boxes.map(() => []);
+        const perGroupTranslations: string[][] = grouped.boxes.map(() => []);
         for (const line of usable) {
             for (let index = 0; index < grouped.boxes.length; index += 1) {
                 if (!centreInsideBox(line, grouped.boxes[index])) continue;
                 perGroup[index].push(line.text);
+                perGroupTranslations[index].push(line.translation ?? '');
                 break;
             }
         }
@@ -487,6 +707,13 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             if (text.length > 0) groups.push({
                 ...box,
                 lines: text,
+                // The reading call writes the translation with the text, so the
+                // page does not need a second request. Lines it left
+                // untranslated carry an empty string and the translator fills
+                // only those.
+                ...(perGroupTranslations[index].some((value) => value.trim().length > 0)
+                    ? { translations: perGroupTranslations[index] }
+                    : {}),
                 fontSize: groupFontSize(usable, box),
                 vertical: groupVertical(usable, box),
                 balloon: grouped.balloonFlags[index] ?? false,
@@ -541,9 +768,20 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             }
         }
 
-        paintBubblePaper(bitmap, balloonList, detected.mask);
-        paintGroupColours(bitmap, splitGroups, usable, detected.mask);
+        // The block path hires the stroke plane only to paint the balloon paper
+        // and the label masks. The erase mask comes from the det plane, which is
+        // what the block path is allowed to rely on.
+        const strokeMask = detected.mask;
+        paintBubblePaper(bitmap, balloonList, strokeMask);
+        // A group from the reader is drawn as text with its own white halo. The
+        // glyph-shaped paper label is built from the seg plane at detector
+        // resolution, so on a reader group it reads as white blocks rather than
+        // the outline of the characters.
+        paintGroupColours(bitmap, splitGroups, usable, strokeMask, blockReadings.length > 0);
 
+        console.info(`[erase] ${collected.length} line(s) read, `
+            + `${collected.filter((line) => line.text.trim().length > 0 && line.kind !== 'sfx').length} candidate box(es), `
+            + `page ${bitmap.width}x${bitmap.height}`);
         const previews = cropPreviews(bitmap, collected.slice(0, MAX_PREVIEWS));
 
         const originalCanvas = document.createElement('canvas');
@@ -554,7 +792,9 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
         const originalUrl = originalContext ? originalCanvas.toDataURL('image/webp', 0.95) : null;
 
         heldPage = null;
-        if (detected.mask) {
+        // Both planes go to the erase: the det band says where a line of text
+        // runs, the seg plane marks its strokes.
+        if (detected.mask || detected.det) {
             const canvas = document.createElement('canvas');
             canvas.width = bitmap.width;
             canvas.height = bitmap.height;
@@ -563,7 +803,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
                 context.drawImage(bitmap, 0, 0);
                 heldPage = {
                     image: context.getImageData(0, 0, canvas.width, canvas.height),
-                    textMask: detected.mask,
+                    planes: { seg: detected.mask, det: detected.det },
                 };
             }
         }
@@ -584,6 +824,39 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
             erasedUrl: null,
             canInpaint: heldPage !== null,
             originalUrl,
+            ocrProvider: blockReadings.length > 0 ? reader?.provider : cloud?.provider,
+            ocrFallbacks: cloud?.fallbacks,
+            ocrCloudLines: blockReadings.length > 0 ? collected.length : cloud?.cloudLines,
+            // A region with no text is not erased: it may be a noise box over
+            // artwork, and blanking it would remove drawing rather than ink.
+            // A sound effect keeps its ink: it is not translated, so erasing it
+            // would leave a blank panel. The box is the reader's own region,
+            // with a small margin for the strokes at its edge.
+            //
+            // The region matters, not the block. The mask grows around every
+            // stroke by a fifth of the text size, and a block's size is not a
+            // text size: erasing a whole block grew the mask into a blob that
+            // swallowed the balloon.
+            eraseBoxes: collected
+                .filter((line) => line.text.trim().length > 0 && line.kind !== 'sfx')
+                .filter((line) => line.width * line.height <= bitmap.width * bitmap.height * 0.2)
+                .map((line) => {
+                    // The region is snapped to its ink, so a few pixels cover
+                    // the stroke rim; a wider pad reached the balloon wall.
+                    const pad = 3;
+                    const x = Math.max(0, line.x - pad);
+                    const y = Math.max(0, line.y - pad);
+                    const right = Math.min(bitmap.width, line.x + line.width + pad);
+                    const bottom = Math.min(bitmap.height, line.y + line.height + pad);
+                    return {
+                        x,
+                        y,
+                        width: right - x,
+                        height: bottom - y,
+                        angle: line.angle,
+                        kind: 'region' as const,
+                    };
+                }),
             imageWidth: bitmap.width,
             imageHeight: bitmap.height,
             groupedLines: grouped.lines.length,
@@ -597,7 +870,22 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
                 outline: bubble.outline,
                 paper: bubble.paper,
             })),
-            blocks: [],
+            blocks: detected.blkBoxes.map((block) => ({ ...block })),
+            blockReadings: (readings ?? []).map((reading) => ({
+                block: reading.block,
+                raw: reading.raw ?? '',
+                cropUrl: reading.cropUrl,
+                boxes: reading.boxes,
+                regions: reading.regions.map((region) => ({
+                    x: region.x,
+                    y: region.y,
+                    width: region.width,
+                    height: region.height,
+                    text: region.text,
+                    direction: region.direction,
+                    kind: region.kind,
+                })),
+            })),
             ms: Math.round(performance.now() - started),
             warm,
             timings,
@@ -617,7 +905,7 @@ async function runInpaint(request: OffscreenInpaintRequest): Promise<OffscreenIn
     const page = heldPage;
     if (!page || request.boxes.length === 0) return { ok: true, erasedUrl: null };
     try {
-        const erased = await erasePage(page.image, page.textMask, request.boxes);
+        const erased = await erasePage(page.image, page.planes, request.boxes);
         if (erased.covered === 0) return { ok: true, erasedUrl: null };
 
         const overlay = document.createElement('canvas');
@@ -634,17 +922,6 @@ async function runInpaint(request: OffscreenInpaintRequest): Promise<OffscreenIn
     }
 }
 
-async function runBuiltinTranslate(lines: string[]): Promise<{ ok: true; texts: string[] } | { ok: false; error: string }> {
-    if (!canTranslate()) {
-        return { ok: false, error: 'This Chrome build does not expose the browser translator.' };
-    }
-    try {
-        return { ok: true, texts: await translateAll(lines, 'ja', 'zh-Hant') };
-    } catch (cause) {
-        return { ok: false, error: cause instanceof Error ? cause.message : String(cause) };
-    }
-}
-
 // this is off the offscreen document
 chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
     const request = message as IncomingMessage | undefined;
@@ -653,11 +930,6 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
     if (request.type === 'ping') {
         sendResponse(serviceWorkerResponseFactory.ofPing());
         return false;
-    }
-
-    if (request.type === 'translate-builtin') {
-        runBuiltinTranslate(request.lines).then(sendResponse);
-        return true;
     }
 
     if (request.type === 'inpaint') {

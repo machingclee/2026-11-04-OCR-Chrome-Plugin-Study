@@ -19,6 +19,8 @@ export const CONTENT_SCRIPT_FILE = 'pickImage.js';
 export const PICKED_IMAGE_URL_KEY = 'pickedImageUrl';
 /** Marks the exact image element that was picked, so a duplicate URL is unambiguous. */
 export const PICKED_IMAGE_TARGET_KEY = 'pickedImageTarget';
+/** Marks the document the picker ran in. A reload removes it with the DOM. */
+export const PICKER_SESSION_ATTRIBUTE = 'data-comic-translator-picker-session';
 /** Attribute that carries the pick token on that element. */
 export const OVERLAY_TARGET_ATTRIBUTE = 'data-comic-translator-target';
 
@@ -32,11 +34,24 @@ export const DEBUG_PAGES_KEY = 'debugPages';
 export const DEBUG_INDEX_KEY = 'debugIndex';
 
 /** Bump only when the stored detection shape changes, not on every build. */
-export const DETECTION_CACHE_VERSION = 'detection-v3';
+export const DETECTION_CACHE_VERSION = 'detection-v4';
 
-/** When true, a line outside every block is still kept. */
 /** Stored in the browser only, and sent to DeepSeek by the extension itself. */
 export const DEEPSEEK_KEY = 'deepseekKey';
+
+/**
+ * How long DeepSeek may think before it answers. The API maps every request to
+ * one of three efforts, low, high and max, and thinks by default at high, so
+ * those are the levels the popup offers, plus off for a fast pass.
+ *
+ * The level applies to translation only. Reading is perception and never
+ * thinks; translating a block is where a chain of thought is worth its wait,
+ * so the default there is high.
+ */
+export const REASONING_EFFORT_KEY = 'reasoningEffort';
+export const REASONING_EFFORTS = ['off', 'low', 'high', 'max'] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'high';
 /** The popup asks the page to show its finished image. */
 export const REPLACE_IMAGE_MESSAGE = 'comic-translator:replace-image';
 /** The page can put its own image back. */
@@ -48,11 +63,9 @@ export const LEADING_MIN = 1;
 export const LEADING_MAX = 1.6;
 export const FONT_CHOICES = ['sans', 'serif'] as const;
 export type FontChoice = (typeof FONT_CHOICES)[number];
-/** Gemini wins the tie by default: its free tier needs nothing but a key. */
-export const GEMINI_KEY = 'geminiKey';
 export const TRANSLATOR_KEY = 'translator';
-export const TRANSLATORS = ['gemini', 'deepseek', 'builtin'] as const;
-export type TranslatorChoice = (typeof TRANSLATORS)[number];
+/** The only translation provider. */
+export type TranslatorChoice = 'deepseek';
 
 /** Whether the translated text is shown over the page. */
 export const SHOW_TRANSLATION_KEY = 'showTranslation';
@@ -71,6 +84,9 @@ export const DETECTOR_INPUT_SIZE = 1024;
 export const DETECTOR_SCORE_THRESHOLD = 0.25;
 export const DETECTOR_MIN_AREA = 20;
 export const DETECTOR_MIN_MEAN_SCORE = 0.5;
+
+/** Who reads the lines: the on-device recogniser, or DeepSeek. */
+export type OcrProvider = 'local' | 'deepseek';
 
 /** Japanese recogniser, PP-OCRv6 medium in ONNX, plus its charset. */
 

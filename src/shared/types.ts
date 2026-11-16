@@ -1,10 +1,11 @@
 import { OFFSCREEN_TARGET, SERVICE_WORKER_TARGET } from './constants';
+import type { OcrProvider, ReasoningEffort } from './constants';
 
 export type MessageTarget =
     | typeof SERVICE_WORKER_TARGET
     | typeof OFFSCREEN_TARGET;
 
-export type MessageType = 'detect' | 'translate' | 'translate-batch' | 'batch-progress' | 'batch-status' | 'cancel-batch' | 'translate-builtin' | 'ping';
+export type MessageType = 'detect' | 'translate' | 'translate-batch' | 'batch-progress' | 'batch-status' | 'cancel-batch' | 'ping';
 
 export type RubyBox = {
     x: number;
@@ -27,7 +28,28 @@ export type BoxData = {
     lineThickness?: number;
     ruby: RubyBox[];
     text: string;
+    /** Translation written by the reading call, when it provided one. */
+    translation?: string;
     confidence: number;
+    /** The reader's classification: dialogue or sound effect. */
+    kind?: 'chat' | 'sfx';
+    /**
+     * The cell band the label fills inside its block, in page pixels. The
+     * reader counted the block's cells, so the translation is spread over that
+     * band instead of the guessed line box, which stays tight for erasing.
+     */
+    slot?: { x: number; y: number; width: number; height: number };
+};
+
+/**
+ * Who reads the text. The key is passed in the request because the offscreen
+ * document has no access to the popup's settings.
+ */
+export type OcrRequest = {
+    provider: OcrProvider;
+    key: string;
+    /** How long the reader may think. Omitted means the saved setting. */
+    effort?: ReasoningEffort;
 };
 
 /** Popup to service worker. */
@@ -39,6 +61,14 @@ export type DetectRequest = {
     /** Picked pixels, for pages that serve images from a blob: URL. */
     imageDataUrl?: string;
     tabPageUrl?: string;
+    /** Absent for the on-device recogniser. */
+    ocr?: OcrRequest;
+    /**
+     * True for a debug detection: the detector runs, the reader does not. The
+     * debug view wants the blk and det planes quickly, not the reading of every
+     * block over the network.
+     */
+    local?: boolean;
 };
 
 /** One text block from the detector blk output, in page pixels. */
@@ -68,6 +98,8 @@ export type GroupData = {
     width: number;
     height: number;
     lines: string[];
+    /** Translations of `lines`, when the reading call wrote them. */
+    translations?: string[];
     /** Median colour of the paper around this group, as a CSS colour. */
     background?: string;
     /** A text colour that contrasts with the background. */
@@ -108,6 +140,11 @@ export type OverlayItem = {
     rectangle?: boolean;
     /** Original glyph thickness in image pixels, used for the label font size. */
     fontSize?: number;
+    /**
+     * Extra space between characters, in em. A label with fewer characters
+     * than the cells it has room for is spread across its band with this.
+     */
+    spacing?: number;
     /** Balloon outline in image pixels; clips the label to the balloon. */
     clip?: { x: number; y: number }[];
     /** Fill the tight detected area instead of only the seg glyph pixels. */
@@ -146,12 +183,8 @@ export type OffscreenDetectRequest = {
     imageUrl: string;
     /** Picked pixels, for pages that serve images from a blob: URL. */
     imageDataUrl?: string;
-};
-
-export type OffscreenBuiltinTranslateRequest = {
-    target: typeof OFFSCREEN_TARGET;
-    type: 'translate-builtin';
-    lines: string[];
+    /** Absent for the on-device recogniser. */
+    ocr?: OcrRequest;
 };
 
 /**
@@ -165,10 +198,15 @@ export type InpaintBox = {
     width: number;
     height: number;
     angle?: number;
-    /** Paper colour behind these glyphs; when set, no model runs here. */
+    /** Paper colour of the balloon the box sits in, when one was sampled. */
     paper?: [number, number, number];
-    /** Balloon outline in image pixels. */
-    clip?: { x: number; y: number }[];
+    /**
+     * 'line' for a det line box, where the image near the det band is text;
+     * 'region' for any other box, where only the planes mark the text.
+     */
+    kind?: 'line' | 'region' | 'block';
+    /** Rectangles inside a block whose ink stays, such as a sound effect. */
+    keep?: { x: number; y: number; width: number; height: number }[];
 };
 
 /** Erase only these page rectangles. Sound effects never appear in the list. */
@@ -180,10 +218,6 @@ export type OffscreenInpaintRequest = {
 
 export type OffscreenInpaintResponse =
     | { ok: true; erasedUrl: string | null }
-    | { ok: false; error: string };
-
-export type OffscreenBuiltinTranslateResponse =
-    | { ok: true; texts: string[] }
     | { ok: false; error: string };
 
 /** Offscreen document to service worker. */
@@ -207,7 +241,6 @@ export type IncomingMessage =
     | BatchStatusRequest
     | CancelBatchRequest
     | OffscreenDetectRequest
-    | OffscreenBuiltinTranslateRequest
     | OffscreenInpaintRequest
     | OffscreenPing;
 
@@ -219,6 +252,26 @@ export type DetectTimings = {
     group: number;
     ocr: number;
     extras: number;
+};
+
+/** One block reading, as the debug view shows it: the box and the raw answer. */
+export type BlockReadingData = {
+    block: { x: number; y: number; width: number; height: number; score: number };
+    raw: string;
+    cropUrl?: string;
+    /** The detector's line boxes drawn in blue on the crop the reader saw. */
+    boxes?: { x: number; y: number; width: number; height: number }[];
+    /** The translation this block produced, written back after the second pass. */
+    translation?: string;
+    regions: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+        text: string;
+        direction: string;
+        kind: string;
+    }[];
 };
 
 export type DetectResponse =
@@ -236,6 +289,8 @@ export type DetectResponse =
           bubbles: BubbleData[];
           /** Text blocks from the blk head. */
           blocks: BlockData[];
+          /** One entry per block: the BLK box and the answer the reader gave for it. */
+          blockReadings?: BlockReadingData[];
           erasedUrl: string | null;
           /** The seg map is still held, so a later pass can erase only the lines we translate. */
           canInpaint: boolean;
@@ -244,6 +299,18 @@ export type DetectResponse =
           /** Seg score map painted back onto the page. Null when the plane was empty. */
           segUrl: string | null;
           originalUrl: string | null;
+          /** Who read the lines, when a cloud reader ran. */
+          ocrProvider?: string;
+          /** Lines the on-device model read. */
+          ocrFallbacks?: number;
+          /** Lines the cloud reader supplied text for. */
+          ocrCloudLines?: number;
+          /**
+           * Every detected text region, whether or not it was translated. The
+           * inpaint pass erases this set, so a line the reader or the translator
+           * skipped does not leave its ink behind.
+           */
+          eraseBoxes?: { x: number; y: number; width: number; height: number; angle?: number; kind?: 'line' | 'region' }[];
           timings?: DetectTimings;
       }
     | { ok: false; error: string };
@@ -259,9 +326,10 @@ export type TranslationAnswer = {
 };
 
 export type TranslateSettings = {
-    translator: 'gemini' | 'deepseek' | 'builtin';
+    translator: 'deepseek';
     deepSeekKey: string;
-    geminiKey: string;
+    /** How long DeepSeek may think, for the reading and the translation alike. */
+    effort?: ReasoningEffort;
     font: 'sans' | 'serif';
     leading: number;
     weight: 'normal' | 'bold';
@@ -286,7 +354,7 @@ export type TranslateResponse =
           ok: true;
           count: number;
           used: string;
-          active: 'gemini' | 'deepseek' | 'builtin';
+          active: 'deepseek';
           skipped: number;
           withBalloon: number;
           balloons: number;
@@ -303,6 +371,8 @@ export type DebugPage = {
     token?: string;
     imageUrl: string;
     boxes: BoxData[];
+    /** One preview per box, at debug size. Absent on pages saved before this. */
+    previews?: string[];
     bubbles: BubbleData[];
     /** Blk boxes for this page. Absent on results saved before they were drawn. */
     blocks?: BlockData[];

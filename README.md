@@ -31,7 +31,25 @@ the models, which are not committed.
    the popup. With the picker on, right-click an image and choose **Show/Hide
    Translation** to compare the result with the original page; the item is
    greyed out on a page that has no translation yet. The **Translation** switch
-   in the popup does the same thing.
+   in the popup does the same thing. The stored result belongs to the document
+   it was picked from, so a page reload clears it and the popup starts empty.
+
+## Open work
+
+`docs/handoff-four-columns.md` is an open bug handed over with its pipeline map,
+the failing case, what has been tried and the diagnostics that would pin it down.
+
+## Settings
+
+The popup stores the DeepSeek key and the translation effort in
+`chrome.storage.local`, so both survive a browser restart. The effort is written
+the moment the menu changes; the key is only written when **Save settings** is
+pressed.
+
+The effort applies to translation only, one request per block, and defaults to
+high. Reading a block — transcribing the text and placing it on the grid — never
+thinks. The API maps every level onto low, high or max, so the popup offers off,
+low, high and max.
 
 ## Shortcuts
 
@@ -60,10 +78,11 @@ archive by reading only the byte range that holds it.
 
 ```
 Popup  →  Service worker  →  Offscreen document
-                                 detector  : det map → components → unclip
-                                             blk rows → blocks
+                                 detector  : det map → line seeds → glyph
+                                             strokes → one box per column
                                  bubble    : 640 YOLOv8 seg → balloons
-                                 recogniser: per line crop → CTC decode
+                                 recogniser: per line crop → CTC decode, or a
+                                             cloud model over the same crops
                                  overlay   : translated boxes → page DOM
                                  regions   : blocks first, balloons after
 ```
@@ -86,11 +105,13 @@ Four contexts, one message protocol:
 
 ## Layout
 
-- `src/lib/detector.ts` turns the det and blk outputs into line boxes.
+- `src/lib/detect/` runs the detector and turns the det and seg maps into line boxes.
 - `src/lib/rect.ts` fits the minimum area rectangle, which gives the slant.
 - `src/lib/warp.ts` turns an angle into an upright crop.
 - `src/lib/readingOrder.ts` merges, separates ruby, groups by region, orders.
 - `src/lib/erase.ts` paints the seg mask out of a crop preview before it is shown.
 - `src/lib/bubble.ts` decodes the balloon segmentation.
 - `src/lib/ocr` crops, normalises, and decodes each line.
+- `src/lib/ocr/cloudOcr.ts` sends one crop per block to DeepSeek, which returns the regions, their text and their layout; the boxes stay local.
+- `src/lib/ocr/grid.ts` draws the grid on a block crop and maps the cell box the reader answers with back to page pixels.
 - `src/shared` holds the constants, types, and message factories.

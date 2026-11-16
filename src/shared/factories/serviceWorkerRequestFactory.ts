@@ -1,11 +1,16 @@
 import { SERVICE_WORKER_TARGET } from '../constants';
-import type { BatchItem, BatchStatusRequest, CancelBatchRequest, DetectRequest, TranslateBatchRequest, TranslateRequest, TranslateSettings } from '../types';
+import type { BatchItem, BatchStatusRequest, CancelBatchRequest, DetectRequest, OcrRequest, TranslateBatchRequest, TranslateRequest, TranslateSettings } from '../types';
 
 /** Messages addressed to the service worker. */
-function ofDetection(imageUrl: string, tabPageUrl?: string, imageDataUrl?: string): DetectRequest {
-    return imageDataUrl
-        ? { target: SERVICE_WORKER_TARGET, type: 'detect', imageUrl, imageDataUrl, tabPageUrl }
-        : { target: SERVICE_WORKER_TARGET, type: 'detect', imageUrl, tabPageUrl };
+function ofDetection(imageUrl: string, tabPageUrl?: string, options: { ocr?: OcrRequest; local?: boolean } = {}): DetectRequest {
+    return {
+        target: SERVICE_WORKER_TARGET,
+        type: 'detect',
+        imageUrl,
+        tabPageUrl,
+        ...(options.ocr ? { ocr: options.ocr } : {}),
+        ...(options.local ? { local: true } : {}),
+    };
 }
 
 function ofTranslation(input: {

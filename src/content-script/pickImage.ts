@@ -1,7 +1,9 @@
 import {
+    DEEPSEEK_KEY,
     OVERLAY_TARGET_ATTRIBUTE,
     PICKED_IMAGE_TARGET_KEY,
     PICKED_IMAGE_URL_KEY,
+    PICKER_SESSION_ATTRIBUTE,
     SHOW_TRANSLATION_KEY,
 } from '../shared/constants';
 import { clearAll, readOverlayState, toggleOverlayVisibility } from './overlay';
@@ -274,7 +276,7 @@ function findAt(doc: Document, x: number, y: number, offsetX: number, offsetY: n
 }
 
 const PICK_MENU_ID = 'comic-translator-pick-menu';
-const PICKER_SESSION_ATTR = 'data-comic-translator-picker-session';
+const PICKER_SESSION_ATTR = PICKER_SESSION_ATTRIBUTE;
 const DRAG_BOX_ATTR = 'data-comic-translator-drag-box';
 const STATUS_BOX_ATTR = 'data-comic-translator-status';
 
@@ -558,8 +560,7 @@ function start(): void {
                         if (progress.stage === 'detecting') text.textContent = 'Detecting boxes ...';
                         if (progress.stage === 'inpainting') text.textContent = 'Inpainting ...';
                         if (progress.stage === 'calling') {
-                            const provider = progress.provider === 'deepseek' ? 'DeepSeek' : progress.provider === 'gemini' ? 'Gemini' : 'translation';
-                            text.textContent = `Calling ${provider}-api ...`;
+                            text.textContent = 'Reading and translating with DeepSeek ...';
                         }
                     };
                     chrome.runtime.onMessage.addListener(progressListener);
@@ -763,7 +764,7 @@ function startBatchSelection(): void {
                 button.textContent = selection.length > 0
                     ? `✓ Translate ${selection.length} image${selection.length === 1 ? '' : 's'}`
                     : '✓ Translate selected';
-                button.disabled = selection.length === 0;
+                button.disabled = selection.length === 0 || !translateReady;
             }
         }
     };
@@ -904,6 +905,10 @@ function startBatchSelection(): void {
     const confirmSelection = async (): Promise<void> => {
         if (selection.length === 0) {
             showToast('Select at least one image.');
+            return;
+        }
+        if (!translateReady) {
+            showToast('Add a DeepSeek API key in the extension popup first.');
             return;
         }
         // Pixels are captured one image at a time, so a single blob: page does
@@ -1075,7 +1080,10 @@ function startBatchSelection(): void {
             });
             menu.append(item);
         };
-        addItem(`Translate selected (${selection.length})`, () => { void confirmSelection(); }, icons.translate);
+        addItem(`Translate selected (${selection.length})`, () => { void confirmSelection(); }, icons.translate, {
+            enabled: translateReady,
+            hint: translateReady ? undefined : 'Add a DeepSeek API key in the extension popup first.',
+        });
         addDivider();
         addItem('Unselect all', unselectAll, icons.unselectAll);
         addDivider();
@@ -1341,18 +1349,36 @@ type BatchProgressUi = {
     hideTimer?: number;
 };
 
+/**
+ * Whether a DeepSeek key is saved. Without one the extension cannot translate
+ * or read anything, so the selection UI stays disabled rather than failing
+ * after a page has been captured.
+ */
+let translateReady = false;
+
+const refreshTranslateReady = (): void => {
+    chrome.storage.local.get([DEEPSEEK_KEY])
+        .then((local) => {
+            const key = local[DEEPSEEK_KEY];
+            translateReady = typeof key === 'string' && key.trim().length > 0;
+        })
+        .catch(() => {
+            translateReady = false;
+        });
+};
+refreshTranslateReady();
+chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && DEEPSEEK_KEY in changes) refreshTranslateReady();
+});
+
 let batchProgressUi: BatchProgressUi | null = null;
 let batchStage = '';
 let batchRunningIndex = -1;
 
-function stagePhrase(stage: string, provider?: string): string {
+function stagePhrase(stage: string): string {
     if (stage === 'detecting') return 'Detecting boxes';
     if (stage === 'inpainting') return 'Inpainting';
-    if (stage === 'calling') {
-        if (provider === 'deepseek') return 'DeepSeek API translating';
-        if (provider === 'gemini') return 'Gemini API translating';
-        return 'Browser translating';
-    }
+    if (stage === 'calling') return 'DeepSeek API reading and translating';
     return '';
 }
 
@@ -1443,7 +1469,7 @@ if (!batchWindow.__comicTranslatorBatchListener) {
     chrome.runtime.onMessage.addListener((message: unknown) => {
         const progress = message as BatchProgressMessage | { kind?: string; stage?: string; provider?: string } | undefined;
         if (progress && 'kind' in progress && progress.kind === 'translate-progress' && typeof progress.stage === 'string') {
-            const phrase = stagePhrase(progress.stage, progress.provider);
+            const phrase = stagePhrase(progress.stage);
             if (phrase && batchProgressUi) {
                 batchStage = phrase;
                 const current = batchProgressUi.text.textContent ?? '';

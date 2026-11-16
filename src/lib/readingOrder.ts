@@ -83,9 +83,13 @@ export function mergeAligned(boxes: Box[]): Box[] {
                 // whole box. A kana box above a sound effect can share its x and
                 // sit a box width away; joining that pair makes one box that no
                 // balloon contains, and the kana then falls off the page.
-                const columnLimit = minWidth * (bothTall ? 0.7 : 0.5);
-                const stack = sameColumn && yGap <= columnLimit
-                    && (isTall(a) || isTall(b) || yGap < minHeight);
+                const columnLimit = minWidth * 0.7;
+                // Only a column is stacked. Two rows of horizontal text share
+                // their whole span, so width says nothing about the gap between
+                // them; a caption whose rows sit close would be joined into one
+                // box and read as one line. Pieces of a horizontal row sit side
+                // by side, and the row rule below already joins those.
+                const stack = sameColumn && bothTall && yGap <= columnLimit;
                 const join = sameRow && isWide(a) && isWide(b) && xGap <= minHeight * 0.7;
                 if (!stack && !join) continue;
 

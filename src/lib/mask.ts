@@ -245,3 +245,106 @@ export function paintSamples(
     }
     return painted;
 }
+
+/**
+ * The ink a stroke plane marks inside one box.
+ *
+ * A box a model drew from memory is loose, short, or off centre, and the width
+ * of that box is what the font size follows, so a bad box makes a bad font. The
+ * strokes are where the glyphs are. The search widens the box a little, then
+ * keeps only the band of ink that contains the box centre: a wide box that
+ * touches the column beside it cannot swallow that column.
+ */
+export function inkBounds(
+    mask: TextMask | null,
+    box: { x: number; y: number; width: number; height: number },
+    threshold = 0.3,
+): { x: number; y: number; width: number; height: number } | null {
+    if (!mask) return null;
+    const vertical = box.height >= box.width;
+    const pad = Math.max(4, Math.min(12, Math.round(Math.min(box.width, box.height) * 0.5)));
+    const pageX0 = Math.max(0, box.x - pad);
+    const pageY0 = Math.max(0, box.y - pad);
+    const pageX1 = box.x + box.width + pad;
+    const pageY1 = box.y + box.height + pad;
+    const mapX0 = Math.max(0, Math.floor(pageX0 * mask.scale + mask.padX));
+    const mapY0 = Math.max(0, Math.floor(pageY0 * mask.scale + mask.padY));
+    const mapX1 = Math.min(MODEL_SIZE - 1, Math.ceil(pageX1 * mask.scale + mask.padX));
+    const mapY1 = Math.min(MODEL_SIZE - 1, Math.ceil(pageY1 * mask.scale + mask.padY));
+    if (mapX1 <= mapX0 || mapY1 <= mapY0) return null;
+
+    const width = mapX1 - mapX0 + 1;
+    const height = mapY1 - mapY0 + 1;
+    const occupied = new Uint8Array(vertical ? width : height);
+    const at = (x: number, y: number): number => mask.data[y * MODEL_SIZE + x];
+    for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+            if (at(mapX0 + x, mapY0 + y) < threshold) continue;
+            if (vertical) occupied[x] = 1;
+            else occupied[y] = 1;
+        }
+    }
+
+    const centre = vertical
+        ? (box.x + box.width / 2) * mask.scale + mask.padX - mapX0
+        : (box.y + box.height / 2) * mask.scale + mask.padY - mapY0;
+    const seed = Math.max(0, Math.min(occupied.length - 1, Math.round(centre)));
+    let low = -1;
+    if (occupied[seed]) low = seed;
+    else {
+        for (let step = 1; step < occupied.length && low < 0; step += 1) {
+            if (seed - step >= 0 && occupied[seed - step]) low = seed - step;
+            else if (seed + step < occupied.length && occupied[seed + step]) low = seed + step;
+        }
+    }
+    if (low < 0) return null;
+    // Grow both ways from the seed, across short gaps, so the band is the whole
+    // column of ink and not just the part to the right of the centre.
+    let high = low;
+    let gap = 0;
+    for (let index = low + 1; index < occupied.length; index += 1) {
+        if (occupied[index]) {
+            high = index;
+            gap = 0;
+            continue;
+        }
+        gap += 1;
+        if (gap > 2) break;
+    }
+    let first = low;
+    gap = 0;
+    for (let index = low - 1; index >= 0; index -= 1) {
+        if (occupied[index]) {
+            first = index;
+            gap = 0;
+            continue;
+        }
+        gap += 1;
+        if (gap > 2) break;
+    }
+    low = first;
+
+    let minY = Infinity;
+    let maxY = -1;
+    let minX = Infinity;
+    let maxX = -1;
+    for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+            const across = vertical ? x : y;
+            if (across < low || across > high) continue;
+            if (at(mapX0 + x, mapY0 + y) < threshold) continue;
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+        }
+    }
+    if (maxX < 0 || maxY < 0) return null;
+
+    const x = (mapX0 + minX - mask.padX) / mask.scale;
+    const y = (mapY0 + minY - mask.padY) / mask.scale;
+    const inkWidth = (maxX - minX + 1) / mask.scale;
+    const inkHeight = (maxY - minY + 1) / mask.scale;
+    if (inkWidth < 4 || inkHeight < 4) return null;
+    return { x, y, width: inkWidth, height: inkHeight };
+}

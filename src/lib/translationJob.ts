@@ -1,16 +1,15 @@
-import type { TranslatorChoice } from '../shared/constants';
+import type { ReasoningEffort, TranslatorChoice } from '../shared/constants';
 import type { BoxData, BubbleData, GroupData, OverlayItem } from '../shared/types';
 import type { RegionAnswer } from './translatePrompt';
-import { canTranslate, translateAll } from './translate';
 import { translateWithDeepSeek } from './translateDeepSeek';
-import { translateWithGemini } from './translateGemini';
-import { safeBreak, toHorizontal, toVertical } from './punct';
-import { cropSize } from './warp';
+import { toHorizontal, toVertical } from './punct';
+import { fallbackSegments, fitColumns } from './fitColumns';
 
 export type TranslationSettings = {
     translator: TranslatorChoice;
     deepSeekKey: string;
-    geminiKey: string;
+    /** How long DeepSeek may think. Omitted means the default level. */
+    effort?: ReasoningEffort;
 };
 
 export type TranslationJobInput = {
@@ -20,7 +19,6 @@ export type TranslationJobInput = {
     imageWidth: number;
     imageHeight: number;
     settings: TranslationSettings;
-    translateBuiltin?: (lines: string[]) => Promise<string[]>;
     signal?: AbortSignal;
 };
 
@@ -35,6 +33,11 @@ export type TranslationJobResult = {
     withBalloon: number;
     /** Every source line of a translated group, including columns that received no label. */
     erase: EraseBox[];
+    /**
+     * Source lines that got no translation. Their ink stays: erasing text the
+     * translator left out would leave a blank hole in the balloon.
+     */
+    keep: EraseBox[];
 };
 
 function countWithBalloon(list: GroupData[], balloons: BubbleData[]): number {
@@ -47,13 +50,23 @@ function countWithBalloon(list: GroupData[], balloons: BubbleData[]): number {
     }).length;
 }
 
-/** Upright crop of a leaned line, placed so a rotation around its centre lands on the glyphs. */
+/**
+ * Upright crop of a leaned line, placed so a rotation around its centre lands on
+ * the glyphs. The direction of the text decides which side is the thickness; the
+ * shape of the page box cannot, because a line leaning 20 degrees has a box that
+ * can be taller than it is wide.
+ */
 function placedFrame(line: BoxData): { x: number; y: number; width: number; height: number; angle?: number } {
     const angle = line.angle ?? 0;
     if (Math.abs(angle) < 0.01) {
         return { x: line.x, y: line.y, width: line.width, height: line.height };
     }
-    const size = cropSize(line);
+    const length = line.lineLength && line.lineLength >= 4 ? line.lineLength : Math.max(line.width, line.height);
+    const thickness = line.lineThickness && line.lineThickness >= 4 ? line.lineThickness : Math.min(line.width, line.height);
+    const vertical = line.direction === 'vertical';
+    const size = vertical
+        ? { width: thickness, height: length }
+        : { width: length, height: thickness };
     const centreX = line.x + line.width / 2;
     const centreY = line.y + line.height / 2;
     return {
@@ -63,6 +76,24 @@ function placedFrame(line: BoxData): { x: number; y: number; width: number; heig
         height: size.height,
         angle,
     };
+}
+
+/**
+ * Drop a clause the model repeated at the end of its own translation.
+ *
+ * A translated block came back as 也就是說人類遇見外星人這件事也就是說人類: the
+ * opening clause written again after the full sentence, so the page carried
+ * the phrase twice in two columns. Nothing legitimate repeats its own opening
+ * verbatim, so a suffix that equals the prefix is a repeat and is removed.
+ */
+function trimRepeatedHead(text: string): string {
+    const chars = [...text];
+    for (let size = Math.floor(chars.length / 2); size >= 4; size -= 1) {
+        if (chars.slice(chars.length - size).join('') === chars.slice(0, size).join('')) {
+            return chars.slice(0, chars.length - size).join('');
+        }
+    }
+    return text;
 }
 
 /** Detect, filter, translate, and lay out one image without touching the page. */
@@ -79,58 +110,94 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         lines: group.lines,
     }));
 
-    let active = settings.translator;
-    if (active === 'gemini' && settings.geminiKey.trim().length === 0 && settings.deepSeekKey.trim().length > 0) {
-        active = 'deepseek';
-    } else if (active === 'deepseek' && settings.deepSeekKey.trim().length === 0 && settings.geminiKey.trim().length > 0) {
-        active = 'gemini';
+    const active = 'deepseek' as const;
+    const key = settings.deepSeekKey.trim();
+    // Reading and translating are two passes now. The reader answers with text
+    // and layout only, at no thinking; this pass translates one block at a
+    // time, at the effort the popup chose, with the rest of the page as
+    // context so the speech still reads as one conversation.
+    const translations = current.map((group) => (Array.isArray(group.translations)
+        ? group.translations.map((text) => text.trim()).filter(Boolean).join('')
+        : ''));
+    const missing = translations
+        .map((text, index) => (text.trim().length === 0 ? index : -1))
+        .filter((index) => index >= 0);
+    let used = 'DeepSeek (reading call)';
+    let out: RegionAnswer[];
+    if (missing.length === 0) {
+        out = translations.map((text) => ({ text }));
+        console.info(`[translate] ${current.length} block(s) already translated; no second request`);
+    } else {
+        if (key.length === 0) throw new Error('Paste a DeepSeek API key to translate this page.');
+        const effort = settings.effort ?? 'high';
+        const pageTexts = current.map((group) => group.lines.join(''));
+        const answers = new Map<number, RegionAnswer>();
+        const request = async (index: number): Promise<void> => {
+            try {
+                const [answer] = await translateWithDeepSeek(
+                    [regions[index]],
+                    key,
+                    input.signal,
+                    effort,
+                    pageTexts.filter((_, other) => other !== index),
+                );
+                if (answer) answers.set(index, answer);
+            } catch (cause) {
+                if (input.signal?.aborted) return;
+                console.warn(`Block ${index + 1} could not be translated.`, cause);
+            }
+        };
+        const queue = [...missing];
+        let cursor = 0;
+        const worker = async (): Promise<void> => {
+            while (true) {
+                const at = cursor;
+                cursor += 1;
+                if (at >= queue.length) return;
+                await request(queue[at]);
+            }
+        };
+        await Promise.all(Array.from({ length: Math.min(4, queue.length) }, () => worker()));
+        console.info(`[translate] ${answers.size} of ${missing.length} block(s) translated, effort ${effort}`);
+        out = current.map((_, index) => answers.get(index) ?? { text: '' });
+        used = 'DeepSeek (one request per block)';
     }
 
-    const key = active === 'gemini' ? settings.geminiKey.trim() : settings.deepSeekKey.trim();
-    let used = active === 'gemini' ? 'Gemini' : active === 'deepseek' ? 'DeepSeek' : 'browser';
-    let out: RegionAnswer[] | null = null;
-
-    if (active === 'builtin') {
-        const plain = current.map((group) => group.lines.join(''));
-        if (input.translateBuiltin) {
-            out = (await input.translateBuiltin(plain)).map((text) => ({ text }));
-        } else if (canTranslate()) {
-            out = (await translateAll(plain, 'ja', 'zh-Hant')).map((text) => ({ text }));
-        } else {
-            throw new Error('This Chrome build does not expose the browser translator.');
-        }
-        used = 'browser';
-    } else if (key.length > 0) {
-        out = active === 'gemini'
-            ? await translateWithGemini(regions, key, input.signal)
-            : await translateWithDeepSeek(regions, key, input.signal);
-    } else if (canTranslate()) {
-        used = 'browser (no API key)';
-        const plain = current.map((group) => group.lines.join(''));
-        out = (await translateAll(plain, 'ja', 'zh-Hant')).map((text) => ({ text }));
-    }
-
-    if (!out) {
-        throw new Error(
-            active === 'builtin'
-                ? 'This Chrome ships no translator. Pick Gemini or DeepSeek and paste a key.'
-                : `Paste a ${active === 'gemini' ? 'Gemini' : 'DeepSeek'} key above.`,
-        );
-    }
+    // Write the answers back into the block results, so the block carries the
+    // translation it produced and a later pass does not translate it twice.
+    current.forEach((group, index) => {
+        const answer = out[index];
+        if (!answer || answer.skip || answer.type === 'sfx') return;
+        const columns = (answer.columns ?? []).map((column) => column.trim()).filter(Boolean);
+        const text = answer.text.trim();
+        if (columns.length > 0) group.translations = columns;
+        else if (text.length > 0) group.translations = [text];
+    });
 
     const items: OverlayItem[] = [];
     const erase: EraseBox[] = [];
+    const keep: EraseBox[] = [];
     let skipped = 0;
+    const inkOf = (line: BoxData): EraseBox => ({ x: line.x, y: line.y, width: line.width, height: line.height });
+    const linesOf = (group: GroupData): BoxData[] => boxes.filter((line) => {
+        const x = line.x + line.width / 2;
+        const y = line.y + line.height / 2;
+        return line.text.trim().length > 0
+            && x >= group.x && x <= group.x + group.width
+            && y >= group.y && y <= group.y + group.height;
+    });
 
     current.forEach((group, index) => {
         const answer = out[index];
         if (answer?.skip || answer?.type === 'sfx') {
             skipped += 1;
+            if (answer?.skip) for (const line of linesOf(group)) if (line.kind !== 'sfx') keep.push(inkOf(line));
             return;
         }
         const text = answer?.text ?? group.lines.join('');
         if (text.trim().length === 0) {
             skipped += 1;
+            for (const line of linesOf(group)) if (line.kind !== 'sfx') keep.push(inkOf(line));
             return;
         }
 
@@ -141,13 +208,7 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
                 centreX >= bubble.x && centreX <= bubble.x + bubble.width
                 && centreY >= bubble.y && centreY <= bubble.y + bubble.height)
             : undefined;
-        const linesInGroup = boxes.filter((line) => {
-            const x = line.x + line.width / 2;
-            const y = line.y + line.height / 2;
-            return line.text.trim().length > 0
-                && x >= group.x && x <= group.x + group.width
-                && y >= group.y && y <= group.y + group.height;
-        });
+        const linesInGroup = linesOf(group);
         const verticalLines = linesInGroup.filter((line) => line.direction === 'vertical').length;
         const horizontalLines = linesInGroup.filter((line) => line.direction === 'horizontal').length;
         const vertical = verticalLines !== horizontalLines
@@ -168,9 +229,17 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         const thickest = strokes.length > 0 ? Math.max(...strokes) : 0;
         // The page-aligned width of a slanted line includes the lean, so a
         // reading looks as wide as the column. The stroke thickness does not.
-        const bodyLines = thickest > 0
-            ? sortedLines.filter((line) => strokeOf(line) >= thickest / 1.6)
-            : sortedLines;
+        //
+        // A group the reader built has one line per column, and none of those is
+        // a sliver of a detection: every line is a column, so a column that came
+        // back thinner than its neighbour is still a column and keeps its box.
+        // The filter only applies to a group the detector shaped.
+        const fromReader = sortedLines.some((line) => line.kind === 'chat' || line.kind === 'sfx');
+        const bodyLines = fromReader
+            ? sortedLines
+            : thickest > 0
+                ? sortedLines.filter((line) => strokeOf(line) >= thickest / 1.6)
+                : sortedLines;
         const placedLines = bodyLines.length > 0 ? bodyLines : sortedLines;
         // A group can come back with fewer columns than it had. The spare source
         // line would otherwise keep its ink, because only labelled frames are erased.
@@ -202,51 +271,135 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
             ? glyphSizes.reduce((sum, value) => sum + value, 0) / glyphSizes.length
             : 0;
         const font = glyph > 0 ? Math.max(6, Math.round(glyph * 1.2)) : (group.fontSize ?? 12);
+        console.info(`[typeset] group ${index}: glyph ${glyph.toFixed(1)}px, font ${font}px, ${placedLines.length} line(s), thicknesses ${glyphSizes.map((value) => Math.round(value)).join(',')}`);
 
-        const sourceColumns = group.lines.map((line) => line.trim()).filter(Boolean);
-        const sourceLengths = sourceColumns.map((line) => [...line].length);
-        const baseline = Math.max(1, ...sourceLengths);
         const translatedColumns = (answer?.columns ?? [])
             .map((column) => column.trim())
             .filter(Boolean);
         if (translatedColumns.length === 0) translatedColumns.push(text.trim());
+        // A column that repeats the one before it is the model padding the
+        // layout, not text: the same phrase split into two columns showed up
+        // twice on the page. It is dropped before the columns are laid out.
+        const uniqueColumns = translatedColumns.filter((column, at) => (
+            at === 0 || column !== translatedColumns[at - 1]
+        ));
+        const joined = uniqueColumns.join('');
+        const trimmed = trimRepeatedHead(joined);
+        translatedColumns.length = 0;
+        translatedColumns.push(...(trimmed === joined ? uniqueColumns : [trimmed]));
 
-        const columns: string[] = [];
-        let carry = '';
-        const targetCount = Math.max(sourceLengths.length, translatedColumns.length, 1);
-        for (let index = 0; index < targetCount || carry.length > 0; index += 1) {
-            const current = `${carry}${translatedColumns[index] ?? ''}`.trim();
-            carry = '';
-            if (!current) continue;
-            const own = sourceLengths[index] ?? sourceLengths[sourceLengths.length - 1] ?? baseline;
-            const length = [...current].length;
-            const isLast = index >= targetCount - 1;
-            if (length <= own || length <= baseline || isLast) {
-                columns.push(current);
-                continue;
-            }
-            const chars = [...current];
-            const cut = safeBreak(chars, baseline);
-            columns.push(chars.slice(0, cut).join(''));
-            carry = chars.slice(cut).join('');
+        // The reader found the lines; the translation is fitted into them and
+        // no label is ever added beside them. Three steps:
+        //
+        // 1. A line the translator marked as furigana, or a line whose label
+        //    would sit on top of a larger neighbour's, is not a column. Its ink
+        //    is still erased above, it just gets no text.
+        // 2. The translation comes back cut into pieces that must stay whole
+        //    (外星人 is one piece). Without pieces, the translator's columns,
+        //    cut at their punctuation, stand in.
+        // 3. fitColumns deals whole pieces into the lines by the room each line
+        //    has, and returns one font factor that makes every part fit.
+        const frameOf = (line: BoxData) => (
+            line.slot && Math.abs(line.angle ?? 0) < 0.01 ? line.slot : placedFrame(line)
+        );
+        const fontOf = (line: BoxData): number => {
+            const size = strokeOf(line);
+            return size >= 4 ? Math.max(6, Math.round(size * 1.2)) : fittedFont;
+        };
+        const fittedFont = Math.max(6, Math.round(font));
+
+        const rubyTexts = (answer?.ruby ?? [])
+            .map((at) => group.lines[at - 1]?.trim())
+            .filter((value): value is string => Boolean(value));
+        let layoutLines = placedLines.filter((line) => {
+            const at = rubyTexts.indexOf(line.text.trim());
+            if (at < 0) return true;
+            rubyTexts.splice(at, 1);
+            return false;
+        });
+        if (layoutLines.length === 0) layoutLines = placedLines;
+        if (fromReader && layoutLines.length > 1) {
+            const span = (frame: { x: number; y: number; width: number; height: number }, across: boolean): [number, number] => (
+                across === vertical ? [frame.x, frame.x + frame.width] : [frame.y, frame.y + frame.height]
+            );
+            const overlapShare = (left: [number, number], right: [number, number]): number => {
+                const shared = Math.min(left[1], right[1]) - Math.max(left[0], right[0]);
+                const shorter = Math.min(left[1] - left[0], right[1] - right[0]);
+                return shorter > 0 ? Math.max(0, shared) / shorter : 0;
+            };
+            // Furigana the reader and the translator both missed: a short kana
+            // line printed at a clearly smaller size, right beside a larger
+            // line it runs alongside.
+            const largest = Math.max(...layoutLines.map(fontOf));
+            layoutLines = layoutLines.filter((line) => {
+                const kana = line.text.replace(/[\s、。！？…「」『』]/gu, '');
+                if (!/^[\u3040-\u309F\u30A0-\u30FF\u30FC]{1,8}$/u.test(kana) || fontOf(line) >= largest * 0.7) return true;
+                const own = frameOf(line);
+                return !layoutLines.some((other) => {
+                    if (other === line || fontOf(other) < largest * 0.85) return false;
+                    const theirs = frameOf(other);
+                    const gap = Math.max(span(theirs, true)[0] - span(own, true)[1], span(own, true)[0] - span(theirs, true)[1], 0);
+                    return gap <= fontOf(other) && overlapShare(span(own, false), span(theirs, false)) > 0.5;
+                });
+            });
+            layoutLines = layoutLines.filter((line) => {
+                const own = frameOf(line);
+                return !layoutLines.some((other) => {
+                    if (other === line || fontOf(other) <= fontOf(line)) return false;
+                    const theirs = frameOf(other);
+                    return overlapShare(span(own, true), span(theirs, true)) > 0.3
+                        && overlapShare(span(own, false), span(theirs, false)) > 0.3;
+                });
+            });
         }
 
-        if (placedLines.length > 0 && columns.length > 0 && columns.length !== placedLines.length) {
-            const chars = [...columns.join('')];
-            const per = Math.max(1, Math.ceil(chars.length / placedLines.length));
-            columns.length = 0;
-            for (let index = 0; index < placedLines.length; index += 1) {
-                columns.push(chars.slice(index * per, (index + 1) * per).join(''));
-            }
-        }
+        // The pieces were checked against the translation when they were read;
+        // a translation that repeats its own head is cleaned up from the
+        // columns instead.
+        const pieceText = answer?.segments?.join('') ?? '';
+        const segments = answer?.segments && trimRepeatedHead(pieceText) === pieceText
+            ? answer.segments
+            : fallbackSegments(translatedColumns);
+        const fullText = segments.join('');
+        const capacities = layoutLines.map((line) => {
+            const frame = frameOf(line);
+            return (vertical ? frame.height : frame.width) / fontOf(line);
+        });
+        const fromTranslator = segments === answer?.segments;
+        const fit = fitColumns(segments, capacities, {
+            // Pieces the translator marked are words; cutting one costs far
+            // more than an uneven fill. Punctuation hints are cheaper to cut.
+            insidePenalty: fromTranslator ? 20 : 2,
+            preferred: translatedColumns.join('') === fullText ? translatedColumns : undefined,
+        });
+        console.info(`[typeset] group ${index}: ${fit.parts.length} label(s) for ${layoutLines.length} line(s), `
+            + `scale ${fit.scale.toFixed(2)}: source ${JSON.stringify(group.lines)}, `
+            + `placed ${JSON.stringify(layoutLines.map((line) => line.text))}, ruby ${JSON.stringify(answer?.ruby ?? [])}, `
+            + `segments ${JSON.stringify(segments)}, capacity ${JSON.stringify(capacities.map((value) => Number(value.toFixed(1))))}, `
+            + `labels ${JSON.stringify(fit.parts)}`);
 
-        const push = (line: { x: number; y: number; width: number; height: number; angle?: number }, content: string) => {
+        const push = (
+            line: { x: number; y: number; width: number; height: number; angle?: number },
+            content: string,
+            sourceFont: number,
+        ) => {
+            const text = vertical ? toVertical(content) : toHorizontal(content);
+            const fontSize = Math.max(6, Math.round(sourceFont * fit.scale));
+            // Spread the label over its band: a translation with fewer
+            // characters than the cells it has room for is spaced out instead
+            // of bunching at the start of the block. The spacing is in em, so
+            // it follows the font when the fit shrinks it.
+            const characters = [...text]
+                .filter((character) => character !== '\u2060' && character !== '\n')
+                .length;
+            const available = vertical ? line.height : line.width;
+            const natural = characters * fontSize;
+            const spacing = characters >= 2 && natural > 0 && available > natural
+                ? Math.min(0.6, available / natural - 1)
+                : 0;
             items.push({
-                x: line.x,
-                y: line.y,
-                width: line.width,
-                height: line.height,
-                text: vertical ? toVertical(content) : toHorizontal(content),
+                ...line,
+                text,
                 vertical,
                 angle: line.angle,
                 groupId: index,
@@ -255,11 +408,16 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
                 maskUrl: group.maskUrl,
                 maskBox: group.maskBox,
                 rectangle: group.rectangle,
-                fontSize: fittedFont,
+                fontSize,
+                ...(spacing > 0 ? { spacing } : {}),
                 // The paper patch is drawn under the label even when the erase
                 // pass ran, so a fill the model got wrong cannot show through:
                 // it is the same paper, clipped to the balloon outline.
-                patch: balloon ? {
+                // A reader group already sits on its own box and its ink is
+                // erased, so a paper patch would only add a slab behind the
+                // label. It stays for detector groups, where the box can be
+                // loose and the erase leans on the patch.
+                patch: balloon && !fromReader ? {
                     x: line.x,
                     y: line.y,
                     width: line.width,
@@ -269,16 +427,35 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
             });
         };
 
-        const fittedFont = Math.max(6, Math.round(font));
-
-        if (columns.length > 1 && columns.length <= placedLines.length) {
-            placedLines.slice(0, columns.length).forEach((line, columnIndex) => {
-                push(placedFrame(line), columns[columnIndex]);
-            });
-        } else if (placedLines.length === 1) {
-            push(placedFrame(placedLines[0]), columns.join(''));
+        if (layoutLines.length === 0) {
+            push(tight, fullText, fittedFont);
         } else {
-            push(tight, columns.join(''));
+            layoutLines.forEach((line, at) => {
+                if (fit.parts[at]) push(frameOf(line), fit.parts[at], fontOf(line));
+            });
+            // A line the translation did not reach keeps its ink, and so does a
+            // line that got no column of its own (furigana) whose nearest
+            // column is one of those.
+            const unlabelled = new Set(layoutLines.filter((_, at) => !fit.parts[at]?.trim()));
+            if (unlabelled.size > 0) {
+                const centre = (line: BoxData) => ({ x: line.x + line.width / 2, y: line.y + line.height / 2 });
+                for (const line of linesInGroup) {
+                    let host = layoutLines.includes(line) ? line : undefined;
+                    if (!host) {
+                        const own = centre(line);
+                        let best = Number.POSITIVE_INFINITY;
+                        for (const other of layoutLines) {
+                            const at = centre(other);
+                            const distance = Math.hypot(at.x - own.x, at.y - own.y);
+                            if (distance < best) {
+                                best = distance;
+                                host = other;
+                            }
+                        }
+                    }
+                    if (host && unlabelled.has(host)) keep.push(inkOf(line));
+                }
+            }
         }
     });
 
@@ -292,5 +469,6 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         skipped,
         withBalloon: countWithBalloon(current, balloons),
         erase,
+        keep,
     };
 }
