@@ -2,6 +2,8 @@
 
 All technical details are documented in the full walkthrough: [Build a Chrome Extension From Scratch: From an Empty Folder to a Page Translated In Place](https://www.machingclee.com/blog/article/Build-a-Chrome-Extension-From-Scratch-From-an-Empty-Folder-to-a-Page-Translated-In-Place)
 
+<img width="1513" height="1140" alt="demo" src="https://github.com/user-attachments/assets/7e741322-2770-4771-8cbe-8b9eae25e032" />
+
 https://github.com/user-attachments/assets/b65dc644-a995-433a-92fa-c67d39a59693
 
 A Manifest V3 extension built with React 18 and TypeScript, bundled by Vite.
