@@ -40,6 +40,7 @@ import type {
     BubbleData,
 } from '../shared/types';
 import { translateGroups } from '../lib/translationJob';
+import { blockCropBox } from '../lib/ocr/blockCrop';
 
 let offscreenReady: Promise<void> | null = null;
 let translationQueue: Promise<void> = Promise.resolve();
@@ -202,8 +203,10 @@ function withPaper(
         // paper tone is used when the sample exists, and white when it does not:
         // a balloon the sampler could not read is still one flat colour, and a
         // generative fill can only guess at it. The balloon's outline is not
-        // passed as a clip: a seg outline is coarse, and a fill that stops at
-        // its edge leaves the bottom of a column on the page.
+        // passed as a clip: the seg outline is coarse (one balloon on the test
+        // page came back as a polygon spanning the whole page), and a fill that
+        // stopped at a usable one left the bottom of a column on the page. What
+        // keeps the fill off the artwork is the tight line box, not the wall.
         return { ...box, paper: balloon.paper ?? [255, 255, 255] };
     });
 }
@@ -669,13 +672,43 @@ async function runTranslation(request: TranslateRequest, sender: chrome.runtime.
         if (signal?.aborted) throw new Error('Cancelled.');
         if (detection.canInpaint && job.items.length > 0) {
             notifyProgress(tabId, 'inpainting');
-            // BLK + DET. The gate is the blk box of every block that read
-            // dialogue; inside it the det plane says where the text is (see
+            // BLK + DET. A block is the outer limit: nothing outside it is
+            // touched, and inside it the det plane says where the text is (see
             // maskOfBlock). A sound effect inside such a block keeps its ink.
-            const dialogueBlocks = (detection.blockReadings ?? [])
-                .filter((reading) => reading.regions.some((region) => region.kind !== 'sfx' && region.text.trim().length > 0))
+            //
+            // Two gates stand between the blk box and the eraser:
+            //
+            // 1. The block must carry a label. A block whose translation failed
+            //    or which the translator skipped has no text to paste over its
+            //    ink, and erasing it leaves a blank balloon.
+            // 2. Only the area the translation covers is erased: this block's
+            //    laid-out lines plus its labels. A reader can miss a column the
+            //    detector boxed (a name call inside a balloon whose blk box
+            //    merged both balloons); that column has no label over it, so a
+            //    block-wide erase would empty it.
+            const labelled = job.labelled;
+            // BLK is the area, DET says which pixels in it are text. The area is
+            // the crop the reader was given, not the block box: the crop is the
+            // block grown by its margin and by every det box drawn on it, and a
+            // column can sit outside the block box and inside that crop — the
+            // そうだ of one balloon did, and it was never erased because the
+            // block box stopped a few pixels short of it.
+            //
+            // What is painted inside the area is the det plane, not the area: a
+            // block painted whole is a white rectangle across the balloon. See
+            // maskOfBlock.
+            const areaOf = (reading: { block: { x: number; y: number; width: number; height: number }; boxes?: { x: number; y: number; width: number; height: number }[] }) => {
+                const crop = blockCropBox(detection.imageWidth, detection.imageHeight, reading.block, reading.boxes ?? []);
+                return crop.width > 0 && crop.height > 0
+                    ? { x: crop.x, y: crop.y, width: crop.width, height: crop.height }
+                    : null;
+            };
+            const readable = (detection.blockReadings ?? [])
+                .filter((reading) => reading.regions.some((region) => region.kind !== 'sfx' && region.text.trim().length > 0));
+            const dialogueBlocks = readable
+                .filter((reading) => labelled.some((box) => overlaps(box, reading.block)))
                 .map((reading) => ({
-                    ...reading.block,
+                    ...(areaOf(reading) ?? reading.block),
                     kind: 'block' as const,
                     keep: [
                         ...reading.regions
@@ -685,11 +718,18 @@ async function runTranslation(request: TranslateRequest, sender: chrome.runtime.
                         ...job.keep.filter((line) => overlaps(line, reading.block)),
                     ],
                 }));
-            // Without block readings (the on-device reader) the regions are
-            // all there is.
-            const fallback = dialogueBlocks.length > 0
+            if (dialogueBlocks.length !== readable.length) {
+                console.warn(`[erase] ${readable.length - dialogueBlocks.length} block(s) got no label; their ink stays`);
+            }
+            // Without block readings (the on-device reader) the translated
+            // groups are the erase set. `detection.eraseBoxes` is deliberately
+            // not used as the source: it lists every detected line, including
+            // lines no group claimed, and only the keep filter stood between
+            // those and a blanked page.
+            const fallback = readable.length > 0
                 ? []
-                : (detection.eraseBoxes ?? job.erase.map((box) => ({ ...box, kind: 'region' as const })))
+                : job.erase
+                    .map((box) => ({ ...box, kind: 'region' as const }))
                     .filter((box) => !job.keep.some((line) => overlapShare(line, box) > 0.5));
             const painted = (await chrome.runtime.sendMessage(
                 offscreenRequestFactory.ofInpaint(withPaper([

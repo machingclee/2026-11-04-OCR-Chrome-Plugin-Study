@@ -209,7 +209,7 @@ The detector ships a third head besides `det` and `seg`: `blk`, a region head th
 #### How A Page Is Read {#how-a-page-is-read}
 
 1. The detector returns the block boxes, the `det` plane and the `seg` plane. Blocks are filtered at score 0.35, non maximum suppressed at 0.35 and capped at 96. The det line extraction is skipped entirely, so no det box takes part in detection.
-2. One crop per block is cut, upscaled, and given a grid before it goes to the reader, at 96 pixels on the short side, six requests in flight.
+2. One crop per block is cut, upscaled, and given a grid before it goes to the reader, at 96 pixels on the short side, six requests in flight. The crop is the BLK box with a margin, grown as far as it must be to hold every detector box drawn on it: a box cut by the crop edge is one the reader tends to skip, and the column it held is then translated nowhere. The debug panel prints the rectangle that was cut, in page pixels, beside the BLK box and draws it on the preview as a dashed violet outline.
 3. The model answers with the regions inside that block, in cells of the drawn grid:
 
 ```json
@@ -218,7 +218,7 @@ The detector ships a third head besides `det` and `seg`: `blk`, a region head th
 
 Reading is perception and stops there: it transcribes the text and places it, and never translates. The reader runs at no thinking at all, because a chain of thought over glyphs only adds latency to every block.
 
-The crop also carries the detector's line boxes, drawn in blue, and the prompt makes them the definition of text: **only what sits inside a blue rectangle is a line**, and everything outside every rectangle is artwork or handwriting that must not be reported, translated or allowed to widen a box. The det head is not a box source in this path — the crop is still the BLK box — but its line boxes are the reader's evidence of what the page intends as text, which a model cannot otherwise tell from a hand drawn formula in the same panel.
+The crop also carries the detector's line boxes, drawn in blue, and the prompt makes them the definition of text: **only what sits inside a blue rectangle is a line**, and everything outside every rectangle is artwork or handwriting that must not be reported, translated or allowed to widen a box. The det head is not a box source in this path — the crop is the BLK box, grown only as far as it must be to hold the boxes it draws — but its line boxes are the reader's evidence of what the page intends as text, which a model cannot otherwise tell from a hand drawn formula in the same panel.
 
 Furigana stays out of the text. The prompt names the reading kana printed beside kanji, forbids merging them into `text`, and skips a region that holds only furigana. A reader still reports one now and then, and a reported reading is a line with its own translation, which is how one sentence came back as two identical columns. So the mapper drops any short kana entry whose box sits inside a wider column's own band: that is what a reading looks like, and a real line never shares another line's band. A short kana column *beside* a box is a different case and is still folded into its neighbour.
 
@@ -261,9 +261,35 @@ When a translation is shorter than the box it fills, the spare room goes into th
 
 Translation is a second pass, one request per block, after the reading has finished. The block's lines go out as the structured payload the target project uses: plain text, text with its visual breaks, reading order, and one entry per column with its character count, so the model knows how much room each column must fill. The rest of the page travels with the request as context — listed and explicitly not translated — so a request about one block still knows what the conversation around it said.
 
-The pass runs at the effort the popup stores, high by default, which is where a chain of thought pays: the reading is a transcription, while the translation has to reorder clauses, pick a register and split the result back into columns. Four requests are in flight at once.
+The pass runs at the effort the popup stores. Thinking pays here — the reading is a transcription, while the translation has to reorder clauses, pick a register and split the result back into columns — but it is also the whole wall-clock cost of a page, so the prompt is written to hold up with it off; see [Thinking Off Still Translates](#thinking-off-still-translates). Four requests are in flight at once.
 
 The answer is written back into the block it came from (`group.translations`), so the block carries the translation it produced, the layout uses it directly, and a second run does not translate the same block twice.
+
+#### Thinking Off Still Translates {#thinking-off-still-translates}
+
+The popup offers a reasoning level for the translation, and the lowest level turns the chain of thought off. Thinking is the wall-clock cost of a page — one request per block, and at the high level a block spent 1.4k completion tokens of which 1.37k were reasoning — so off is the level the extension defaults to, and the prompt is written to hold up there.
+
+Turning thinking off removes the scratch work the model would otherwise do before answering, so the system prompt carries that work instead: four steps to restore the sentence (who says what to whom, in what tone), reorder it into Chinese, make it colloquial, and check for additions and omissions. The prompt also names the idioms that came back wrong on every measured run: 「ああ」 is 啊／嗯 and not 對, 「そうだ」 is 對／沒錯, 「勝手に」 is 隨自己高興／自作主張 and not the stiff 擅自, and 「教えてあげよう」 is said to the listener — 我來告訴你 — not 告訴他. Names are covered by a rule of their own: kana names are transcribed (エルマ→艾爾瑪), kanji names stay kanji, and a Japanese honorific becomes the Chinese one (伯爵様→伯爵大人).
+
+The honorific half of the name rule is enforced in code as well. 伯爵様 reached the overlay as 伯爵様 on a run where the reader filed it as `chat` rather than `name`, so `loneGlyph.ts` replaces a trailing 様 with 大人 on every answer, whatever type came back. The swap runs after the length rules, because 伯爵大人 is one glyph longer than the source and the name-length check would otherwise read the name as having grown a word.
+
+The last lever is sampling. The same block, translated three times at temperature 0.3, gave 告訴他 / 告訴你 / 告訴你; at temperature 0 it gave 告訴你 three times out of three. A faithful translation wants the same answer twice, so the call now asks for temperature 0. This is the one change that is purely about thinking-off: with thinking on, the reasoning tokens already absorbed most of the variation.
+
+On the three test pages the off level then reads like the high level: 「我決定帶上這兩個人，讓他們隨我高興使喚了」 (high: 「…讓他們任我隨意使喚」), 「因為大家都叫我快逃啊」, 「其實我是來找艾爾瑪的……」. What still differs is the reader, not the translator: a fresh detection groups the same balloon differently between runs, and that changes the sentence more than the effort level does.
+
+#### Who Owns The Columns {#who-owns-the-columns}
+
+The translator is asked which column each part of its translation belongs to: `columns` has one entry per detected column, in final reading order, each within one character of the source column's count. That is the "the translation decides which region to fill" half of the request.
+
+The fit still owns the answer. `fitColumns` accepts the translator's split only when it has one entry per line, joins to the same translation, cuts only between the pieces the translator declared unbreakable (`segments`), and fits at a font factor of at least 0.85. Anything else falls back to the dynamic program, which can only cut between pieces and balances the text against the real capacity of each column. The word-boundary check is new: the model's own split put 艾爾瑪 in two columns on one run and 艾薩斯 on another, and a name cut across columns is not a layout the fit accepts at any font size.
+
+#### One Balloon, One Group {#one-balloon-one-group}
+
+The reader reports one region per column, and the block path groups regions back into balloons before translating: `splitGroupByColumnGap` cuts a merged block where the columns leave a gap across the reading axis. It was written for the detector's ink-tight boxes. The reader's boxes are snapped to a grid of whole cells, so its gaps are whole cells too, and two columns that touch can come back three cells apart.
+
+On the first test page that split one speech into four groups — この2人 / 連れて / 勝手に動かせて / もらうことに / したんだよ — and each group was translated alone: 「帶上這兩個人」「擅自操控我」「決定收下」「是他做的喔」. One sentence, four wrong translations.
+
+The split now also asks whether two columns share a band: if their runs overlap most of the way and they start on the same line of the block, they are columns of one speech whatever the gap says, and the allowance for that gap widens to two and a half character widths. Columns in different balloons sit in different bands, which is the case the splitter exists for.
 
 #### What Inpainting Uses {#what-inpainting-uses}
 
@@ -278,6 +304,24 @@ The detector's line boxes — the blue rectangles drawn on the reader's crop —
 The colour of that fill is read from the ring of paper just outside the box, not from the whole balloon: the median of a band a few pixels wide, clipped to the balloon outline. A balloon can sit over screentone, carry a gradient, or have its median dragged by its own ink, and the ring is exactly the paper the glyphs were printed on. The balloon's median is the fallback when the ring has nothing to read.
 
 This is the main trade of the path. `seg` marks actual ink and keeps the erase tight; `det` is a shrunken band, so the mask leans on the growth step. On flat balloon paper the fill hides the difference. Over artwork the mask is less precise than the stroke mask, and a ghost edge is the failure to watch for.
+
+#### Erasing A Block, Not Painting It {#erasing-a-block-not-painting-it}
+
+A translated block is erased through BLK and DET, and nothing else: the block is the area, the det plane says which pixels inside it are text, and the strokes are replaced by the inpaint pass. The block rectangle is never filled. An attempt at "just erase the whole block" did exactly that — the block's own area, painted flat — and the result was a white slab laid across two balloons: the wall, the screentone outside it and the artwork inside it went with the text. The render was obviously wrong and the fix was to go back to a mask.
+
+Two things about the area. It is the crop the reader was given, not the block box: the crop is the block grown by its margin and by every det box drawn on it, and a column can sit outside the block box while still being inside that crop. `そうだ` did, and it stayed on the balloon beside its translation because the erase area — the union of the columns that got a label — stopped a few pixels short of it. And the erase covers the frame the label is drawn on as well as the ink box, because the two differ by a cell when the reader's box sits off its strokes: what the label covers must be what the erase covered, or the edge of a glyph shows beside the Chinese.
+
+The mask itself follows the ink rather than stopping at the det band. DET is a shrunken band, so a column whose band sits a few pixels off its glyphs keeps the tail of its last stroke; the zone walks outward, eight-connected, into any pixel that differs from the paper, and stops after eight pixels, at a ruled line, at a kept line, or at the area edge. A glyph is then covered whole and the paper around it is not.
+
+Two rules keep that mask inside the balloon. A band is grown **across** its own width, not along its run: it is a column that is too thin, not too short, and growing it along its length pushed the mask past the top and bottom of the speech and into the wall. And the fill is the **stroke silhouette** — the ink grown by two pixels — not the whole zone. The zone is a band grown well past the glyph, so filling it whole laid a white blob across the balloon; the band's interior is paper already, and filling it bought nothing. What is left is a mask the shape of the text, which cannot reach a wall the text does not touch.
+
+The balloon outline is deliberately not used as a clip here. The bubble model returns an outline per balloon, and on the test page one of them came back as a polygon spanning the whole page: clipping to it would erase the page, and clipping to a usable one leaves the bottom of a column behind — which is the failure that produced the original rule. What keeps the fill off the artwork outside a balloon is the tight line box and the det mask, not the wall.
+
+#### A Short Kana Word The Reader Turned Into Kanji {#a-short-kana-word-the-reader-turned-into-kanji}
+
+`ねえ` came back as `お元` on one run, as `我元` on another, and once as two separate kanji regions, `我` and `死`. The recogniser read the same box as `ねえ` at 0.99 every time. A short stretch of text whose reader result is not kana is confirmed against the device for the same reason a one-glyph name is: the recogniser is trained on the script, and there is no sentence around the line to correct a wrong glyph.
+
+The check runs on the **block** first and on the line second. On the block, because a two-kana bubble can come back as two one-glyph regions, and no per-line check ever sees a line long enough to doubt — `我` and `死` are each a plausible name. The block's box is one word to the recogniser. On the line, for a block whose regions were right but whose reading was not. In both cases the device text is adopted only when it is kana, has the same number of glyphs, and scores above 0.9 — a different reading of the same box, not a different line. Lines that already read as kana (`え？`, `うん`) are left alone, and so is a long line, where the device is the less reliable of the two.
 
 #### When The Path Is Used {#when-the-path-is-used}
 
@@ -347,7 +391,7 @@ The cut is bounded: a piece narrower than 12 pixels is refused, more than four p
 
 #### Choosing The Model {#choosing-the-model}
 
-The reader calls `deepseek-flash` and never thinks: its request carries `thinking: disabled`, whatever the popup holds, because reading glyphs is perception and the layout that goes with it is arithmetic on the grid. The translation call is the one that gets a chain of thought, at the level the popup stores: the API maps every level onto low, high or max and thinks at high by default, so those three are offered, plus off. High is the default for translation.
+The reader calls `deepseek-flash` and never thinks: its request carries `thinking: disabled`, whatever the popup holds, because reading glyphs is perception and the layout that goes with it is arithmetic on the grid. The translation call is the one that gets a chain of thought, at the level the popup stores: the API maps every level onto low, high or max and thinks at high by default, so those three are offered, plus off. Off is the default for translation, because thinking dominates the time a page takes and the prompt carries the procedure instead; see [Thinking Off Still Translates](#thinking-off-still-translates).
 
 The setting governs the whole page: the per-block reading calls, the one fallback translation call for regions the reader left untranslated, and a batch. It is stored in the browser with the API key and sent with each request, so a run started from the content script reads the same level as one started from the popup.
 
@@ -371,6 +415,46 @@ Reading uploads the block crops and translation uploads the page text to DeepSee
 
 The cloud reader never returns a box, and its answer is never used to place text. It has no say over reading order or grouping either. A cloud answer can only replace the characters inside a box the detector already produced, which keeps the layout identical to the on-device result.
 
+### A Balloon That Holds One Character {#a-balloon-that-holds-one-character}
+
+A balloon can hold one character and nothing else. On the page this work started from, a small balloon holds 円 with its reading つぶら printed beside it: it is a name, not a sentence, and the balloon is small enough that a phrase cannot fit in it. Three separate things went wrong there, and each one is fixed where it happens.
+
+#### The Block Head Missed The Balloon {#the-block-head-missed-the-balloon}
+
+The `blk` head found seven blocks on the page and none of them was the 円 balloon. Every text line in the block path comes from a block crop, so a detected line that no block covered was silently dropped: the `det` head had marked it (`179,379 46x91`, beside `225,379 22x91` for the reading), and nothing read it.
+
+The block path now reads those lines. After the blocks are read, a `det` box whose centre is inside no block and that overlaps no reported region by more than half is read on its own with `readUnclaimedLine`: its own crop goes to the cloud reader, and the device recogniser stands in when that request fails. The line joins the collected lines, and the column gap split below gives it a group of its own, so it is translated and placed like any other.
+
+The pass is capped at six lines. Lines it reads are logged as `[read] unclaimed line`.
+
+#### The Reader Folded The Reading Into The Name {#the-reader-folded-the-reading-into-the-name}
+
+The reading つぶら sits beside 円 at a smaller size. A reader that reported it as a line of its own gave a four-glyph name `つぶら円`, which no spelling rule can recover, and a reader that reported it as a second region gave the balloon a second label. Two filters already existed for furigana; both refused to act on a host of one glyph, because the tests compared advance per character, and a one-character host has no advance to compare against its neighbours.
+
+`dropReadingsInsideColumns` now accepts a one-glyph host: a kana box beside it, overlapping it along the column and clearly thinner, is a reading and is dropped. `mergeCompanionRegions` drops a kana companion of a one-glyph host for the same reason instead of folding it into the name.
+
+The reading's ink still has to go. The reader does not report it at all once the prompt says it is not text, so there is no box to erase. The rule is the balloon: a balloon whose text is one character holds nothing else that is text, so `translateGroups` adds the whole balloon to the erase set for that group. The inflated balloon clears the reading along with the character, and a smear of kana beside the translation is what it looked like when that was missing.
+
+#### The Translator Wrote A Phrase {#the-translator-wrote-a-phrase}
+
+A model asked for natural Chinese turns 円 into 日圓 and then into 是錢的意思. The balloon then holds a sentence where one character was printed, and the fit shrinks it until it is unreadable inside the balloon it cannot fill.
+
+The answer shape has a third type for this: `name`, beside `chat` and `sfx`. Both prompts say what it means — a box that holds a name, a title, a place name or a label and no sentence — and both say that a region of one character keeps that one character, in its Traditional form when the forms differ. A name is not skipped: it is written, the way a name plate is written.
+
+The prompt is a request, so the rule is also enforced in code. `preserveLoneName` in `src/lib/loneGlyph.ts` rewrites the answer for a one-character source: an answer of one character is kept, so 圓 passes, and anything longer is replaced by the source character. A `name` answer that grew a note, a parenthetical or a sentence falls back to the source name. It runs on every answer in `translateGroups`, on both the path that reuses a translation and the path that asked for one, so no route into the overlay skips it.
+
+#### One Glyph Is The Whole Label {#one-glyph-is-the-whole-label}
+
+A name of one character has no context to correct it: the reader answered `門` for `円` on one run in eight, and 門 is a perfectly good glyph with a perfectly good translation. The recogniser trained on printed manga read the same box at 0.99, so the block path confirms a one-glyph line against the device before translating it, and adopts the device reading when it is above the usual 0.7 floor and disagrees. A low confidence leaves the reader's text alone: this is a tie-break, not a replacement reader. The line is logged as `[read] one-glyph line … re-read as …`.
+
+This is the same policy the line path has always used — a confident device reading is never replaced by a general vision model — applied where it matters most, because one wrong glyph is the entire label rather than one word of a sentence.
+
+#### The Check {#the-check}
+
+`npm run render:page` runs one page through this pipeline and asserts the result, locally. See [Rendering A Page Locally](#rendering-a-page-locally).
+
+For the page above, the accepted area is `179,149 143×322` — the padded crop the block reader saw for the balloon above 円. The run passes when the balloon that holds 円 holds exactly one glyph, `円` or `圓`, and the labels inside that area are that one glyph plus the neighbouring balloon's sentence.
+
 ### Remaining Limits {#remaining-limits}
 
 Stylised handwriting still costs recognition confidence: two columns on the narration page read at 0.76 and 0.82. Both stay above the 0.7 floor, and the cause is the recogniser, not the box.
@@ -378,6 +462,201 @@ Stylised handwriting still costs recognition confidence: two columns on the narr
 A line that the `det` head misses, that sits outside every balloon, and that has one glyph is not detected. A large sound effect outside a balloon is detected only when the `det` head marks it. The harness runs on the WASM provider, so the WebGPU path is exercised only by the build.
 
 The model is the limiting factor for stylised lettering. A different detector export, such as the `detector.ort` asset in ShinobuTranslator, may mark those lines. The pipeline would accept it without a change, because the seed rule only depends on one line band per column.
+
+### Rendering A Page Locally {#rendering-a-page-locally}
+
+`scripts/render-page.mjs` runs one image through the extension's own passes — detection, the block reader, the translation, the layout, the erase — in Node, paints the overlay the way the content script does, and checks the balloons whose source is one character. It is the same code the extension ships: `runDetection` and `runInpaint` are imported from the offscreen document, not copied.
+
+```bash
+npm run render:page -- fixtures/page.jpg
+npm run render:page -- fixtures/page.jpg --crop 179,149,143,322 --expect '円,圓'
+```
+
+`--expect` names the glyphs the page must show, whatever the reader transcribed. Without it a one-character balloon may hold its source glyph and that glyph's Traditional form; with it, `円` and `圓` are the only accepted answers, so a reader that turns the glyph into `門` fails the run instead of passing it on the misread source.
+
+The key comes from the git-ignored `.env` (`VITE_DEEPSEEK_API_KEY`) or `DEEPSEEK_API_KEY`. The canvas build is resolved from `CANVAS_ROOT`, this repo's `node_modules`, or the ShinobuTranslator checkout; see `scripts/harness/env.mjs`.
+
+It writes `out/<name>-translated.png`, `out/<name>-crop.png` for the requested area, `out/<name>-balloon-<glyph>.png` for each one-character balloon, and `out/<name>-report.json`. The run exits non-zero when a one-character balloon holds anything but that character, when nothing is placed in it, or when the rendered balloon reads more than one glyph.
+
+`npm run prompt:lab -- out/eval/det-320.json --effort off` measures the translation prompt alone against a captured detection: it rebuilds the same regions, asks the model, and prints each region's translation next to the columns it chose, with two counted checks — a column longer than its source column plus one, and a name cut across two columns. It exists because the reader returns slightly different cell boxes every run, and a different grouping moves the translation more than a prompt change does; comparing prompts on a fresh detection each time measures the reader, not the prompt. Capture one with `npm run render:page -- fixtures/page-320.jpg --save-detection out/eval/det-320.json`.
+
+Two witnesses are reported for each one-character balloon. The label is the pipeline's own answer and is what gates the run. The reader call then reads the rendered balloon back; it reads 圓 as 員 now and then, because the enclosing box looks like a balloon outline to it, so a single-glyph disagreement is a warning and only extra glyphs fail. Before the network request, a table of the answers the model has actually given for 円 is checked by `preserveLoneName`, so a regression in the guard fails without spending a request.
+
+### Reproducing The Measurement {#reproducing-the-measurement}
+
+The harness is a local script, not part of the build. It needs a canvas implementation, and this workspace uses the one in the ShinobuTranslator checkout. The steps are:
+
+```bash
+# bundle the harness with the page sources, then run it on one image
+cd .tmp-expcheck/compare
+../../node_modules/.bin/esbuild eval.mjs --bundle --platform=node --format=esm \
+  --outfile=eval.bundle.mjs --external:onnxruntime-web
+node eval.bundle.mjs /tmp/dbg2/page6.png
+```
+
+The script prints each reading with its box, its confidence, and its text, followed by a summary line. `eval-legacy.mjs` does the same for the pipeline before the rewrite, which keeps the two summaries comparable. The same scripts render the boxes to PNG through `renderBoxes` for a visual check.
+#### A Short Kana Word The Reader Turned Into Kanji {#a-short-kana-word-the-reader-turned-into-kanji}
+
+`ねえ` came back as `お元` on one run and `我元` on another, and the recogniser read the same box as `ねえ` at 0.99. A short line of two or three glyphs whose reader text is not kana is confirmed against the device for the same reason a one-glyph name is: the recogniser is trained on the script, and there is no sentence around the line to correct a wrong glyph. The device text is adopted only when it is kana, has the same number of glyphs, and scores above 0.9 — a different reading of the same box, not a different line. Lines that already read as kana (`え？`, `うん`) are left alone, and so is a long line, where the device is the less reliable of the two.
+
+#### When The Path Is Used {#when-the-path-is-used}
+
+The block path runs when a cloud reader is configured and at least one block carries regions. A block the reader answers with no regions contributes no lines; the rest of the page is unaffected. Without a key, or when every block comes back empty, detection falls back to the line path: the `det` seeds, the stroke split, the on device recogniser. The popup status reports the reader and the number of regions it placed, so a page that silently used the line path is visible.
+
+The det plane is never a box source in the block path. It is read once, as the erase mask, and for nothing else. The seg plane is read for the balloon paper colour and the label masks. The line path, which runs only when no reader is configured, is the one place the det head still proposes boxes.
+
+#### What Was Kept {#what-was-kept}
+
+The stroke plane is still used for two things the block path does not replace: painting the paper colour of a balloon, and cutting the label masks from the glyph pixels. The balloon model still matches blocks to balloons so a fill can be flat instead of inpainted.
+
+### OCR Normalisation That Did Not Help {#ocr-normalisation-that-did-not-help}
+
+A clean crop can still come back with the wrong character. On the narration page the last glyph of `宇宙人に` is a `に`, and the recogniser reads it as `に` at 0.82. A crop three pixels wider reads `宇宙人だ` at 0.76. The character boundary is that narrow, so a normalisation step was measured before any of it was added.
+
+Eleven variants ran on the same crop: raw, 2x upscale, 12 percent white margin, Otsu binarisation, percentile contrast stretch, unsharp mask, 3x3 median, and four combinations of those.
+
+| Variant | Confidence | Text |
+| --- | --- | --- |
+| raw | 0.875 | 宇宙人に |
+| 2x upscale | 0.866 | 宇宙人に |
+| 12 percent margin | 0.666 | 宇宙人に |
+| Otsu | 0.959 | 宇宙人に |
+| 2x upscale and Otsu | 0.973 | 宇宙人に |
+| unsharp | 0.897 | 宇宙人に |
+| 3x3 median | 0.940 | 宇宙人に |
+
+Every variant keeps the same characters. The normalisation raises confidence, and confidence is not the problem: the model already reads this crop correctly. On a crop three pixels wider, Otsu returns `宇宙人` at 0.874 and drops the glyph.
+
+Otsu was also measured across 59 lines on three pages. Five readings changed: three became worse (`パ` to `バ`, a lost dakuten; `えー` to `え1`; `ゃべ…っ` to `ゃ…`), one fixed a fullwidth `１`, and one replaced `人` with `入`. A hard threshold removes the soft edge of a stroke, which is exactly where a dakuten lives. The preprocessor therefore keeps the raw crop.
+
+The same test rules out a test-time ensemble that keeps the most confident reading, because a fluent wrong reading can score higher than a correct one. The levers that remain are the box and the recogniser, not the pixels.
+
+### Cloud Reading {#cloud-reading}
+
+#### What Moves And What Stays {#what-moves-and-what-stays}
+
+DeepSeek is the only provider. Its key both reads the blocks and translates the page; there is no provider setting and no second key. Without a key nothing runs: the popup reports that a key is needed, and the page's Translate selected action stays disabled. The service worker resolves the reader from the saved key, so the popup button, the page translation and the batch flow all read the same way.
+
+Every line is read on the device first. Only a line whose device reading is empty or below 0.7 confidence is sent to the cloud, one upright crop per request. A confident device reading is never replaced, because a general vision model misreads printed manga more often than the recogniser trained for it: on the test pages the device read 13 of 13 and 35 of 35 lines correctly, and the cloud reader returned other text for the same crops.
+
+The crop keeps the orientation it has on the page. The device recogniser wants a vertical column turned a quarter turn, but a general model reads vertical Japanese as printed, and the turn rotates every glyph, which is exactly what a misread looks like.
+
+#### The Crop And The Request {#the-crop-and-the-request}
+
+Each crop is scaled so its thin side is about 64 pixels, upscaled at most 3 times and capped at 1600 pixels on the long side. It travels as a JPEG at quality 0.92, one crop per request, six requests in flight, and the model answers with one entry:
+
+```json
+{"lines":[{"i":1,"text":"久しぶりの"}]}
+```
+
+The prompt asks for the printed glyphs only. It names small kana, dakuten, punctuation, and full-width characters, and it forbids translation, spaces, and completion from context. One crop per request means the answer can only describe that line: there is no index to map, and no way for a model to pair a transcription with a different crop. A request that fails is retried once, then that line is read on device.
+
+#### One Crop, Several Text Lines {#one-crop-several-text-lines}
+
+The model reports the layout of each crop as well as the text:
+
+```json
+{"lines":[{"row":1,"columns":1,"text":"人類のような"},{"row":2,"columns":1,"text":"知的文明が存在する確率"}]}
+```
+
+`row` is the position of the text line inside the crop, top to bottom, and `columns` is how many parallel character columns that line itself holds, which is 1 for a normal line. The array length is the number of text lines the crop contains.
+
+That array is how a detection box that swallowed two columns is repaired at reading time. A vertical column is turned a quarter turn before it is sent, so the source columns arrive stacked top to bottom and the first entry is the rightmost source column. When the model returns two entries, the offscreen document cuts the box into two pieces across its thin side, in reading order for the page direction, and gives each piece its own text. The translation then typesets each piece into its own column, so the placement follows the text instead of squeezing two columns into one box.
+
+The cut is bounded: a piece narrower than 12 pixels is refused, more than four pieces is refused, and a leaned line is never cut because its page box is not the box the text is drawn from. When any bound is hit, the line keeps a single reading.
+
+#### Choosing The Model {#choosing-the-model}
+
+The reader calls `deepseek-flash` and never thinks: its request carries `thinking: disabled`, whatever the popup holds, because reading glyphs is perception and the layout that goes with it is arithmetic on the grid. The translation call is the one that gets a chain of thought, at the level the popup stores: the API maps every level onto low, high or max and thinks at high by default, so those three are offered, plus off. Off is the default for translation, because thinking dominates the time a page takes and the prompt carries the procedure instead; see [Thinking Off Still Translates](#thinking-off-still-translates).
+
+The setting governs the whole page: the per-block reading calls, the one fallback translation call for regions the reader left untranslated, and a batch. It is stored in the browser with the API key and sent with each request, so a run started from the content script reads the same level as one started from the popup.
+
+#### Falling Back {#falling-back}
+
+Three levels of fallback keep a page usable:
+
+1. A line the model leaves blank is read by the on-device recogniser.
+2. A batch that fails, by network error, quota or a malformed answer, is read entirely on device.
+3. A crop that cannot be cut at all falls back to the on-device path for the page.
+
+The popup status line reports the reader and the fallback count, so a page that silently ran on device is visible.
+
+#### Cost And Privacy {#cost-and-privacy}
+
+One page costs a request per block for the reading and one request for the translation. `deepseek-flash` caps every image at 1024 tokens, so a page of seven blocks stays in the fractions of a cent ([vision guide](https://api-docs.deepseek.com/guides/vision/), [pricing](https://api-docs.deepseek.com/quick_start/pricing)).
+
+Reading uploads the block crops and translation uploads the page text to DeepSeek. That is the only provider, so there is no on-device alternative to fall back to: without a key the extension does not translate at all.
+
+#### What The Cloud Never Does {#what-the-cloud-never-does}
+
+The cloud reader never returns a box, and its answer is never used to place text. It has no say over reading order or grouping either. A cloud answer can only replace the characters inside a box the detector already produced, which keeps the layout identical to the on-device result.
+
+### A Balloon That Holds One Character {#a-balloon-that-holds-one-character}
+
+A balloon can hold one character and nothing else. On the page this work started from, a small balloon holds 円 with its reading つぶら printed beside it: it is a name, not a sentence, and the balloon is small enough that a phrase cannot fit in it. Three separate things went wrong there, and each one is fixed where it happens.
+
+#### The Block Head Missed The Balloon {#the-block-head-missed-the-balloon}
+
+The `blk` head found seven blocks on the page and none of them was the 円 balloon. Every text line in the block path comes from a block crop, so a detected line that no block covered was silently dropped: the `det` head had marked it (`179,379 46x91`, beside `225,379 22x91` for the reading), and nothing read it.
+
+The block path now reads those lines. After the blocks are read, a `det` box whose centre is inside no block and that overlaps no reported region by more than half is read on its own with `readUnclaimedLine`: its own crop goes to the cloud reader, and the device recogniser stands in when that request fails. The line joins the collected lines, and the column gap split below gives it a group of its own, so it is translated and placed like any other.
+
+The pass is capped at six lines. Lines it reads are logged as `[read] unclaimed line`.
+
+#### The Reader Folded The Reading Into The Name {#the-reader-folded-the-reading-into-the-name}
+
+The reading つぶら sits beside 円 at a smaller size. A reader that reported it as a line of its own gave a four-glyph name `つぶら円`, which no spelling rule can recover, and a reader that reported it as a second region gave the balloon a second label. Two filters already existed for furigana; both refused to act on a host of one glyph, because the tests compared advance per character, and a one-character host has no advance to compare against its neighbours.
+
+`dropReadingsInsideColumns` now accepts a one-glyph host: a kana box beside it, overlapping it along the column and clearly thinner, is a reading and is dropped. `mergeCompanionRegions` drops a kana companion of a one-glyph host for the same reason instead of folding it into the name.
+
+The reading's ink still has to go. The reader does not report it at all once the prompt says it is not text, so there is no box to erase. The rule is the balloon: a balloon whose text is one character holds nothing else that is text, so `translateGroups` adds the whole balloon to the erase set for that group. The inflated balloon clears the reading along with the character, and a smear of kana beside the translation is what it looked like when that was missing.
+
+#### The Translator Wrote A Phrase {#the-translator-wrote-a-phrase}
+
+A model asked for natural Chinese turns 円 into 日圓 and then into 是錢的意思. The balloon then holds a sentence where one character was printed, and the fit shrinks it until it is unreadable inside the balloon it cannot fill.
+
+The answer shape has a third type for this: `name`, beside `chat` and `sfx`. Both prompts say what it means — a box that holds a name, a title, a place name or a label and no sentence — and both say that a region of one character keeps that one character, in its Traditional form when the forms differ. A name is not skipped: it is written, the way a name plate is written.
+
+The prompt is a request, so the rule is also enforced in code. `preserveLoneName` in `src/lib/loneGlyph.ts` rewrites the answer for a one-character source: an answer of one character is kept, so 圓 passes, and anything longer is replaced by the source character. A `name` answer that grew a note, a parenthetical or a sentence falls back to the source name. It runs on every answer in `translateGroups`, on both the path that reuses a translation and the path that asked for one, so no route into the overlay skips it.
+
+#### One Glyph Is The Whole Label {#one-glyph-is-the-whole-label}
+
+A name of one character has no context to correct it: the reader answered `門` for `円` on one run in eight, and 門 is a perfectly good glyph with a perfectly good translation. The recogniser trained on printed manga read the same box at 0.99, so the block path confirms a one-glyph line against the device before translating it, and adopts the device reading when it is above the usual 0.7 floor and disagrees. A low confidence leaves the reader's text alone: this is a tie-break, not a replacement reader. The line is logged as `[read] one-glyph line … re-read as …`.
+
+This is the same policy the line path has always used — a confident device reading is never replaced by a general vision model — applied where it matters most, because one wrong glyph is the entire label rather than one word of a sentence.
+
+#### The Check {#the-check}
+
+`npm run render:page` runs one page through this pipeline and asserts the result, locally. See [Rendering A Page Locally](#rendering-a-page-locally).
+
+For the page above, the accepted area is `179,149 143×322` — the padded crop the block reader saw for the balloon above 円. The run passes when the balloon that holds 円 holds exactly one glyph, `円` or `圓`, and the labels inside that area are that one glyph plus the neighbouring balloon's sentence.
+
+### Remaining Limits {#remaining-limits}
+
+Stylised handwriting still costs recognition confidence: two columns on the narration page read at 0.76 and 0.82. Both stay above the 0.7 floor, and the cause is the recogniser, not the box.
+
+A line that the `det` head misses, that sits outside every balloon, and that has one glyph is not detected. A large sound effect outside a balloon is detected only when the `det` head marks it. The harness runs on the WASM provider, so the WebGPU path is exercised only by the build.
+
+The model is the limiting factor for stylised lettering. A different detector export, such as the `detector.ort` asset in ShinobuTranslator, may mark those lines. The pipeline would accept it without a change, because the seed rule only depends on one line band per column.
+
+### Rendering A Page Locally {#rendering-a-page-locally}
+
+`scripts/render-page.mjs` runs one image through the extension's own passes — detection, the block reader, the translation, the layout, the erase — in Node, paints the overlay the way the content script does, and checks the balloons whose source is one character. It is the same code the extension ships: `runDetection` and `runInpaint` are imported from the offscreen document, not copied.
+
+```bash
+npm run render:page -- fixtures/page.jpg
+npm run render:page -- fixtures/page.jpg --crop 179,149,143,322 --expect '円,圓'
+```
+
+`--expect` names the glyphs the page must show, whatever the reader transcribed. Without it a one-character balloon may hold its source glyph and that glyph's Traditional form; with it, `円` and `圓` are the only accepted answers, so a reader that turns the glyph into `門` fails the run instead of passing it on the misread source.
+
+The key comes from the git-ignored `.env` (`VITE_DEEPSEEK_API_KEY`) or `DEEPSEEK_API_KEY`. The canvas build is resolved from `CANVAS_ROOT`, this repo's `node_modules`, or the ShinobuTranslator checkout; see `scripts/harness/env.mjs`.
+
+It writes `out/<name>-translated.png`, `out/<name>-crop.png` for the requested area, `out/<name>-balloon-<glyph>.png` for each one-character balloon, and `out/<name>-report.json`. The run exits non-zero when a one-character balloon holds anything but that character, when nothing is placed in it, or when the rendered balloon reads more than one glyph.
+
+`npm run prompt:lab -- out/eval/det-320.json --effort off` measures the translation prompt alone against a captured detection: it rebuilds the same regions, asks the model, and prints each region's translation next to the columns it chose, with two counted checks — a column longer than its source column plus one, and a name cut across two columns. It exists because the reader returns slightly different cell boxes every run, and a different grouping moves the translation more than a prompt change does; comparing prompts on a fresh detection each time measures the reader, not the prompt. Capture one with `npm run render:page -- fixtures/page-320.jpg --save-detection out/eval/det-320.json`.
+
+Two witnesses are reported for each one-character balloon. The label is the pipeline's own answer and is what gates the run. The reader call then reads the rendered balloon back; it reads 圓 as 員 now and then, because the enclosing box looks like a balloon outline to it, so a single-glyph disagreement is a warning and only extra glyphs fail. Before the network request, a table of the answers the model has actually given for 円 is checked by `preserveLoneName`, so a regression in the guard fails without spending a request.
 
 ### Reproducing The Measurement {#reproducing-the-measurement}
 

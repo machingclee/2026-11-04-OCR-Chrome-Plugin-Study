@@ -2,7 +2,8 @@ import { renderScoreOverlay } from '../lib/scoreOverlay';
 import { detectBubbles, sampleBubblePaper } from '../lib/bubble';
 import { cropPreviews } from '../lib/regions';
 import { detectLines, isSessionReady } from '../lib/detect';
-import { readBlockRegions, recognizeLinesInCloud } from '../lib/ocr/cloudOcr';
+import { isReadingOfAny, readBlockRegions, readUnclaimedLine, recognizeLinesInCloud } from '../lib/ocr/cloudOcr';
+import { isLoneGlyph, spokenGlyphs } from '../lib/loneGlyph';
 import { erasePage, type ErasePlanes } from '../lib/erase';
 import { inkBounds, paintSamples, paperColour } from '../lib/mask';
 import { groupByRegion, splitGroupByColumnGap, toOrderedTextLines } from '../lib/readingOrder';
@@ -23,6 +24,9 @@ import serviceWorkerResponseFactory from '../shared/factories/serviceWorkerRespo
 
 /** Each crop is a data url in storage, so the strip stops at this many. */
 const MAX_PREVIEWS = 60;
+
+/** A line no block claimed is read on its own; the count is capped for cost. */
+const MAX_UNCLAIMED_LINES = 6;
 
 /** The page from the last detection, so translation can erase only the lines it keeps. */
 let heldPage: { image: ImageData; planes: ErasePlanes } | null = null;
@@ -450,7 +454,12 @@ async function recognizeLines(
     return collected;
 }
 
-async function runDetection(request: OffscreenDetectRequest): Promise<DetectResponse> {
+/**
+ * Exported for the headless page harness (scripts/render-page.mjs), which runs
+ * this same detection and inpaint code in Node so a rendered page can be
+ * checked without the browser.
+ */
+export async function runDetection(request: OffscreenDetectRequest): Promise<DetectResponse> {
     const started = performance.now();
     const warm = isSessionReady();
     const timings: DetectTimings = { fetch: 0, detect: 0, bubble: 0, group: 0, ocr: 0, extras: 0 };
@@ -569,7 +578,16 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
                             ? pageInkBounds(pagePixels, bitmap.width, bitmap.height, line, paperLuma) ?? inkBounds(detected.mask, line)
                             : inkBounds(detected.mask, line))
                         : null;
-                    if (ink) {
+                    // A snap that lands mostly outside the reader's box is not this
+                    // line's ink: the column search walked into the neighbour and
+                    // returned a sliver of it, which left 連れて as an 8x4 box and
+                    // split its balloon. Such a snap is dropped, and the reader's
+                    // box stands.
+                    const sharedInk = ink
+                        ? Math.max(0, Math.min(ink.x + ink.width, line.x + line.width) - Math.max(ink.x, line.x))
+                            * Math.max(0, Math.min(ink.y + ink.height, line.y + line.height) - Math.max(ink.y, line.y))
+                        : 0;
+                    if (ink && sharedInk >= ink.width * ink.height * 0.6) {
                         line.x = ink.x;
                         line.y = ink.y;
                         line.width = ink.width;
@@ -644,6 +662,210 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
                 balloonFlags.push(balloonList.some((bubble) =>
                     centreX >= bubble.x && centreX <= bubble.x + bubble.width
                     && centreY >= bubble.y && centreY <= bubble.y + bubble.height));
+            });
+
+            // The blk head can miss a small balloon that sits in the corner of a
+            // bigger block's crop, and the reader then reports only the balloon
+            // it was pointed at: the 円 printed beside a speech came back as no
+            // region at all, so it was never translated. A detected line that no
+            // reported region covers is still text, so it is read on its own;
+            // the column gap split below gives it a group of its own.
+            //
+            // A line is claimed when a region covers it. Being inside a block box
+            // is not enough: the reader left it out. The share is 0.3 rather than
+            // a half because a reader box is snapped to its grid, and a cell of
+            // slack left the 円 it had reported uncovered.
+            const claimedBy = (box: Rect): boolean =>
+                lines.some((line) => {
+                    const sharedWidth = Math.min(line.x + line.width, box.x + box.width) - Math.max(line.x, box.x);
+                    const sharedHeight = Math.min(line.y + line.height, box.y + box.height) - Math.max(line.y, box.y);
+                    if (sharedWidth <= 0 || sharedHeight <= 0) return false;
+                    return (sharedWidth * sharedHeight)
+                        / Math.min(line.width * line.height, box.width * box.height) > 0.3;
+                });
+            /** Which balloon holds this box, or -1 when none does. */
+            const balloonAt = (box: Rect): number => {
+                const centreX = box.x + box.width / 2;
+                const centreY = box.y + box.height / 2;
+                return balloonList.findIndex((bubble) => centreX >= bubble.x && centreX <= bubble.x + bubble.width
+                    && centreY >= bubble.y && centreY <= bubble.y + bubble.height);
+            };
+            // Only inside a balloon: a balloon is a speech container, so text in
+            // it is speech. A formula or a signature the reader ignored outside
+            // one stays ignored. A balloon that already reports a one-character
+            // name is settled: its other box is the reading beside that name, and
+            // the reader's box can sit a cell off the ink, which made the same
+            // glyph look unclaimed and had it read again as 門.
+            const namedBalloons = new Set<number>();
+            for (const line of lines) {
+                if (spokenGlyphs(line.text).length !== 1) continue;
+                const bucket = balloonAt(line);
+                if (bucket >= 0) namedBalloons.add(bucket);
+            }
+            const unclaimed = reader
+                ? detected.detBoxes.filter((box) => {
+                    const bucket = balloonAt(box);
+                    return bucket >= 0 && !namedBalloons.has(bucket) && !claimedBy(box);
+                }).slice(0, MAX_UNCLAIMED_LINES)
+                : [];
+            const extra: BoxData[] = [];
+            for (const box of unclaimed) {
+                const line: TextLine = {
+                    ...box,
+                    direction: box.height >= box.width ? 'vertical' : 'horizontal',
+                    ruby: [],
+                };
+                const read = await readUnclaimedLine(bitmap, line, reader?.key ?? '').catch(() => null);
+                if (!read || read.text.trim().length === 0) continue;
+                extra.push(read);
+                console.info(`[read] unclaimed line ${Math.round(box.x)},${Math.round(box.y)} `
+                    + `${Math.round(box.width)}x${Math.round(box.height)} -> ${JSON.stringify(read.text)}`);
+            }
+            // A name is one glyph, so one misread glyph is the whole label: the
+            // reader turned 円 into 門 on one run in eight. The recogniser trained
+            // on printed manga is more reliable on that tight box, and it reads
+            // 円 at 0.99, so a one-glyph line is confirmed against it. A low
+            // confidence leaves the reader's text alone.
+            // A kana word the reader turned into kanji: ねえ came back as お元,
+            // as 我元, and once as two separate kanji regions 我 / 死 — which is
+            // why the check below runs on the block first, and on a line second.
+            const KANA_WORD = /^[\u3040-\u309F\u30A0-\u30FF\u30FC]+$/u;
+            // Read the block as one box when its whole text is a short word that
+            // the reader gave in the wrong script. The reader can split a two
+            // kana bubble into two one-glyph regions, and then no per-line check
+            // ever sees a line long enough to doubt; the box it split is one
+            // word to the recogniser.
+            for (const reading of pageOrder) {
+                const inBlock = lines.filter((line) => centreInsideBox(line, reading.block));
+                if (inBlock.length === 0) continue;
+                const text = inBlock.map((line) => line.text).join('');
+                const glyphs = spokenGlyphs(text);
+                if (glyphs.length === 0 || glyphs.length > 3 || KANA_WORD.test(glyphs.join(''))) continue;
+                const left = Math.min(...inBlock.map((line) => line.x));
+                const top = Math.min(...inBlock.map((line) => line.y));
+                const right = Math.max(...inBlock.map((line) => line.x + line.width));
+                const bottom = Math.max(...inBlock.map((line) => line.y + line.height));
+                const crop: TextLine = {
+                    x: left,
+                    y: top,
+                    width: right - left,
+                    height: bottom - top,
+                    score: reading.block.score,
+                    direction: bottom - top >= right - left ? 'vertical' : 'horizontal',
+                    ruby: [],
+                };
+                const local = await recognizeLine(bitmap, crop, crop.direction === 'vertical')
+                    .catch(() => null);
+                if (!local || local.confidence < 0.9) continue;
+                const read = spokenGlyphs(local.text);
+                if (read.length !== glyphs.length || !KANA_WORD.test(read.join(''))) continue;
+                console.info(`[read] short block ${JSON.stringify(text)} re-read as `
+                    + `${JSON.stringify(local.text.trim())}, local ${local.confidence.toFixed(2)}`);
+                const keep = inBlock[0];
+                keep.text = local.text.trim();
+                keep.x = left;
+                keep.y = top;
+                keep.width = right - left;
+                keep.height = bottom - top;
+                for (const line of inBlock.slice(1)) {
+                    const at = lines.indexOf(line);
+                    if (at >= 0) lines.splice(at, 1);
+                }
+            }
+            // A short line is confirmed when the device reads the same number of glyphs
+            // in kana, which is a different reading of the same box rather than
+            // a different line.
+            const shortKanaMisread = (text: string): boolean => {
+                const glyphs = spokenGlyphs(text);
+                return glyphs.length >= 2 && glyphs.length <= 3 && !KANA_WORD.test(glyphs.join(''));
+            };
+            for (const line of lines) {
+                // A name glyph only: a single kana is dialogue (「え？」), where
+                // the reader has the sentence around it and the recogniser does
+                // not.
+                const lone = isLoneGlyph(line.text);
+                const misread = shortKanaMisread(line.text);
+                if (!lone && !misread) continue;
+                // The detector's line box is where the ink is. The reader's box is
+                // a cell or two off, and a crop that cuts the glyph costs the
+                // recogniser the confidence the tie-break depends on.
+                let crop: TextLine = line;
+                let best = 0;
+                for (const box of detected.detBoxes) {
+                    const sharedWidth = Math.min(line.x + line.width, box.x + box.width) - Math.max(line.x, box.x);
+                    const sharedHeight = Math.min(line.y + line.height, box.y + box.height) - Math.max(line.y, box.y);
+                    if (sharedWidth <= 0 || sharedHeight <= 0) continue;
+                    const share = (sharedWidth * sharedHeight)
+                        / Math.min(line.width * line.height, box.width * box.height);
+                    if (share <= best) continue;
+                    best = share;
+                    crop = {
+                        x: box.x,
+                        y: box.y,
+                        width: box.width,
+                        height: box.height,
+                        score: box.score,
+                        direction: line.direction,
+                        ruby: [],
+                    };
+                }
+                if (best <= 0.3) crop = line;
+                const local = await recognizeLine(bitmap, crop, line.direction === 'vertical')
+                    .catch(() => null);
+                if (!local || local.confidence < OCR_MIN_CONFIDENCE) continue;
+                const glyphs = spokenGlyphs(local.text);
+                if (!lone) {
+                    const deviceKana = glyphs.length === spokenGlyphs(line.text).length
+                        && KANA_WORD.test(glyphs.join(''));
+                    if (local.confidence < 0.9 || !deviceKana) continue;
+                    console.info(`[read] short line ${JSON.stringify(line.text)} re-read as `
+                        + `${JSON.stringify(local.text.trim())}, local ${local.confidence.toFixed(2)}`);
+                    line.text = local.text.trim();
+                    continue;
+                }
+                if (glyphs.length !== 1 || glyphs[0] === spokenGlyphs(line.text)[0]) continue;
+                console.info(`[read] one-glyph line ${JSON.stringify(line.text)} re-read as `
+                    + `${JSON.stringify(local.text.trim())}, local ${local.confidence.toFixed(2)}, `
+                    + `box ${Math.round(crop.x)},${Math.round(crop.y)} ${Math.round(crop.width)}x${Math.round(crop.height)}`);
+                line.text = local.text.trim();
+            }
+            // The kana printed beside a name is its reading, not a line: つぶら
+            // beside 円. The new lines are judged against every line at once, so
+            // the order they were read in cannot decide which one is the host.
+            const base = lines.length;
+            const inked = [...lines, ...extra].map((line) => ({
+                direction: line.direction === 'vertical' ? 'v' as const : 'h' as const,
+                x: line.x,
+                y: line.y,
+                width: line.width,
+                height: line.height,
+                text: line.text,
+            }));
+            // The same text read twice is one line: the reader reported この２人
+            // on its grid and the detector's own box came back as この2人, and
+            // the balloon then carried both. Full-width and half-width forms are
+            // the same text, so the comparison runs over the normalised form.
+            const normalised = (text: string): string => text.normalize('NFKC').replace(/\s/gu, '');
+            const alreadyRead = (line: BoxData): boolean => lines.some((other) => {
+                if (normalised(other.text) !== normalised(line.text)) return false;
+                const size = Math.max(other.width, other.height, line.width, line.height);
+                const distance = Math.hypot(
+                    (other.x + other.width / 2) - (line.x + line.width / 2),
+                    (other.y + other.height / 2) - (line.y + line.height / 2),
+                );
+                return distance <= size * 2;
+            });
+            extra.forEach((line, index) => {
+                const self = base + index;
+                if (isReadingOfAny(inked[self], inked.filter((_, at) => at !== self))) {
+                    console.info(`[read] unclaimed line ${JSON.stringify(line.text)} is a reading, not a line`);
+                    return;
+                }
+                if (alreadyRead(line)) {
+                    console.info(`[read] unclaimed line ${JSON.stringify(line.text)} was already read`);
+                    return;
+                }
+                lines.push(line);
             });
 
             grouped = {
@@ -901,7 +1123,7 @@ async function runDetection(request: OffscreenDetectRequest): Promise<DetectResp
  * says where the ink is. A box on balloon paper is filled flat; the rest is
  * inpainted, because only the paint around it can say what belongs there.
  */
-async function runInpaint(request: OffscreenInpaintRequest): Promise<OffscreenInpaintResponse> {
+export async function runInpaint(request: OffscreenInpaintRequest): Promise<OffscreenInpaintResponse> {
     const page = heldPage;
     if (!page || request.boxes.length === 0) return { ok: true, erasedUrl: null };
     try {
@@ -922,7 +1144,9 @@ async function runInpaint(request: OffscreenInpaintRequest): Promise<OffscreenIn
     }
 }
 
-// this is off the offscreen document
+// this is off the offscreen document. The listener is registered only where a
+// runtime exists: the page harness imports this module for runDetection alone.
+if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
 chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
     const request = message as IncomingMessage | undefined;
     if (!request || request.target !== OFFSCREEN_TARGET) return false;
@@ -940,3 +1164,4 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
     void runDetection(request).then(sendResponse);
     return true;
 });
+}

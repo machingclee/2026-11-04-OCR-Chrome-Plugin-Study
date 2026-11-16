@@ -17,15 +17,38 @@ const MAX_SIDE = 1600;
 
 export type BlockBox = { x: number; y: number; width: number; height: number };
 
-/** The padded box a block is cropped with, clamped to the page. */
-export function blockCropBox(pageWidth: number, pageHeight: number, block: BlockBox): BlockBox {
-    const x = Math.max(0, block.x - BLOCK_PAD);
-    const y = Math.max(0, block.y - BLOCK_PAD);
+/** How far the crop may grow past the block to show a box whole, per side. */
+const GROW_SHARE = 0.6;
+const GROW_MIN = 32;
+
+/**
+ * The padded box a block is cropped with, clamped to the page.
+ *
+ * A blk box can be tighter than the text it names, and a detector box that
+ * reaches past it is still drawn on the crop. A box cut by the crop edge is
+ * one the reader tends to skip, so the crop grows to hold every drawn box
+ * whole, capped so one stray long box cannot turn the block into the page.
+ */
+export function blockCropBox(pageWidth: number, pageHeight: number, block: BlockBox, boxes: BlockBox[] = []): BlockBox {
+    let x0 = block.x - BLOCK_PAD;
+    let y0 = block.y - BLOCK_PAD;
+    let x1 = block.x + block.width + BLOCK_PAD;
+    let y1 = block.y + block.height + BLOCK_PAD;
+    const growX = Math.max(GROW_MIN, block.width * GROW_SHARE);
+    const growY = Math.max(GROW_MIN, block.height * GROW_SHARE);
+    for (const box of boxes) {
+        x0 = Math.max(block.x - growX, Math.min(x0, box.x));
+        y0 = Math.max(block.y - growY, Math.min(y0, box.y));
+        x1 = Math.min(block.x + block.width + growX, Math.max(x1, box.x + box.width));
+        y1 = Math.min(block.y + block.height + growY, Math.max(y1, box.y + box.height));
+    }
+    const left = Math.max(0, Math.min(x0, x1 - 1));
+    const top = Math.max(0, Math.min(y0, y1 - 1));
     return {
-        x,
-        y,
-        width: Math.max(1, Math.min(pageWidth, block.x + block.width + BLOCK_PAD) - x),
-        height: Math.max(1, Math.min(pageHeight, block.y + block.height + BLOCK_PAD) - y),
+        x: left,
+        y: top,
+        width: Math.max(1, Math.min(pageWidth, x1) - left),
+        height: Math.max(1, Math.min(pageHeight, y1) - top),
     };
 }
 
@@ -49,7 +72,7 @@ export function blockCropDataUrl(
     /** Line boxes the detector found, drawn in blue as the text to read. */
     boxes: BlockBox[] = [],
 ): { dataUrl: string; crop: BlockBox; cell: number } {
-    const crop = blockCropBox(pageWidth, pageHeight, block);
+    const crop = blockCropBox(pageWidth, pageHeight, block, boxes);
     const scale = blockCropScale(crop);
     const width = Math.max(1, Math.round(crop.width * scale));
     const height = Math.max(1, Math.round(crop.height * scale));

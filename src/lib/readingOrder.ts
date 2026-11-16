@@ -452,7 +452,26 @@ export function splitGroupByColumnGap<T extends {
                 : Math.min(a.height, b.height);
             const cross = vertical ? gapX : gapY;
             const along = vertical ? gapY : gapX;
-            const crossLimit = Math.max(thickness * 0.6, 6);
+            // How much of the shorter line the two share along the reading axis,
+            // and whether they start on the same line of the text block.
+            const alongStart = (item: T): number => (vertical ? item.y : item.x);
+            const alongLength = (item: T): number => (vertical ? item.height : item.width);
+            const shared = Math.min(alongStart(a) + alongLength(a), alongStart(b) + alongLength(b))
+                - Math.max(alongStart(a), alongStart(b));
+            const sharedShare = shared > 0
+                ? shared / Math.max(1, Math.min(alongLength(a), alongLength(b)))
+                : 0;
+            const sameBand = sharedShare >= 0.6
+                && Math.abs(alongStart(a) - alongStart(b)) <= Math.max(thickness, 8);
+            // Columns of one speech share a band: they start on the same line
+            // and run beside each other. The reader reads its boxes off a coarse
+            // grid, so their gaps are whole cells and run to three cells wide
+            // between two columns that touch. A wide gap inside one band is
+            // grid noise, not a second balloon, and splitting on it cut one
+            // sentence into three groups that were then translated apart.
+            const crossLimit = sameBand
+                ? Math.max(thickness * 2.5, 12)
+                : Math.max(thickness * 0.6, 6);
             // Columns in one balloon overlap along the reading axis. A gap of
             // more than one line thickness is a new text band or a second
             // balloon, not another column of the same speech.

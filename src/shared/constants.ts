@@ -45,13 +45,16 @@ export const DEEPSEEK_KEY = 'deepseekKey';
  * those are the levels the popup offers, plus off for a fast pass.
  *
  * The level applies to translation only. Reading is perception and never
- * thinks; translating a block is where a chain of thought is worth its wait,
- * so the default there is high.
+ * thinks. Thinking dominates the wall-clock cost of a page — one request per
+ * block, and at high a block spent 1.4k completion tokens of which 1.37k were
+ * reasoning — while the translation prompt now carries the procedure thinking
+ * would perform, so the default is off. The higher levels stay for a page that
+ * needs them.
  */
 export const REASONING_EFFORT_KEY = 'reasoningEffort';
 export const REASONING_EFFORTS = ['off', 'low', 'high', 'max'] as const;
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
-export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'high';
+export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'off';
 /** The popup asks the page to show its finished image. */
 export const REPLACE_IMAGE_MESSAGE = 'comic-translator:replace-image';
 /** The page can put its own image back. */

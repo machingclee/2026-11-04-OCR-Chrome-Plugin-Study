@@ -1,9 +1,11 @@
+import { DEFAULT_REASONING_EFFORT } from '../shared/constants';
 import type { ReasoningEffort, TranslatorChoice } from '../shared/constants';
 import type { BoxData, BubbleData, GroupData, OverlayItem } from '../shared/types';
 import type { RegionAnswer } from './translatePrompt';
 import { translateWithDeepSeek } from './translateDeepSeek';
 import { toHorizontal, toVertical } from './punct';
 import { fallbackSegments, fitColumns } from './fitColumns';
+import { isLoneGlyph, preserveLoneName } from './loneGlyph';
 
 export type TranslationSettings = {
     translator: TranslatorChoice;
@@ -38,6 +40,12 @@ export type TranslationJobResult = {
      * translator left out would leave a blank hole in the balloon.
      */
     keep: EraseBox[];
+    /**
+     * Area of every group that actually received a label. The inpaint pass is
+     * gated on this, not on the reader's regions: a block whose translation
+     * failed must keep its ink, or the balloon is left blank.
+     */
+    labelled: EraseBox[];
 };
 
 function countWithBalloon(list: GroupData[], balloons: BubbleData[]): number {
@@ -129,7 +137,7 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         console.info(`[translate] ${current.length} block(s) already translated; no second request`);
     } else {
         if (key.length === 0) throw new Error('Paste a DeepSeek API key to translate this page.');
-        const effort = settings.effort ?? 'high';
+        const effort = settings.effort ?? DEFAULT_REASONING_EFFORT;
         const pageTexts = current.map((group) => group.lines.join(''));
         const answers = new Map<number, RegionAnswer>();
         const request = async (index: number): Promise<void> => {
@@ -159,9 +167,23 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         };
         await Promise.all(Array.from({ length: Math.min(4, queue.length) }, () => worker()));
         console.info(`[translate] ${answers.size} of ${missing.length} block(s) translated, effort ${effort}`);
-        out = current.map((_, index) => answers.get(index) ?? { text: '' });
+        // A block that already carried a translation keeps it. Only the missing
+        // ones were requested, so building the answer list from `answers` alone
+        // dropped every block the reading call had translated.
+        out = current.map((_, index) => {
+            const ready = translations[index].trim();
+            if (ready.length > 0) return { text: ready };
+            return answers.get(index) ?? { text: '' };
+        });
         used = 'DeepSeek (one request per block)';
     }
+
+    // A balloon that holds one character is a name or a symbol, and its answer
+    // must stay that one character. The prompt asks for it; this makes it hold
+    // when the model writes a phrase anyway, on both the path that used the
+    // translated text and the path that asked for it here.
+    const sources = current.map((group) => group.lines.join('').trim());
+    out = out.map((answer, index) => preserveLoneName(sources[index], answer));
 
     // Write the answers back into the block results, so the block carries the
     // translation it produced and a later pass does not translate it twice.
@@ -177,6 +199,7 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
     const items: OverlayItem[] = [];
     const erase: EraseBox[] = [];
     const keep: EraseBox[] = [];
+    const labelled: EraseBox[] = [];
     let skipped = 0;
     const inkOf = (line: BoxData): EraseBox => ({ x: line.x, y: line.y, width: line.width, height: line.height });
     const linesOf = (group: GroupData): BoxData[] => boxes.filter((line) => {
@@ -191,12 +214,16 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         const answer = out[index];
         if (answer?.skip || answer?.type === 'sfx') {
             skipped += 1;
+            console.info(`[typeset] group ${index}: the translator said ${answer.skip ? 'skip' : 'sfx'}; its ink stays`);
             if (answer?.skip) for (const line of linesOf(group)) if (line.kind !== 'sfx') keep.push(inkOf(line));
             return;
         }
-        const text = answer?.text ?? group.lines.join('');
+        // Never stand the source text in for a translation. A missing answer
+        // used to redraw the Japanese, which looked like a silent no-op.
+        const text = answer?.text ?? '';
         if (text.trim().length === 0) {
             skipped += 1;
+            console.warn(`[typeset] group ${index}: no translation came back; its ink stays`);
             for (const line of linesOf(group)) if (line.kind !== 'sfx') keep.push(inkOf(line));
             return;
         }
@@ -241,9 +268,43 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
                 ? sortedLines.filter((line) => strokeOf(line) >= thickest / 1.6)
                 : sortedLines;
         const placedLines = bodyLines.length > 0 ? bodyLines : sortedLines;
+        const frameOf = (line: BoxData) => {
+            const ink = placedFrame(line);
+            if (!line.slot || Math.abs(line.angle ?? 0) >= 0.01) return ink;
+            // The reader's box is snapped to its cell grid and can land a cell or
+            // two off the glyphs: 円 came back at cell 3 of a balloon whose glyph
+            // starts at cell 0, so the label was placed beside the character it
+            // replaced. When the box is further from the ink than its own size,
+            // the cell box was a bad estimate and the ink is where the ink is.
+            const drift = Math.max(
+                Math.abs((line.slot.x + line.slot.width / 2) - (ink.x + ink.width / 2)),
+                Math.abs((line.slot.y + line.slot.height / 2) - (ink.y + ink.height / 2)),
+            );
+            return drift > Math.min(line.slot.width, line.slot.height) ? ink : line.slot;
+        };
         // A group can come back with fewer columns than it had. The spare source
         // line would otherwise keep its ink, because only labelled frames are erased.
-        for (const line of linesInGroup) erase.push(placedFrame(line));
+        //
+        // Both frames are erased: the ink box, which is tight around the strokes,
+        // and the frame the label is drawn on. They differ by a cell when the
+        // reader's box is off, and a glyph edge outside the ink box but under the
+        // label is exactly the そうだ that stayed on the balloon beside its
+        // translation. What the label covers must be what the erase covered.
+        for (const line of linesInGroup) {
+            erase.push(placedFrame(line));
+            const label = frameOf(line);
+            if (label.x !== line.x || label.y !== line.y || label.width !== line.width || label.height !== line.height) {
+                erase.push(label);
+            }
+        }
+        // A balloon whose text is one character holds nothing else that is text:
+        // the kana printed beside it is that character's reading (つぶら beside
+        // 円), not a line of its own, and the reader does not report it. Clearing
+        // the whole balloon takes that reading with the character; without it a
+        // smear of the reading stayed beside the translation inside the balloon.
+        if (balloon && isLoneGlyph(group.lines.join(''))) {
+            erase.push({ x: balloon.x, y: balloon.y, width: balloon.width, height: balloon.height });
+        }
 
         let minX = Number.POSITIVE_INFINITY;
         let minY = Number.POSITIVE_INFINITY;
@@ -299,9 +360,6 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         //    cut at their punctuation, stand in.
         // 3. fitColumns deals whole pieces into the lines by the room each line
         //    has, and returns one font factor that makes every part fit.
-        const frameOf = (line: BoxData) => (
-            line.slot && Math.abs(line.angle ?? 0) < 0.01 ? line.slot : placedFrame(line)
-        );
         const fontOf = (line: BoxData): number => {
             const size = strokeOf(line);
             return size >= 4 ? Math.max(6, Math.round(size * 1.2)) : fittedFont;
@@ -384,6 +442,10 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
             sourceFont: number,
         ) => {
             const text = vertical ? toVertical(content) : toHorizontal(content);
+            // A part that is only spaces or a word joiner paints nothing. It
+            // must not count as a label: the eraser treats the group as covered
+            // and the balloon empties out behind an invisible box.
+            if (![...text].some((character) => character !== '\u2060' && !/\s/u.test(character))) return;
             const fontSize = Math.max(6, Math.round(sourceFont * fit.scale));
             // Spread the label over its band: a translation with fewer
             // characters than the cells it has room for is spaced out instead
@@ -427,6 +489,7 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
             });
         };
 
+        const placedBefore = items.length;
         if (layoutLines.length === 0) {
             push(tight, fullText, fittedFont);
         } else {
@@ -457,6 +520,26 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
                 }
             }
         }
+
+        // The inpaint pass is gated on this: a group that placed nothing must
+        // not be erased, or the balloon is left empty with no way back.
+        if (items.length > placedBefore) {
+            let minX = Number.POSITIVE_INFINITY;
+            let minY = Number.POSITIVE_INFINITY;
+            let maxX = Number.NEGATIVE_INFINITY;
+            let maxY = Number.NEGATIVE_INFINITY;
+            for (let at = placedBefore; at < items.length; at += 1) {
+                const item = items[at];
+                minX = Math.min(minX, item.x);
+                minY = Math.min(minY, item.y);
+                maxX = Math.max(maxX, item.x + item.width);
+                maxY = Math.max(maxY, item.y + item.height);
+            }
+            labelled.push({ x: minX, y: minY, width: maxX - minX, height: maxY - minY });
+        } else {
+            console.warn(`[typeset] group ${index}: nothing was placed; its ink stays`);
+            for (const line of linesInGroup) if (line.kind !== 'sfx') keep.push(inkOf(line));
+        }
     });
 
     if (items.length === 0) throw new Error('The translation returned no dialogue to place.');
@@ -470,5 +553,6 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         withBalloon: countWithBalloon(current, balloons),
         erase,
         keep,
+        labelled,
     };
 }

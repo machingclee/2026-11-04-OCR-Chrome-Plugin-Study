@@ -99,8 +99,27 @@ export function fitColumns(segments: string[], capacities: number[], options: Fi
     const preferred = options.preferred;
     if (preferred && preferred.length === lines && preferred.every((part) => cellsOf(part) > 0)
         && preferred.join('') === text) {
+        // The translator may choose the columns, but it may not cut a piece it
+        // called unbreakable: its own split put 艾爾 in one column and 瑪 in the
+        // next, and 艾薩 / 斯 on another page. A name split across columns is not
+        // a layout the fit accepts, whatever font size would make it fit.
+        const pieceEnds = new Set<number>();
+        let end = 0;
+        for (const piece of segments) {
+            end += [...piece].length;
+            pieceEnds.add(end);
+        }
+        let cut = 0;
+        let whole = true;
+        for (let index = 0; index < preferred.length - 1; index += 1) {
+            cut += [...preferred[index]].length;
+            if (!pieceEnds.has(cut)) {
+                whole = false;
+                break;
+            }
+        }
         const scale = scaleFor(preferred, capacities);
-        if (scale >= (options.keepScale ?? 0.85)) return { parts: [...preferred], scale };
+        if (whole && scale >= (options.keepScale ?? 0.85)) return { parts: [...preferred], scale };
     }
 
     const characters = [...text];

@@ -139,7 +139,7 @@ Popup → service worker → offscreen, then back through the content script.
    one `GroupData` with `lines` and, per line, a `slot` (the label rectangle)
    plus `lineThickness` (the font, set in the cell block around line 585).
 5. **Translate** (`src/lib/translationJob.ts`, `translateGroups`): one request
-   per block, at the popup's effort (default high), with the rest of the page
+   per block, at the popup's effort (default off), with the rest of the page
    as context. The answer is `{translation, columns}`.
 6. **Lay out** (same file, around line 290 and line 369): the translation is
    split into one part per line (`splitByWeight`), then one overlay item per
@@ -377,6 +377,13 @@ different page from this balloon. Any page image works for those tests. The
 - Upright labels and inclined labels are different elements. The glyph column
   is only for `item.vertical && !inclined`. An inclined line stays on
   `writing-mode: vertical-rl`.
+- A balloon whose text is one character stays one character. `preserveLoneName`
+  runs on every answer in `translateGroups`; a new path that writes a
+  translation must go through it, or 円 becomes 日圓 and then a sentence in a
+  balloon that holds one glyph. `name` is a third type beside `chat` and `sfx`
+  and it is translated, not skipped.
+- A name glyph is confirmed against the on-device recogniser, because one wrong
+  glyph is the whole label: the reader returned 門 for 円 on one run in eight.
 
 ## 11. Erase rewrite (2026-11-16)
 

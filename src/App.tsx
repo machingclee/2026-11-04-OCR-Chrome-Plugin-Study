@@ -31,7 +31,8 @@ import type {
 import serviceWorkerRequestFactory from './shared/factories/serviceWorkerRequestFactory';
 import { setOverlayOpacityInPage } from './shared/overlayVisibility';
 import { cropSize } from './lib/warp';
-import { blockCropDataUrl } from './lib/ocr/blockCrop';
+import { blockCropBox, blockCropDataUrl } from './lib/ocr/blockCrop';
+import { gridCell } from './lib/ocr/grid';
 
 
 type BubbleStroke = {
@@ -148,6 +149,8 @@ export default function App() {
     const [blocks, setBlocks] = useState<BlockData[]>([]);
     const [blockReadings, setBlockReadings] = useState<BlockReadingData[]>([]);
     const [blockThumbs, setBlockThumbs] = useState<Record<number, string>>({});
+    /** The rectangle actually cut for each block, in page pixels. */
+    const [blockCrops, setBlockCrops] = useState<Record<number, { x: number; y: number; width: number; height: number; cell: number }>>({});
     const [groups, setGroups] = useState<GroupStroke[]>([]);
     const [deepSeekKey, setDeepSeekKey] = useState('');
     const [effort, setEffort] = useState<ReasoningEffort>(DEFAULT_REASONING_EFFORT);
@@ -623,6 +626,23 @@ export default function App() {
         };
     }, [blocks, blockReadings, imageUrl]);
 
+    // The crop rectangle is geometry only: the blk box with its margin, grown
+    // to hold every box drawn on it, clamped to the page. Computing it from the
+    // page size keeps the coordinate visible even when the thumbnail cannot be
+    // cut (a cross-origin image refuses the canvas).
+    useEffect(() => {
+        if (size.width <= 0 || size.height <= 0 || blocks.length === 0) {
+            setBlockCrops({});
+            return;
+        }
+        const crops: Record<number, { x: number; y: number; width: number; height: number; cell: number }> = {};
+        blocks.forEach((block, index) => {
+            const crop = blockCropBox(size.width, size.height, block, blockReadings[index]?.boxes ?? []);
+            crops[index] = { ...crop, cell: gridCell(crop) };
+        });
+        setBlockCrops(crops);
+    }, [blocks, blockReadings, size.width, size.height]);
+
     const handleDownloadCombined = useCallback(async () => {
         if (!imageUrl) return;
         try {
@@ -662,6 +682,21 @@ export default function App() {
                 context.lineWidth = scale * 2;
                 for (const block of blocks) {
                     context.strokeRect(block.x, block.y, block.width, block.height);
+                }
+                context.restore();
+            }
+
+            // The rectangle actually cut for the reader, in the same violet the
+            // preview uses: the blk box with its margin, grown to hold every
+            // box drawn on the crop.
+            const cuts = Object.values(blockCrops);
+            if (cuts.length > 0) {
+                context.save();
+                context.setLineDash([3 * scale, 3 * scale]);
+                context.strokeStyle = '#7c3aed';
+                context.lineWidth = scale;
+                for (const crop of cuts) {
+                    context.strokeRect(crop.x, crop.y, crop.width, crop.height);
                 }
                 context.restore();
             }
@@ -718,11 +753,11 @@ export default function App() {
                 });
             });
             window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
-            setStatus(`Saved the page with det, seg, ${blocks.length} blocks and ${boxes.length} boxes drawn on it as ${name}.`);
+            setStatus(`Saved the page with det, seg, ${blocks.length} blocks, their crop rectangles and ${boxes.length} boxes drawn on it as ${name}.`);
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));
         }
-    }, [blocks, blockReadings, bubbles, boxes, detUrl, imageUrl, segUrl, size.height, size.width]);
+    }, [blocks, blockCrops, blockReadings, bubbles, boxes, detUrl, imageUrl, segUrl, size.height, size.width]);
 
     const onMac = /Mac|iPhone|iPad/i.test(navigator.userAgent);
     const macShortcut = onMac ? formatShortcut(activeShortcut, 'mac') : 'Opt+T';
@@ -836,16 +871,18 @@ export default function App() {
                                 }}
                                 className="rounded border border-slate-300 bg-white px-2 py-2 text-sm text-slate-900 outline-none transition focus:border-[#b08a68] focus:ring-2 focus:ring-[#eadfd2]"
                             >
-                                <option value="off">Off, answer immediately</option>
+                                <option value="off">Off (default), answer immediately</option>
                                 <option value="low">Low</option>
-                                <option value="high">High (default)</option>
+                                <option value="high">High</option>
                                 <option value="max">Max</option>
                             </select>
                         </label>
                         <p className="text-[11px] font-medium text-[#8a6a4f]">
                             Reading a block never thinks: it transcribes the text and places it. This level is the
                             translation that follows, one request per block, with the rest of the page as context.
-                            High is the default; max buys the hardest look at a block at the cost of waiting.
+                            Off is the default: the prompt carries the procedure a chain of thought would perform,
+                            and thinking was the wall-clock cost of a page. High and max buy a harder look at a
+                            block at the cost of waiting.
                         </p>
                         <p className="text-[11px] font-medium text-[#8a6a4f]">
                             DeepSeek reads each block and writes its translation. Without a key no translation runs.
@@ -932,6 +969,9 @@ export default function App() {
                                 </span>
                             ) : null}
                             {blocks.length > 0 ? <span className="map-key blk"><i />BLK</span> : null}
+                            {blocks.length > 0 && Object.keys(blockCrops).length > 0
+                                ? <span className="map-key crop"><i />CROP</span>
+                                : null}
                             {blockReadings.some((reading) => (reading.boxes ?? []).length > 0)
                                 ? <span className="map-key line"><i />TEXT</span>
                                 : null}
@@ -947,7 +987,7 @@ export default function App() {
                                 type="button"
                                 onClick={() => void handleDownloadCombined()}
                                 disabled={!imageUrl || (boxes.length === 0 && !detUrl && !segUrl)}
-                                title="Download this page with the det map, the seg map, the blk blocks and every box drawn on it (JPEG)."
+                                title="Download this page with the det map, the seg map, the blk blocks, their crop rectangles and every box drawn on it (JPEG)."
                                 className="whitespace-nowrap rounded border border-[#ded2c4] bg-white px-2 py-1 text-xs font-medium text-[#6d523b] transition hover:bg-[#f3eee8] disabled:cursor-not-allowed disabled:opacity-40"
                             >
                                 Download combined
@@ -967,6 +1007,21 @@ export default function App() {
                         />
                         {detUrl ? <img src={detUrl} alt="" className="map map-det" /> : null}
                         {segUrl ? <img src={segUrl} alt="" className="map map-seg" /> : null}
+                        {size.width > 0
+                            ? Object.entries(blockCrops).map(([index, crop]) => (
+                                <span
+                                    key={`crop-${index}-${crop.x}-${crop.y}`}
+                                    className="crop-box"
+                                    title={`CROP ${Math.round(crop.x)},${Math.round(crop.y)} ${Math.round(crop.width)}×${Math.round(crop.height)} (page pixels), ${(blockReadings[Number(index)]?.boxes ?? []).length} box(es) drawn`}
+                                    style={{
+                                        left: `${(crop.x / size.width) * 100}%`,
+                                        top: `${(crop.y / size.height) * 100}%`,
+                                        width: `${(crop.width / size.width) * 100}%`,
+                                        height: `${(crop.height / size.height) * 100}%`,
+                                    }}
+                                />
+                            ))
+                            : null}
                         {blocks.map((block, index) => (
                             <span
                                 key={`block-${index}-${block.x}-${block.y}`}
@@ -1067,6 +1122,8 @@ export default function App() {
                     <p className="mt-1 text-xs text-slate-500">
                         One card per blk box: the image DeepSeek was sent, which is the blk box with its
                         margin, upscaled and covered by the cell grid, then the regions it answered with.
+                        The crop line is the rectangle that was cut, in page pixels, and the grid cell size
+                        the reader's numbers are counted in.
                     </p>
                     <ol className="mt-2 flex flex-col gap-3">
                         {blocks.map((block, index) => {
@@ -1092,6 +1149,16 @@ export default function App() {
                                         BLK {index + 1}: {Math.round(block.x)},{Math.round(block.y)}{' '}
                                         {Math.round(block.width)}×{Math.round(block.height)}
                                     </p>
+                                    {blockCrops[index] ? (
+                                        <p className="text-[11px] text-slate-500">
+                                            crop {Math.round(blockCrops[index].x)},{Math.round(blockCrops[index].y)}{' '}
+                                            {Math.round(blockCrops[index].width)}×{Math.round(blockCrops[index].height)}{' '}
+                                            · {blockCrops[index].cell.toFixed(1)} px/cell
+                                            · {(reading?.boxes ?? []).length === 0
+                                                ? 'no boxes drawn, blk + 10 px margin'
+                                                : `${(reading?.boxes ?? []).length} box(es) drawn`}
+                                        </p>
+                                    ) : null}
                                     {reading ? (
                                         <>
                                             {reading.translation ? (
