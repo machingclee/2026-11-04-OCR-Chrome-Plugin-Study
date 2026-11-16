@@ -2,7 +2,10 @@
 
 All technical details are documented in the full walkthrough: [Build a Chrome Extension From Scratch: From an Empty Folder to a Page Translated In Place](https://www.machingclee.com/blog/article/Build-a-Chrome-Extension-From-Scratch-From-an-Empty-Folder-to-a-Page-Translated-In-Place)
 
-<img width="1513" height="1140" alt="demo" src="https://github.com/user-attachments/assets/7e741322-2770-4771-8cbe-8b9eae25e032" />
+
+<img width="1503" height="1140" alt="image" src="https://github.com/user-attachments/assets/8034b371-9d26-4c65-b00a-eac93e50b9bf" />
+
+<img width="798" height="1118" alt="image" src="https://github.com/user-attachments/assets/222839f8-9ab9-4b2a-9d03-c38a6045b865" />
 
 https://github.com/user-attachments/assets/b65dc644-a995-433a-92fa-c67d39a59693
 
