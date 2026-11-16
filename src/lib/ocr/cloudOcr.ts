@@ -6,6 +6,7 @@ import { cropSize, drawUpright } from '../warp';
 import { blockCropBox, blockCropDataUrl } from './blockCrop';
 import { cellToPage, gridGeometry } from './grid';
 import { recognizeLine } from './recognize';
+import { isLoneGlyph } from '../loneGlyph';
 
 /**
  * Cloud reading.
@@ -367,6 +368,40 @@ export async function recognizeLinesInCloud(
 }
 
 /**
+ * Read one line that no block claimed, straight from the cloud model.
+ *
+ * A line outside every blk box is never inside a block crop, so the block reader
+ * cannot report it: the 円 printed in the corner of a speech balloon stayed
+ * untranslated because the blk head missed its balloon. The line's own crop is
+ * read here, and the device recogniser stands in when the request fails.
+ */
+export async function readUnclaimedLine(
+    bitmap: ImageBitmap,
+    line: TextLine,
+    key: string,
+): Promise<BoxData> {
+    // The device recogniser is trained on printed manga and wins on a tight
+    // crop of one glyph: it reads 円 at 0.99 where the cloud read 門, and a name
+    // read as 門 is translated as 門. This is the same rule the line path uses,
+    // a confident device reading is never replaced by a general vision model.
+    const local = await recognizeLine(bitmap, line, line.direction === 'vertical')
+        .catch(() => ({ text: '', confidence: 0 }));
+    const localText = local.text.trim();
+    if (localText.length > 0 && local.confidence >= ASSIST_BELOW) {
+        return { ...line, text: localText, confidence: local.confidence };
+    }
+    try {
+        const dataUrl = cropToDataUrl(bitmap, line);
+        const found = await readOneCrop(requestDeepSeek, key, dataUrl, READ_EFFORT);
+        const text = found?.[0]?.text.trim() ?? '';
+        if (text.length > 0) return { ...line, text, confidence: 1 };
+    } catch (cause) {
+        console.warn('Reading an unclaimed line in the cloud failed.', cause);
+    }
+    return { ...line, text: localText, confidence: local.confidence };
+}
+
+/**
  * Cut one box into the number of text lines the model found. A vertical column
  * is cut across x and returned right to left, which is the manga reading order,
  * so the first returned piece matches the first text line the model reported.
@@ -417,8 +452,8 @@ export type BlockRegion = {
     glyphSize?: number;
     /** The same line in Traditional Chinese, written in the reading call. */
     translation?: string;
-    /** Dialogue or sound effect. */
-    kind: 'chat' | 'sfx';
+    /** Dialogue, a name or a sound effect. */
+    kind: 'chat' | 'sfx' | 'name';
     /** Furigana the model saw on this line. Kept for inspection, never merged. */
     ruby?: string;
     /** Lean of the text axis in radians, as the rest of the pipeline stores it. */
@@ -476,7 +511,7 @@ const BLOCK_PROMPT = [
     'Do not translate: this answer is read only. A separate request translates the text once the whole block has been read.',
     'A grid is drawn over the image, and every line of it carries a number: thin lines mark single cells, a thicker line marks every fifth. The numbers along the top edge are blue and count x, the numbers along the left edge are red and count y, both from 0 at the top left corner. Read the number on the line nearest the edge you are reporting instead of estimating a position between two lines.',
     'A reading can sit inside a blue rectangle, in the gap between the large characters and the box edge. It is still not a line: the entry covers the large characters, its box stays on the large characters, and the reading is left out of text. Never report it in any field. Small kana that belong to the word itself, such as the っ in いって, are part of the word and stay.',
-    'type: "chat" for dialogue, including a short はい, うん, ええ, そう, ああ, いえ, いや and a line that starts with an ellipsis. "sfx" for onomatopoeia and sound effects such as ドドド, ゴゴゴ, ザワザワ, ドン, バン, ガシャ.',
+    'type: "chat" for dialogue, including a short はい, うん, ええ, そう, ああ, いえ, いや and a line that starts with an ellipsis. "name" for a box that holds a name, a title, a place name or a label and no sentence: 有留木 環 is a name, and so is a lone 円 printed with its reading つぶら beside it. "sfx" for onomatopoeia and sound effects such as ドドド, ゴゴゴ, ザワザワ, ドン, バン, ガシャ.',
     'direction: "v" when the line reads top to bottom, "h" when it reads left to right, "i" when the line is inclined.',
     'angle: for an inclined line, the angle of the text direction in degrees from the horizontal axis, clockwise on the image, between -89 and 89. Omit it for upright text.',
     'x and y: the cell holding the top left corner of the line, counted from the left edge and from the top edge of the image, both from 0. width and height: the size of the box in cells.',
@@ -535,62 +570,96 @@ const KANA_ONLY = /^[\u3040-\u309F\u30A0-\u30FF\u30FC\u30FB]+$/u;
  * back as a fourth line and got a fourth label. A same-size kana column beside
  * a box is dialogue and is folded in by `mergeCompanionRegions` instead.
  */
-export function dropReadingsInsideColumns(regions: BlockRegion[]): BlockRegion[] {
-    if (regions.length < 2) return regions;
-    const thickness = (region: BlockRegion): number => (
-        region.direction === 'v' ? region.width : region.height
+/** The fields the reading tests need: a box, its direction and its text. */
+export type Inked = {
+    direction: 'v' | 'h';
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    text: string;
+};
+
+/** The side across the line: a vertical column's width, a row's height. */
+function acrossSize(item: Inked): number {
+    return item.direction === 'v' ? item.width : item.height;
+}
+
+/**
+ * The line this short kana region reads for, when it is a reading and not a
+ * line of its own.
+ *
+ * A reading printed beside a kanji column sits along the host, is kana only, is
+ * narrower than the host, and packs several kana into the advance of one
+ * character. A same-size kana column there is dialogue, which
+ * `mergeCompanionRegions` folds in instead.
+ */
+export function readingHostOf<T extends Inked>(region: T, others: T[], widest: number): T | undefined {
+    const text = region.text.replace(/[\s、。！？…「」『』]/gu, '');
+    if (!(text.length > 0 && text.length <= 8 && KANA_ONLY.test(text))) return undefined;
+    const glyphs = (item: Inked): number => [...item.text.replace(/\s/gu, '')].length;
+    const spanAcross = (item: Inked): [number, number] => (
+        item.direction === 'v' ? [item.x, item.x + item.width] : [item.y, item.y + item.height]
     );
-    const spanAcross = (region: BlockRegion): [number, number] => (
-        region.direction === 'v'
-            ? [region.x, region.x + region.width]
-            : [region.y, region.y + region.height]
-    );
-    const spanAlong = (region: BlockRegion): [number, number] => (
-        region.direction === 'v'
-            ? [region.y, region.y + region.height]
-            : [region.x, region.x + region.width]
-    );
-    const glyphs = (region: BlockRegion): number => (
-        // Punctuation and brackets take a cell of the run as well.
-        [...region.text.replace(/\s/gu, '')].length
+    const spanAlong = (item: Inked): [number, number] => (
+        item.direction === 'v' ? [item.y, item.y + item.height] : [item.x, item.x + item.width]
     );
     // Length along the line per character. Furigana packs several kana beside
     // one or two kanji, so its advance is a fraction of the host's even when
     // the reader gives both boxes the same width in whole cells.
-    const advance = (region: BlockRegion): number => {
-        const [from, to] = spanAlong(region);
-        return (to - from) / Math.max(1, glyphs(region));
+    const advance = (item: Inked): number => {
+        const [from, to] = spanAlong(item);
+        return (to - from) / Math.max(1, glyphs(item));
     };
-    const widest = Math.max(...regions.map(thickness));
-    if (!(widest > 0)) return regions;
-    return regions.filter((region) => {
-        const text = region.text.replace(/[\s、。！？…「」『』]/gu, '');
-        if (!(text.length > 0 && text.length <= 8 && KANA_ONLY.test(text))) return true;
-        return !regions.some((host) => {
-            if (host === region) return false;
-            if (host.direction !== region.direction) return false;
-            if (thickness(region) > thickness(host)) return false;
-            const [hostFrom, hostTo] = spanAlong(host);
-            const [from, to] = spanAlong(region);
-            const overlap = Math.min(hostTo, to) - Math.max(hostFrom, from);
-            if (overlap < (to - from) * 0.5) return false;
-            const [hostStart, hostEnd] = spanAcross(host);
-            const [ownStart, ownEnd] = spanAcross(region);
-            // A reading inside the column's own band, clearly thinner than it.
-            if (ownStart >= hostStart - 1 && ownEnd <= hostEnd + 1
-                && thickness(region) <= widest * 0.7
-                && thickness(host) >= thickness(region) * 1.5) {
-                return true;
-            }
-            // A reading beside the column: within one host width of its edge,
-            // and printed at a clearly smaller size. A same-size kana column
-            // there is dialogue, which mergeCompanionRegions folds in instead.
-            const gap = Math.max(hostStart - ownEnd, ownStart - hostEnd, 0);
-            if (gap > thickness(host)) return false;
-            if (glyphs(host) < 2 || glyphs(region) < 2) return false;
-            return advance(region) <= advance(host) * 0.75;
-        });
+    return others.find((host) => {
+        if (host === region) return false;
+        if (host.direction !== region.direction) return false;
+        if (acrossSize(region) > acrossSize(host)) return false;
+        const [hostFrom, hostTo] = spanAlong(host);
+        const [from, to] = spanAlong(region);
+        const overlap = Math.min(hostTo, to) - Math.max(hostFrom, from);
+        if (overlap < (to - from) * 0.5) return false;
+        const [hostStart, hostEnd] = spanAcross(host);
+        const [ownStart, ownEnd] = spanAcross(region);
+        // A reading inside the column's own band, clearly thinner than it.
+        if (ownStart >= hostStart - 1 && ownEnd <= hostEnd + 1
+            && acrossSize(region) <= widest * 0.7
+            && acrossSize(host) >= acrossSize(region) * 1.5) {
+            return true;
+        }
+        const gap = Math.max(hostStart - ownEnd, ownStart - hostEnd, 0);
+        if (gap > acrossSize(host)) return false;
+        // A one glyph host is a name, not a word the reader can compare by
+        // advance; its reading is still a reading.
+        if (glyphs(host) < 1 || glyphs(region) < 2) return false;
+        return advance(region) <= advance(host) * 0.75;
     });
+}
+
+/**
+ * Drop a reading that the reader reported as a line of its own.
+ *
+ * Furigana printed beside a kanji column sits inside that column's box, is only
+ * kana, and is narrower than the column. The prompt says it is not text, but a
+ * reader still returns it now and then, and a line that is a reading then gets
+ * its own translation — which is how one sentence came back as two identical
+ * columns. A reading printed beside its column is dropped too, when its kana
+ * are clearly smaller than the column's characters: わたしたち beside 人類 came
+ * back as a fourth line and got a fourth label. A same-size kana column beside
+ * a box is dialogue and is folded in by `mergeCompanionRegions` instead.
+ */
+export function dropReadingsInsideColumns(regions: BlockRegion[]): BlockRegion[] {
+    if (regions.length < 2) return regions;
+    const widest = Math.max(...regions.map(acrossSize));
+    if (!(widest > 0)) return regions;
+    return regions.filter((region) => !readingHostOf(region, regions, widest));
+}
+
+/** True when this region is the reading of a line that is already a line. */
+export function isReadingOfAny(region: Inked, hosts: Inked[]): boolean {
+    if (hosts.length === 0) return false;
+    const widest = Math.max(...hosts.map(acrossSize), acrossSize(region));
+    return readingHostOf(region, hosts, widest) !== undefined;
 }
 
 /**
@@ -641,6 +710,9 @@ export function mergeCompanionRegions(regions: BlockRegion[]): BlockRegion[] {
                 host = candidate;
             }
         }
+        // A lone kanji is a name. Kana printed beside a name is its reading,
+        // not a second word: 円 with つぶら beside it is 円, never つぶら円.
+        if (isLoneGlyph(host.text)) continue;
         const along = (region: BlockRegion): { start: number; end: number } => (
             region.direction === 'v'
                 ? { start: region.y, end: region.y + region.height }
@@ -781,7 +853,9 @@ function readBlockAnswer(content: string, crop: BlockReading['block']): BlockReg
             columns: Math.max(1, columns),
             rows: Math.max(1, rows),
             ...(cellBox ? { cells: cellBox } : {}),
-            kind: item.type === 'sfx' || item.kind === 'sfx' ? 'sfx' : 'chat',
+            kind: item.type === 'sfx' || item.kind === 'sfx'
+                ? 'sfx'
+                : item.type === 'name' || item.kind === 'name' ? 'name' : 'chat',
             ...(typeof item.ruby === 'string' && item.ruby.trim().length > 0
                 ? { ruby: item.ruby.trim() }
                 : {}),
@@ -847,7 +921,6 @@ export async function readBlockRegions(
             // lets the reader see a line that starts just outside it, and the
             // cells are mapped against this same box so nothing shifts.
             const padded = blockCropBox(bitmap.width, bitmap.height, reading.block);
-            const crop = { ...padded, score: reading.block.score };
             // Only the detector's line boxes that reach this block: they are
             // what the prompt calls the text to read, so a stray box from the
             // panel next door must not appear on the crop.
@@ -856,6 +929,10 @@ export async function readBlockRegions(
                 && box.y < padded.y + padded.height && box.y + box.height > padded.y
             )).slice(0, 40).map((box) => ({ x: box.x, y: box.y, width: box.width, height: box.height }));
             reading.boxes = inside;
+            // Every box drawn on the crop is shown whole: a box cut by the crop
+            // edge is the one a reader tends to leave out of its answer, and
+            // that unread column is what a block-wide erase used to blank.
+            const crop = { ...blockCropBox(bitmap.width, bitmap.height, reading.block, inside), score: reading.block.score };
             let dataUrl: string;
             try {
                 dataUrl = blockToDataUrl(bitmap, reading.block, inside);
@@ -879,6 +956,13 @@ export async function readBlockRegions(
                     reading.cell = geometry.cell;
                     console.info(`[grid] block ${index + 1}: ${geometry.columns} x ${geometry.rows} cells `
                         + `of ${reading.cell}px, ${reading.regions.length} line(s)`);
+                    // A box the reader left out is text that will get no
+                    // translation. Naming it here is what makes the next blank
+                    // balloon traceable to the reading pass instead of the fit.
+                    if (reading.regions.length < inside.length) {
+                        console.warn(`[read] block ${index + 1}: ${reading.regions.length} line(s) for `
+                            + `${inside.length} box(es); the rest keep their ink`);
+                    }
                     break;
                 } catch (cause) {
                     if (attempt === 0) {

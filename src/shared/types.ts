@@ -31,8 +31,8 @@ export type BoxData = {
     /** Translation written by the reading call, when it provided one. */
     translation?: string;
     confidence: number;
-    /** The reader's classification: dialogue or sound effect. */
-    kind?: 'chat' | 'sfx';
+    /** The reader's classification: dialogue, a name or a sound effect. */
+    kind?: 'chat' | 'sfx' | 'name';
     /**
      * The cell band the label fills inside its block, in page pixels. The
      * reader counted the block's cells, so the translation is spread over that
@@ -322,7 +322,7 @@ export type TranslationAnswer = {
     text: string;
     columns?: string[];
     skip?: boolean;
-    type?: 'chat' | 'sfx';
+    type?: 'chat' | 'sfx' | 'name';
 };
 
 export type TranslateSettings = {

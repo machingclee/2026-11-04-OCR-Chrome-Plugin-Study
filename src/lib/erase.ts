@@ -193,6 +193,28 @@ function boundsOf(box: EraseBox, grow: number, width: number, height: number): R
 }
 
 /** Square-ish grow of a local mask by `radius` pixels (a disc). */
+/** The same, but with a different reach on each axis. */
+function growRect(
+    mask: Uint8Array,
+    width: number,
+    height: number,
+    across: number,
+    along: number,
+): Uint8Array<ArrayBuffer> {
+    const out = new Uint8Array(mask.length);
+    for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+            if (mask[y * width + x] !== 1) continue;
+            const top = Math.max(0, y - along);
+            const bottom = Math.min(height - 1, y + along);
+            const from = Math.max(0, x - across);
+            const to = Math.min(width - 1, x + across);
+            for (let ny = top; ny <= bottom; ny += 1) out.fill(1, ny * width + from, ny * width + to + 1);
+        }
+    }
+    return out;
+}
+
 function grow(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array<ArrayBuffer> {
     if (radius <= 0) return new Uint8Array(mask);
     const out = new Uint8Array(mask.length);
@@ -525,7 +547,7 @@ function maskOfBlock(page: ImageData, planes: ErasePlanes, box: EraseBox): BoxMa
     }
     // Unclip each band by its own thickness: bands of one radius are grown
     // together.
-    const byRadius = new Map<number, Uint8Array>();
+    const byRadius = new Map<string, { layer: Uint8Array; vertical: boolean }>();
     const guardByRadius = new Map<number, Uint8Array>();
     let widest = 3;
     for (const part of components(seed, width, height)) {
@@ -542,17 +564,27 @@ function maskOfBlock(page: ImageData, planes: ErasePlanes, box: EraseBox): BoxMa
             continue;
         }
         widest = Math.max(widest, radius + Math.round(Math.min(part.width, part.height) / 2));
-        const layer = byRadius.get(radius) ?? new Uint8Array(total);
-        for (const index of part.members) layer[index] = 1;
-        byRadius.set(radius, layer);
+        const vertical = part.height >= part.width;
+        const key = `${radius}:${vertical ? 'v' : 'h'}`;
+        const entry = byRadius.get(key) ?? { layer: new Uint8Array(total), vertical };
+        for (const index of part.members) entry.layer[index] = 1;
+        byRadius.set(key, entry);
     }
     for (const [radius, layer] of guardByRadius) {
         const grown = grow(layer, width, height, radius);
         for (let index = 0; index < total; index += 1) if (grown[index] === 1) guard[index] = 1;
     }
     const zone = new Uint8Array(total);
-    for (const [radius, layer] of byRadius) {
-        const grown = grow(layer, width, height, radius);
+    for (const [key, { layer, vertical }] of byRadius) {
+        // A band is a shrunken column, not a shrunken blob: it is too thin, not
+        // too short. Growing it across its width reaches the glyph edges; growing
+        // it along its run pushed the mask past the top and bottom of the speech
+        // and into the balloon wall, which is what a white smear over the wall
+        // was. Two pixels along covers the soft end of a stroke.
+        const radius = Number(key.split(':')[0]);
+        const grown = vertical
+            ? growRect(layer, width, height, radius, 2)
+            : growRect(layer, width, height, 2, radius);
         for (let index = 0; index < total; index += 1) if (grown[index] === 1) zone[index] = 1;
     }
     let any = false;
@@ -622,10 +654,16 @@ function maskOfBlock(page: ImageData, planes: ErasePlanes, box: EraseBox): BoxMa
     }
     const rules = grow(findRules(strong, width, height), width, height, 1);
     for (let index = 0; index < total; index += 1) if (rules[index] === 1) ink[index] = 0;
-    // A glyph with a halo, or a stroke that pokes out of the band, keeps
-    // going past the unclipped zone. The zone follows the ink out a few
-    // pixels, never across a ruled line.
-    for (let step = 0; step < 6; step += 1) {
+    // A glyph with a halo, or a stroke that pokes out of the band, keeps going
+    // past the unclipped zone: the det plane is a shrunken band, and a column
+    // whose band sits a few pixels off its ink leaves the tail of the last
+    // glyph behind. The zone follows the ink outward until the ink stops, never
+    // across a ruled line and never past a kept line. The walk ends by itself
+    // when no dark pixel touches the zone, so a glyph is covered whole and the
+    // paper around it is not; the cap only bounds a path that leaks into a
+    // screentone.
+    const reach = 8;
+    for (let step = 0; step < reach; step += 1) {
         const next: number[] = [];
         for (let y = 0; y < height; y += 1) {
             for (let x = 0; x < width; x += 1) {
@@ -633,8 +671,13 @@ function maskOfBlock(page: ImageData, planes: ErasePlanes, box: EraseBox): BoxMa
                 if (zone[index] === 1 || rules[index] === 1 || guard[index] === 1) continue;
                 const offset = ((area.y0 + y) * page.width + area.x0 + x) * 4;
                 if (Math.abs(luma(page.data, offset) - paperLuma) <= BLOCK_INK_STEP) continue;
+                // Eight-way, so a stroke that steps diagonally is followed.
                 if ((x > 0 && zone[index - 1] === 1) || (x < width - 1 && zone[index + 1] === 1)
-                    || (y > 0 && zone[index - width] === 1) || (y < height - 1 && zone[index + width] === 1)) {
+                    || (y > 0 && zone[index - width] === 1) || (y < height - 1 && zone[index + width] === 1)
+                    || (x > 0 && y > 0 && zone[index - width - 1] === 1)
+                    || (x < width - 1 && y > 0 && zone[index - width + 1] === 1)
+                    || (x > 0 && y < height - 1 && zone[index + width - 1] === 1)
+                    || (x < width - 1 && y < height - 1 && zone[index + width + 1] === 1)) {
                     next.push(index);
                 }
             }
@@ -686,13 +729,22 @@ function maskOfBlock(page: ImageData, planes: ErasePlanes, box: EraseBox): BoxMa
         for (let x = 0; x < width; x += 1) {
             const index = y * width + x;
             if (zone[index] !== 1 || rules[index] === 1) continue;
+            // The fill follows the strokes. It used to fill the whole zone, and
+            // the zone is a band grown well past the glyph, so on paper the fill
+            // was a white blob larger than the text — the "inpainting exceeds the
+            // balloon" of a balloon whose wall the blob reached. The band's
+            // interior is paper already, so filling it bought nothing.
             const open = windowSum(sumOpen, x, y);
-            if (open === 0 || windowSum(sumPaper, x, y) / open >= 0.9) flatMask[index] = 1;
-            else if (strokes[index] === 1) modelMask[index] = 1;
+            if (open !== 0 && windowSum(sumPaper, x, y) / open >= 0.9) {
+                if (strokes[index] === 1) flatMask[index] = 1;
+            } else if (strokes[index] === 1) {
+                modelMask[index] = 1;
+            }
         }
     }
     return { area, flatMask, modelMask, colour };
 }
+
 
 /** Cut a rectangle out of the page. */
 function cut(page: ImageData, rect: Rect): ImageData {

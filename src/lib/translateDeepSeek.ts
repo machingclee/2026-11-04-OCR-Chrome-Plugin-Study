@@ -30,7 +30,12 @@ export async function translateWithDeepSeek(
             },
             body: JSON.stringify({
                 model: MODEL,
-                temperature: 0.3,
+                // Translation is not a place for invention: the same page measured
+                // three times gave 告訴他 / 告訴你 / 告訴你 at 0.3, and 告訴你 three
+                // times out of three at 0. A faithful translation wants the same
+                // answer, and with thinking off the sampling is what is left to
+                // vary.
+                temperature: 0,
                 response_format: { type: 'json_object' },
                 // The effort comes from the popup, so one setting governs the
                 // reading and the translation alike. There is one request per

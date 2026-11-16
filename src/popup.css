@@ -99,6 +99,17 @@ body {
   pointer-events: none;
 }
 
+/* The rectangle actually cut for the reader: the blk box with its margin,
+   grown to hold every box drawn on the crop. It sits under the BLK box. */
+.crop-box {
+  position: absolute;
+  z-index: 1;
+  box-sizing: border-box;
+  border: 1px dashed #7c3aed;
+  background: rgba(124, 58, 237, 0.06);
+  pointer-events: none;
+}
+
 /* The detector's line boxes inside a block: the same blue rectangles the
    reader sees drawn on its crop. */
 .det-box {
@@ -112,6 +123,10 @@ body {
 
 .map-key.blk i {
   background: #e6b800;
+}
+
+.map-key.crop i {
+  background: #7c3aed;
 }
 
 .map-key.line i {
