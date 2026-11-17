@@ -705,8 +705,14 @@ async function runTranslation(request: TranslateRequest, sender: chrome.runtime.
             };
             const readable = (detection.blockReadings ?? [])
                 .filter((reading) => reading.regions.some((region) => region.kind !== 'sfx' && region.text.trim().length > 0));
+            // A block is translated when a source line of a translated group lies in
+            // it. The label frame is the wrong test: it is drawn at the reader's
+            // cell box, and on a two-glyph bubble that box was a few pixels above
+            // the block, so the gate skipped the block and the Japanese stayed
+            // under the Chinese label.
+            const translated = [...job.erase, ...labelled];
             const dialogueBlocks = readable
-                .filter((reading) => labelled.some((box) => overlaps(box, reading.block)))
+                .filter((reading) => translated.some((box) => overlaps(box, reading.block)))
                 .map((reading) => ({
                     ...(areaOf(reading) ?? reading.block),
                     kind: 'block' as const,

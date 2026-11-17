@@ -1,0 +1,139 @@
+{
+    "description": "Regression cases for the translation pipeline. Every case names an image in fixtures/ and the invariants that were broken before the fix, so the fix cannot silently come back. Run with: npm run regression",
+    "cases": [
+        {
+            "id": "circle",
+            "image": "fixtures/page.jpg",
+            "note": "A balloon that holds one character keeps one character. 円 became 日圓 and then 是錢.",
+            "forbid": [
+                "日圓",
+                "是錢",
+                "日円"
+            ],
+            "loneGlyphs": [
+                {
+                    "source": "円",
+                    "allowed": [
+                        "円",
+                        "圓"
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "names",
+            "image": "fixtures/page-322.jpg",
+            "note": "A Japanese honorific becomes the Chinese one: 伯爵様 → 伯爵大人, at any effort, whatever type the reader gave.",
+            "groups": [
+                {
+                    "source": "伯爵",
+                    "contains": [
+                        "大人"
+                    ],
+                    "notContains": [
+                        "様"
+                    ],
+                    "onMissing": "skip"
+                }
+            ]
+        },
+        {
+            "id": "groan",
+            "image": "fixtures/page-groan.jpg",
+            "note": "うっ… / うつ… is a moan, not the noun 憂鬱. It was 憂鬱 at off and 鬱悶 at high. The reader writes it as うっ…, うつ…, うぅ… or even う….., so the case matches any う that is not うん.",
+            "effort": "off",
+            "forbid": [
+                "憂鬱",
+                "鬱悶",
+                "抑鬱"
+            ],
+            "groups": [
+                {
+                    "source": "^う(?!ん)",
+                    "maxGlyphs": 4,
+                    "notContains": [
+                        "憂",
+                        "鬱"
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "groan-high",
+            "image": "fixtures/page-groan.jpg",
+            "note": "The same moan at the other effort: both levels must agree. The reader writes it as うっ…, うつ…, うぅ… or even う….., so the case matches any う that is not うん.",
+            "effort": "high",
+            "forbid": [
+                "憂鬱",
+                "鬱悶",
+                "抑鬱"
+            ],
+            "groups": [
+                {
+                    "source": "^う(?!ん)",
+                    "maxGlyphs": 4,
+                    "notContains": [
+                        "憂",
+                        "鬱"
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "kana-misread",
+            "image": "fixtures/page-322.jpg",
+            "note": "The reader turns ねえ into お元 / 我元 / 我死. The block-level confirmation must hand kana to the translator, whatever the kana spelling of this run is.",
+            "sources": {
+                "mustNotMatch": [
+                    "お元",
+                    "我元",
+                    "我死"
+                ]
+            },
+            "groups": [
+                {
+                    "at": [
+                        176,
+                        700
+                    ],
+                    "sourceIsKana": true,
+                    "onMissing": "skip"
+                }
+            ]
+        },
+        {
+            "id": "balloon-split",
+            "image": "fixtures/page-320.jpg",
+            "note": "この2人連れて勝手に動かせてもらうことにしたんだよ is one balloon and must stay one group, one sentence.",
+            "groups": [
+                {
+                    "source": "勝手",
+                    "contains": [
+                        "這兩個人",
+                        "他們"
+                    ],
+                    "notContains": [
+                        "收下",
+                        "是他做的"
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "erase-321",
+            "image": "fixtures/page-321.jpg",
+            "note": "Every translated block is erased where the det plane says text; a stroke the plane missed still goes with the ink it runs into. Leftover ink ≤ 2% of a block's strokes.",
+            "erase": {
+                "maxUncoveredShare": 0.02
+            }
+        },
+        {
+            "id": "erase-324",
+            "image": "fixtures/page-324.jpg",
+            "note": "A block whose columns were only partly labelled is still erased whole (可哀想な / エルマ…).",
+            "erase": {
+                "maxUncoveredShare": 0.02
+            }
+        }
+    ]
+}

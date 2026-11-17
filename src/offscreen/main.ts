@@ -758,7 +758,10 @@ export async function runDetection(request: OffscreenDetectRequest): Promise<Det
                     .catch(() => null);
                 if (!local || local.confidence < 0.9) continue;
                 const read = spokenGlyphs(local.text);
-                if (read.length !== glyphs.length || !KANA_WORD.test(read.join(''))) continue;
+                // The length need not match: the reader reported this bubble as a
+                // single 我, and the word is ねえ. The box is the whole block, so
+                // the device reading of it is the word, not a fragment of one.
+                if (read.length < 1 || read.length > 4 || !KANA_WORD.test(read.join(''))) continue;
                 console.info(`[read] short block ${JSON.stringify(text)} re-read as `
                     + `${JSON.stringify(local.text.trim())}, local ${local.confidence.toFixed(2)}`);
                 const keep = inBlock[0];
