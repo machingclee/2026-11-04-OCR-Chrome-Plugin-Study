@@ -1,12 +1,13 @@
 import type { BoxData, OcrRequest } from '../../shared/types';
 import type { ReasoningEffort } from '../../shared/constants';
-import { foldAngle } from '../rect';
-import type { OcrResult, TextLine } from '../types';
+import { majorAxis } from '../rect';
+import type { OcrResult, TextLine, TextMask } from '../types';
 import { cropSize, drawUpright } from '../warp';
-import { blockCropBox, blockCropDataUrl } from './blockCrop';
+import { blockCropBox, blockCropDataUrl, blockCropScale } from './blockCrop';
 import { cellToPage, gridGeometry } from './grid';
 import { recognizeLine } from './recognize';
-import { isLoneGlyph } from '../loneGlyph';
+import { isLoneGlyph, spokenGlyphs } from '../loneGlyph';
+import { MODEL_SIZE } from '../mask';
 
 /**
  * Cloud reading.
@@ -448,6 +449,10 @@ export type BlockRegion = {
     rows: number;
     /** The box the reader read off the grid, in cells, when it gave one. */
     cells?: { x: number; y: number; width: number; height: number };
+    /** The frame the label is drawn on: the ink of the column this line names. */
+    frame?: { x: number; y: number; width: number; height: number };
+    /** The blue boxes the reader named, 1-based, in the order it gave them. */
+    boxIds?: number[];
     /** Size of one glyph of this line, in page pixels. Undefined when unknown. */
     glyphSize?: number;
     /** The same line in Traditional Chinese, written in the reading call. */
@@ -462,6 +467,8 @@ export type BlockRegion = {
     lineLength?: number;
     /** Thickness across that axis, for an inclined line. */
     lineThickness?: number;
+    /** The model's own box before a named detector box replaced it. */
+    own?: { x: number; y: number; width: number; height: number };
 };
 
 export type BlockReading = {
@@ -483,20 +490,26 @@ export type BlockReading = {
  * model follows whatever the example shows, so a missing field there is a field
  * it never returns.
  *
- * The box is in cells of the grid drawn on the crop, not a fraction of it: a
- * fraction is a measurement out of thin air, while a cell is a line the model
- * can see and a number it can read off the edge of the image.
+ * The box is in page pixels, read off the numbers printed on the grid: a cell
+ * count is what drifted, because a cell of a coarse grid is wider than a
+ * character and a glyph that touched two cells came back two cells wide.
  */
 const REGION_EXAMPLE = {
     text: '…',
     type: 'chat',
     direction: 'v',
-    // A vertical line of six characters: two cells across for the character,
-    // twelve cells down the run.
-    x: 4,
-    y: 1,
-    width: 2,
-    height: 12,
+    // How far the line leans, clockwise from upright, and the size of one
+    // character in page pixels. Both are required: a leaned line drawn upright
+    // is the one thing the reader cannot leave to a box edge.
+    lean: 0,
+    em: 24,
+    // The number printed on the blue rectangle that holds the line. The page
+    // box follows, for a crop whose numbers cannot be read.
+    box: 2,
+    x: 268,
+    y: 412,
+    width: 27,
+    height: 162,
 };
 
 const BLOCK_EXAMPLE = { regions: [REGION_EXAMPLE] };
@@ -509,28 +522,22 @@ const BLOCK_PROMPT = [
     'Blue rectangles mark the text of this block, as the detector found it. Text inside a blue rectangle is the only text to read: report those lines. Anything outside every blue rectangle is artwork or handwriting, so it is not a line, never goes into text, and never has an entry of its own. A formula, a scribbled number, an arrow or a signature drawn by hand is ignored completely, even when it runs beside a column or through the gap between columns. A column stays inside its own blue rectangle.',
     'text: exactly as printed, with small kana, dakuten, punctuation, Latin letters and digits. Never complete a word from context.',
     'Do not translate: this answer is read only. A separate request translates the text once the whole block has been read.',
-    'A grid is drawn over the image, and every line of it carries a number: thin lines mark single cells, a thicker line marks every fifth. The numbers along the top edge are blue and count x, the numbers along the left edge are red and count y, both from 0 at the top left corner. Read the number on the line nearest the edge you are reporting instead of estimating a position between two lines.',
+    'A grid is drawn over the image and every line of it carries its page coordinate: thin lines mark single cells, a thicker line marks every fifth. The numbers along the top edge are blue and are the x of that line in page pixels; the numbers along the left edge are red and are its y. They are absolute page pixels, not a count: a line printed 1035 is x 1035 on the page, wherever the crop starts. A small grey number beside every fifth coordinate is the cell index, which you do not need.',
     'A reading can sit inside a blue rectangle, in the gap between the large characters and the box edge. It is still not a line: the entry covers the large characters, its box stays on the large characters, and the reading is left out of text. Never report it in any field. Small kana that belong to the word itself, such as the っ in いって, are part of the word and stay.',
     'type: "chat" for dialogue, including a short はい, うん, ええ, そう, ああ, いえ, いや and a line that starts with an ellipsis. "name" for a box that holds a name, a title, a place name or a label and no sentence: 有留木 環 is a name, and so is a lone 円 printed with its reading つぶら beside it. "sfx" for onomatopoeia and sound effects such as ドドド, ゴゴゴ, ザワザワ, ドン, バン, ガシャ.',
-    'direction: "v" when the line reads top to bottom, "h" when it reads left to right, "i" when the line is inclined.',
-    'angle: for an inclined line, the angle of the text direction in degrees from the horizontal axis, clockwise on the image, between -89 and 89. Omit it for upright text.',
-    'x and y: the cell holding the top left corner of the line, counted from the left edge and from the top edge of the image, both from 0. width and height: the size of the box in cells.',
-    'The box is tight around that line. For a vertical line width is how wide one character is and height is how far the line runs; for a horizontal line height is one character and width is how far it runs. A character takes as many cells across as it does down, so a line of six characters written two cells wide is twelve cells tall, and a line of seven one cell characters that starts at row 2 ends at row 9.',
-    'Read the numbers on the grid instead of guessing: a line whose left edge sits just past the line numbered 15 has x 16, and a box that starts just under the line numbered 10 has y 11. Every number is a whole cell: x, y, width and height are integers, so an edge between two lines takes the nearer line.',
-    `Skip artwork with no text. Return JSON only: ${JSON.stringify(BLOCK_EXAMPLE)}`,
+    'direction: "v" when the line reads top to bottom, "h" when it reads left to right. A leaned line is still "v" or "h": do not use another letter for it.',
+    'lean: for a leaned line, how far it is rotated clockwise from upright, in degrees between -45 and 45. A vertical line is upright when it runs straight down; if the bottom of the column leans left, lean is positive (for example 12). A horizontal line is upright when it runs left to right; if its right end rises, lean is negative. Every entry must carry lean; give 0 when the line is upright.',
+    'em: the size of one character in page pixels, measured across the glyph itself (its width and height are about equal), not the gap between columns and not the whole box. Read it from the grid lines. Every entry must carry em, even when the line is upright.',
+    'angle: the old name for lean, kept only for a horizontal line measured from the horizontal axis. Prefer lean; do not send both.',
+    'box: the number printed in green at the top left corner of the blue rectangle that holds this line. This is the position that matters: the rectangle is where the ink is, so naming it is exact. If one entry covers more than one rectangle, give their numbers in reading order, as an array, e.g. [3,2].',
+    'x and y: only when no number is visible. The page pixel of the top left corner of the line, read from the numbers on the grid: an edge a few pixels past the line printed 1035 is 1037, and one a few pixels above the line printed 140 is 137. width and height: the size of the box in page pixels, from the same numbers.',
+    'The box is tight around that line. For a vertical line width is the width of one character and height runs from the top of the first character to the bottom of the last; for a horizontal line height is one character and width is the length of the run. A character is about as many pixels across as it is down, so six characters of a 27 pixel character are about 162 pixels tall. Measure the character you see, not the gap between two grid lines.',
+    'Do not round a corner to a grid line and do not count cells: answer with the pixels the number reads, so a character whose left edge is a few pixels past the line printed 1034 has x 1037. x, y, width and height are whole pixels. When an edge is cut off by the crop, still give the page pixel of the visible ink.',
+    `The numbers in the example show the shape of the answer, not this crop. Skip artwork with no text. Return JSON only: ${JSON.stringify(BLOCK_EXAMPLE)}`,
 ].join(' ');
 
 function clamp01(value: number): number {
     return Math.max(0, Math.min(1, value));
-}
-
-/** One block as the image the reader is given: crop, upscale, grid, text boxes. */
-function blockToDataUrl(
-    bitmap: ImageBitmap,
-    block: BlockReading['block'],
-    boxes: { x: number; y: number; width: number; height: number }[],
-): string {
-    return blockCropDataUrl(bitmap, bitmap.width, bitmap.height, block, boxes).dataUrl;
 }
 
 /** Split one region the model reported as holding several lines. */
@@ -766,39 +773,401 @@ export function separateOverlaps(regions: BlockRegion[]): BlockRegion[] {
     return regions;
 }
 
-/** Read the regions of one block and map their cell boxes to page pixels. */
-function readBlockAnswer(content: string, crop: BlockReading['block']): BlockRegion[] {
+/** The word a region holds: its glyphs, without the marks that carry no sound. */
+function inkOf(text: string): string {
+    return spokenGlyphs(text.normalize('NFKC')).join('');
+}
+
+/** How much of the smaller of two boxes the two boxes share, 0 to 1. */
+function sharedShare(
+    left: { x: number; y: number; width: number; height: number },
+    right: { x: number; y: number; width: number; height: number },
+): number {
+    const width = Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x);
+    const height = Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y);
+    if (width <= 0 || height <= 0) return 0;
+    return (width * height) / Math.min(left.width * left.height, right.width * right.height);
+}
+
+/**
+ * Drop a region that is a second reading of the same ink.
+ *
+ * The blk head can hand back a block nested inside another block's box: one
+ * page came back with the tight name plate (212,958 79x339), the tight caption
+ * beside it, and a loose block (94,962 193x525) that covered both. Every block
+ * is cropped and read on its own, so the plate's columns were read twice, and
+ * the loose block's grid was coarse enough to report 花岡修太郎 and 三十九歳 as
+ * one line 花岡修太郎 三十九歳. Every reading was true and the page got both:
+ * two groups over one plate, one group's source holding 未婚独身彼女ナシ平社員
+ * twice, and a translation that repeated itself (未婚 / 沒女友, 普通職員 /
+ * 基層職員, 人生失敗組 in two columns).
+ *
+ * One piece of ink is one line. Inside a nested pair the contained block is the
+ * tighter reading, so a container's region is a repeat when its word is the
+ * word of a contained region, or the join of the run of them: the two grids
+ * describe the same glyphs and do not have to agree on the cell box. Two blocks
+ * that are not nested repeat each other only when their boxes overlap, so an
+ * identical line in the next balloon is left alone.
+ *
+ * A block whose regions are all repeats is left with none, and the caller drops
+ * it, so it neither translates nor gates the erase.
+ */
+export function dropRepeatedReadings<T extends { block: { x: number; y: number; width: number; height: number }; regions: BlockRegion[] }>(
+    readings: T[],
+): T[] {
+    const dropped = new Set<string>();
+    const mark = (index: number, at: number, why: string): void => {
+        dropped.add(`${index}:${at}`);
+        console.info(`[read] block ${index + 1}: ${JSON.stringify(readings[index].regions[at].text)} ${why}`);
+    };
+
+    // A block nested in another block's box is the tighter reading of that ink.
+    readings.forEach((reading, index) => {
+        const children = readings.filter((other) => other !== reading && containsBlock(reading.block, other.block));
+        if (children.length === 0) return;
+        const inside = children.flatMap((child) => child.regions);
+        const words = new Set(inside.map((region) => inkOf(region.text)));
+        reading.regions.forEach((region, at) => {
+            const word = inkOf(region.text);
+            if (word.length === 0) return;
+            if (words.has(word)) {
+                mark(index, at, 'is already read by the block inside it');
+                return;
+            }
+            if (joinedRuns(region, inside).has(word)) {
+                mark(index, at, 'is the join of the columns already read inside it');
+                return;
+            }
+            // The two grids do not have to agree on the cell box, and they do
+            // not have to agree on the glyph either: this page was read as
+            // 三十九歳 by the loose block and 二十九歳 by the tight one. A line
+            // that lies on ink the nested block already read is that ink.
+            if (inside.some((child) => sharedShare(region, child) >= 0.3)) {
+                mark(index, at, 'lies on ink the block inside it already read');
+            }
+        });
+    });
+
+    // Two blocks that overlap without nesting, or the same block read twice.
+    const entries = readings.flatMap((reading, index) => reading.regions.map((region, at) => ({ index, at, region })));
+    const order = [...entries].sort((left, right) => (
+        left.region.width * left.region.height - right.region.width * right.region.height
+    ));
+    const kept = new Map<string, BlockRegion>();
+    for (const entry of order) {
+        const key = `${entry.index}:${entry.at}`;
+        if (dropped.has(key)) continue;
+        const same = [...kept.values()].find((other) => (
+            sharedShare(entry.region, other) >= 0.3 && inkOf(entry.region.text) === inkOf(other.text)
+        ));
+        if (same) {
+            mark(entry.index, entry.at, `is the ink of ${JSON.stringify(same.text)}, already read`);
+            continue;
+        }
+        kept.set(key, entry.region);
+    }
+
+    return readings.map((reading, index) => ({
+        ...reading,
+        regions: reading.regions.filter((_, at) => !dropped.has(`${index}:${at}`)),
+    }));
+}
+
+/** True when `inner` sits inside `outer`: the same ink, read twice. */
+function containsBlock(
+    outer: { x: number; y: number; width: number; height: number },
+    inner: { x: number; y: number; width: number; height: number },
+): boolean {
+    if (outer.width * outer.height <= inner.width * inner.height * 1.1) return false;
+    return sharedShare(outer, inner) >= 0.9;
+}
+
+/** Every join of two or more neighbouring regions, in the order they are read. */
+function joinedRuns(anchor: BlockRegion, regions: BlockRegion[]): Set<string> {
+    const ordered = readersOrdered(anchor, regions);
+    const runs = new Set<string>();
+    for (let from = 0; from < ordered.length; from += 1) {
+        let joined = '';
+        for (let to = from; to < ordered.length; to += 1) {
+            joined += inkOf(ordered[to].text);
+            if (to > from) runs.add(joined);
+        }
+    }
+    return runs;
+}
+
+/** The regions in the order they are read: down the column, right to left. */
+function readersOrdered<T extends Inked>(anchor: T, regions: T[]): T[] {
+    const vertical = anchor.direction === 'v';
+    return [...regions].sort((left, right) => (
+        vertical
+            ? (right.x - left.x) || (left.y - right.y)
+            : (left.y - right.y) || (left.x - right.x)
+    ));
+}
+
+/**
+ * The frame of the column the reader named, from the boxes drawn on its crop.
+ *
+ * The reader is asked where a line sits, and it answers; the answer is an
+ * estimate, and the estimates were 20 page pixels out at best, 100 at worst —
+ * enough to put a label beside its column, which is the drift this function
+ * removes. The detector's boxes were drawn on the same crop in blue, and they
+ * are the ink itself. So the reader keeps the part it is good at — which column
+ * of the block, in which order — and the frame takes its edges from the ink:
+ *
+ * - the candidates are the boxes that share the reader's band across the line,
+ *   with at least half of its width, which is how one column is told from the
+ *   one beside it;
+ * - they are unioned along the line, so a column the reader reported short is
+ *   still framed from its first character to its last;
+ * - a box much wider than the reader's band covers several columns and the
+ *   reader is splitting it, so the band stays the reader's and only the length
+ *   is taken from the ink.
+ *
+ * A line whose band holds no box keeps the reader's own box: a detector that
+ * missed the line is the one case where its estimate is all there is.
+ */
+function inkFrameOf(
+    region: { x: number; y: number; width: number; height: number; direction: 'v' | 'h' },
+    boxes: { x: number; y: number; width: number; height: number }[],
+    siblings: { x: number; y: number; width: number; height: number }[] = [],
+): { x: number; y: number; width: number; height: number } | null {
+    if (boxes.length === 0) return null;
+    const vertical = region.direction === 'v';
+    const across = (box: { x: number; y: number; width: number; height: number }): [number, number] => (
+        vertical ? [box.x, box.x + box.width] : [box.y, box.y + box.height]
+    );
+    const along = (box: { x: number; y: number; width: number; height: number }): [number, number] => (
+        vertical ? [box.y, box.y + box.height] : [box.x, box.x + box.width]
+    );
+    const [ownFrom, ownTo] = across(region);
+    // Which boxes the reader's band names: those whose overlap with it is
+    // within a tenth of the best overlap. A fixed share of the band was too
+    // strict — a box 14 pixels off a 27 pixel band shares 48% of it and was
+    // dropped — and too loose at the same time, because a band in the gap
+    // between two columns shares 40% with both. Relative to the best overlap,
+    // one clear winner is the column and a tie is a box over two columns.
+    const overlaps = boxes.map((box) => {
+        const [from, to] = across(box);
+        return { box, shared: Math.min(ownTo, to) - Math.max(ownFrom, from) };
+    });
+    const best = Math.max(...overlaps.map((one) => one.shared));
+    if (!(best > 0)) return null;
+    const candidates = overlaps
+        .filter((one) => one.shared >= best * 0.9)
+        .map((one) => one.box);
+    if (candidates.length === 0) return null;
+    // A box that does not touch the reader's run is the line above or below,
+    // not this one: only boxes on the same run are unioned.
+    const [runFrom, runTo] = along(region);
+    const near = candidates.filter((box) => {
+        const [from, to] = along(box);
+        return Math.min(runTo, to) - Math.max(runFrom, from) >= 0;
+    });
+    const run = near.length > 0 ? near : candidates;
+    const ink = {
+        x: Math.min(...run.map((box) => box.x)),
+        y: Math.min(...run.map((box) => box.y)),
+        width: Math.max(...run.map((box) => box.x + box.width)) - Math.min(...run.map((box) => box.x)),
+        height: Math.max(...run.map((box) => box.y + box.height)) - Math.min(...run.map((box) => box.y)),
+    };
+    const [inkFrom, inkTo] = across(ink);
+    // One box can hold two columns when the detector could not separate them,
+    // and the reader splits it into two entries. The sign of that is a second
+    // entry inside the same band; only then is the reader's own band the better
+    // half. A single entry in a box that is merely wider than its estimate is
+    // not a split, and the ink is the better width.
+    const shared = siblings.some((other) => other !== region
+        && Math.abs((across(other)[0] + across(other)[1]) / 2 - (inkFrom + inkTo) / 2) < (inkTo - inkFrom) / 2);
+    if (shared) {
+        return vertical
+            ? { x: region.x, y: ink.y, width: region.width, height: ink.height }
+            : { x: ink.x, y: region.y, width: ink.width, height: region.height };
+    }
+    return ink;
+}
+
+/**
+ * The boxes that are a column of this block, not a reading printed beside one.
+ *
+ * The det head draws a box around furigana as readily as around the column it
+ * belongs to: the つぶら beside 円 came back as a 21 pixel box on a page whose
+ * columns are 44. Drawn in blue, that box says "this is text to read", and a
+ * reader counting four boxes for three columns hands one line the reading's
+ * box. A reading is thin and runs beside a column it shares its length with, so
+ * it is dropped from the crop, and the prompt's rule that furigana is not text
+ * is then true of the picture as well as of the words.
+ */
+function columnBoxes<T extends { x: number; y: number; width: number; height: number }>(boxes: T[]): T[] {
+    if (boxes.length < 2) return boxes;
+    const vertical = boxes.filter((box) => box.height >= box.width).length >= boxes.length / 2;
+    const thicknessOf = (box: T): number => (vertical ? box.width : box.height);
+    const thicknesses = boxes.map(thicknessOf).sort((left, right) => left - right);
+    const median = thicknesses[thicknesses.length >> 1];
+    if (!(median > 0)) return boxes;
+    const spanOf = (box: T): [number, number] => (
+        vertical ? [box.y, box.y + box.height] : [box.x, box.x + box.width]
+    );
+    return boxes.filter((box) => {
+        if (thicknessOf(box) >= median * 0.6) return true;
+        const [from, to] = spanOf(box);
+        const beside = boxes.some((other) => {
+            if (other === box || thicknessOf(other) < thicknessOf(box) * 1.4) return false;
+            const [otherFrom, otherTo] = spanOf(other);
+            return Math.min(to, otherTo) - Math.max(from, otherFrom) >= (to - from) * 0.5;
+        });
+        return !beside;
+    });
+}
+
+/**
+ * The frame of every region of one block.
+ *
+ * The reader is good at naming a line and bad at measuring one: asked where a
+ * line sits it answered 20 page pixels out at best and a whole column out at
+ * worst. The detector's boxes are the ink, so the frame is built from them and
+ * the reader's own box is only a hint:
+ *
+ * - when a block has exactly as many boxes as entries, the entries are in
+ *   reading order and so are the boxes, so the i-th entry takes the i-th box.
+ *   This is the common case and the one that cannot drift at all.
+ * - otherwise each entry takes the boxes that share its band, which is what
+ *   lets one entry split a box the detector merged, and what keeps a two entry
+ *   box from becoming one label over two columns.
+ *
+ * A line whose band holds no box keeps the reader's own box: a detector that
+ * missed the line is the one case where its estimate is all there is.
+ */
+function blockFrames(
+    regions: { x: number; y: number; width: number; height: number; direction: 'v' | 'h'; boxIds?: number[] }[],
+    boxes: { x: number; y: number; width: number; height: number }[],
+): ({ x: number; y: number; width: number; height: number } | undefined)[] {
+    if (boxes.length === 0) return regions.map(() => undefined);
+    const unionOf = (list: { x: number; y: number; width: number; height: number }[]) => {
+        const x = Math.min(...list.map((box) => box.x));
+        const y = Math.min(...list.map((box) => box.y));
+        const right = Math.max(...list.map((box) => box.x + box.width));
+        const bottom = Math.max(...list.map((box) => box.y + box.height));
+        return { x, y, width: right - x, height: bottom - y };
+    };
+
+    // The rectangle each entry named. A number two entries share is not a name
+    // but a box the detector merged and the reader split, so it is dropped here
+    // and the band split below decides.
+    const claims = new Map<number, number>();
+    for (const region of regions) {
+        for (const id of region.boxIds ?? []) claims.set(id, (claims.get(id) ?? 0) + 1);
+    }
+    const claimed = new Set<number>();
+    const frames = regions.map((region) => {
+        const ids = (region.boxIds ?? []).filter((id) => id <= boxes.length && claims.get(id) === 1);
+        if (ids.length === 0) return undefined;
+        ids.forEach((id) => claimed.add(id));
+        return unionOf(ids.map((id) => boxes[id - 1]));
+    });
+    const missing = frames.map((frame, at) => (frame ? -1 : at)).filter((at) => at >= 0);
+    if (missing.length === 0) return frames;
+    const free = boxes.filter((_, index) => !claimed.has(index + 1));
+
+    if (free.length === missing.length) {
+        // Nothing named and nothing left over: the entries are in reading order
+        // and so are the boxes, so the i-th entry takes the i-th box.
+        const ordered = [...free].sort((left, right) => {
+            const band = Math.max(left.height, right.height) * 0.35;
+            if (Math.abs(left.y - right.y) > band) return left.y - right.y;
+            return right.x - left.x;
+        });
+        missing.forEach((at, index) => {
+            frames[at] = { ...ordered[index] };
+        });
+        return frames;
+    }
+    for (const at of missing) {
+        frames[at] = inkFrameOf(regions[at], free.length > 0 ? free : boxes, regions) ?? undefined;
+    }
+    return frames;
+}
+
+/** Read the regions of one block and map their boxes to page pixels. */
+function readBlockAnswer(
+    content: string,
+    crop: BlockReading['block'],
+    cell: number,
+    boxes: { x: number; y: number; width: number; height: number }[] = [],
+): BlockRegion[] {
     const parsed = JSON.parse(extractJson(content)) as {
-        regions?: { text?: unknown; type?: unknown; kind?: unknown; ruby?: unknown; direction?: unknown; columns?: unknown; rows?: unknown; x?: unknown; y?: unknown; width?: unknown; height?: unknown; left?: unknown; top?: unknown; angle?: unknown }[];
+        regions?: { text?: unknown; type?: unknown; kind?: unknown; ruby?: unknown; direction?: unknown; columns?: unknown; rows?: unknown; x?: unknown; y?: unknown; width?: unknown; height?: unknown; left?: unknown; top?: unknown; angle?: unknown; lean?: unknown; em?: unknown; box?: unknown; boxes?: unknown }[];
         lines?: unknown;
     };
     const items = Array.isArray(parsed.regions) ? parsed.regions : [];
     if (items.length === 0) return [];
-    const geometry = gridGeometry(crop);
+    const geometry = gridGeometry(crop, cell);
+    const scale = blockCropScale(crop);
     const regions: BlockRegion[] = [];
     for (const item of items) {
         const text = typeof item.text === 'string' ? item.text.trim() : '';
         if (text.length === 0) continue;
-        const chars = Math.max(1, [...text].length);
         const degrees = Number(item.angle);
-        const axis = Number.isFinite(degrees)
-            ? Math.max(-89, Math.min(89, degrees)) * Math.PI / 180
-            : 0;
-        const inclined = item.direction === 'i' || Math.abs(degrees) >= 12;
-        // The answer is in cells of the grid drawn on the crop, so the box is a
-        // multiplication away from page pixels. A fraction answer is still
-        // accepted, for a model that ignores the grid.
-        const cells = [item.x, item.y, item.width, item.height].map(Number);
+        // The answer is in page pixels, read off the numbers printed on the
+        // grid. A cell box and a fraction are still accepted, so a reader that
+        // ignores the numbers does not lose the line, but they are fallbacks:
+        // the cell box is what drifted, so it is the last thing asked for.
+        const numbers = [item.x, item.y, item.width, item.height].map(Number);
         const fractions = [item.left, item.top, item.width, item.height].map(Number);
+        const whole = numbers.every((value) => Number.isFinite(value));
+        const box = { x: numbers[0], y: numbers[1], width: numbers[2], height: numbers[3] };
+        /** A box that starts inside `from` and can be trimmed to it. */
+        const startsIn = (
+            candidate: { x: number; y: number; width: number; height: number },
+            fromX: number,
+            fromY: number,
+            toX: number,
+            toY: number,
+        ): boolean => candidate.width >= 6 && candidate.height >= 6
+            && candidate.x >= fromX - 8 && candidate.y >= fromY - 8
+            && candidate.x < toX && candidate.y < toY;
+        const asCells = whole && numbers.every((value) => Number.isInteger(value))
+            && numbers[0] >= 0 && numbers[1] >= 0 && numbers[2] >= 1 && numbers[3] >= 1
+            && numbers[0] <= geometry.columns + 1 && numbers[1] <= geometry.rows + 1
+            && numbers[2] <= geometry.columns + 1 && numbers[3] <= geometry.rows + 1;
+        // The rectangle the reader named, when it named one. An index off the
+        // end is a misread number, not a line.
+        const named = (Array.isArray(item.box) ? item.box : [item.box ?? item.boxes])
+            .flat()
+            .map((value) => Number(value))
+            .filter((value) => Number.isInteger(value) && value >= 1 && value <= boxes.length)
+            .slice(0, 4);
+        // The reader sometimes writes box 0, or leaves the field out, on a
+        // crop that has exactly one rectangle. There is no choice to make:
+        // the entry is that rectangle. Without this the region has no box, the
+        // lean is never measured, and the label is drawn upright.
+        if (named.length === 0 && boxes.length === 1) named.push(1);
         let x: number;
         let y: number;
         let regionWidth: number;
         let regionHeight: number;
         let cellBox: { x: number; y: number; width: number; height: number } | undefined;
-        if (cells.every((value) => Number.isFinite(value)) && cells[2] > 0 && cells[3] > 0) {
+        if (named.length > 0) {
+            // The named box is the position: the reader chose a rectangle the
+            // detector drew around the ink, which is exact, where a coordinate
+            // it reads is an estimate. The numbers are only a fallback now.
+            const picked = named.map((id) => boxes[id - 1]);
+            x = Math.min(...picked.map((one) => one.x));
+            y = Math.min(...picked.map((one) => one.y));
+            regionWidth = Math.max(...picked.map((one) => one.x + one.width)) - x;
+            regionHeight = Math.max(...picked.map((one) => one.y + one.height)) - y;
+        } else if (whole && startsIn(box, crop.x, crop.y, crop.x + crop.width, crop.y + crop.height)
+            && box.width <= crop.width * 1.2 && box.height <= crop.height * 1.2) {
+            // Page pixels, exactly as the numbers on the grid read.
+            x = box.x;
+            y = box.y;
+            regionWidth = box.width;
+            regionHeight = box.height;
+        } else if (asCells) {
             // Whole cells only: a half the model sends anyway is rounded to the
             // nearer line, so a box always starts on a grid line.
-            for (let axis = 0; axis < cells.length; axis += 1) cells[axis] = Math.round(cells[axis]);
+            const cells = numbers.map((value) => Math.round(value));
             // A cell outside the grid is a misread number, not a line to throw
             // away: the box slides back inside the grid at the size it was
             // given, so the line keeps its font and is still translated.
@@ -806,17 +1175,31 @@ function readBlockAnswer(content: string, crop: BlockReading['block']): BlockReg
             const boxHeight = Math.min(Math.max(1, cells[3]), geometry.rows);
             const column = Math.min(Math.max(0, cells[0]), geometry.columns - boxWidth);
             const row = Math.min(Math.max(0, cells[1]), geometry.rows - boxHeight);
-            const box = cellToPage(crop, geometry.cell, {
+            const mapped = cellToPage(crop, geometry.cell, {
                 x: column,
                 y: row,
                 width: boxWidth,
                 height: boxHeight,
             });
-            x = box.x;
-            y = box.y;
-            regionWidth = box.width;
-            regionHeight = box.height;
+            x = mapped.x;
+            y = mapped.y;
+            regionWidth = mapped.width;
+            regionHeight = mapped.height;
             cellBox = { x: column, y: row, width: boxWidth, height: boxHeight };
+        } else if (whole && startsIn(
+            box,
+            0,
+            0,
+            crop.width * scale,
+            crop.height * scale,
+        ) && box.width <= crop.width * scale * 1.2 && box.height <= crop.height * scale * 1.2) {
+            // Pixels of the crop image itself, which is the page upscaled: a
+            // reader that ignored the numbers still measured the right place,
+            // it just measures it on the image it was sent.
+            x = crop.x + box.x / scale;
+            y = crop.y + box.y / scale;
+            regionWidth = box.width / scale;
+            regionHeight = box.height / scale;
         } else if (fractions.every((value) => Number.isFinite(value))) {
             const fractionWidth = clamp01(fractions[2]);
             const fractionHeight = clamp01(fractions[3]);
@@ -836,11 +1219,13 @@ function readBlockAnswer(content: string, crop: BlockReading['block']): BlockReg
         regionWidth = right - x;
         regionHeight = bottom - y;
         if (regionWidth < 8 || regionHeight < 8) continue;
-        const direction: 'v' | 'h' = item.direction === 'h' || item.direction === 'v'
-            ? item.direction
-            : Math.abs(degrees) > 45 || (!Number.isFinite(degrees) && regionHeight >= regionWidth)
+        const direction: 'v' | 'h' = item.direction === 'h'
+            ? 'h'
+            : item.direction === 'v' || item.direction === 'i'
                 ? 'v'
-                : 'h';
+                : Math.abs(degrees) > 45 || (!Number.isFinite(degrees) && regionHeight >= regionWidth)
+                    ? 'v'
+                    : 'h';
         const columns = Number.isFinite(Number(item.columns)) ? Math.round(Number(item.columns)) : 1;
         const rows = Number.isFinite(Number(item.rows)) ? Math.round(Number(item.rows)) : 1;
         const region: BlockRegion = {
@@ -853,6 +1238,7 @@ function readBlockAnswer(content: string, crop: BlockReading['block']): BlockReg
             columns: Math.max(1, columns),
             rows: Math.max(1, rows),
             ...(cellBox ? { cells: cellBox } : {}),
+            ...(named.length > 0 ? { boxIds: named.slice(0, 4) } : {}),
             kind: item.type === 'sfx' || item.kind === 'sfx'
                 ? 'sfx'
                 : item.type === 'name' || item.kind === 'name' ? 'name' : 'chat',
@@ -860,37 +1246,321 @@ function readBlockAnswer(content: string, crop: BlockReading['block']): BlockReg
                 ? { ruby: item.ruby.trim() }
                 : {}),
         };
-        // An inclined line is stored as a rotated rectangle: the axis aligned box
-        // is what the model saw, and length and thickness come from undoing the
-        // rotation of that box.
-        if (inclined && Math.abs(axis) >= 0.05) {
-            // The model's box is axis aligned, so the length along the text is
-            // the projecting side divided by the cosine of the lean. Inverting
-            // the whole rectangle instead is fragile, because a loose box makes
-            // the thickness larger than the length.
-            const along = direction === 'h'
-                ? region.width / Math.max(0.35, Math.abs(Math.cos(axis)))
-                : region.height / Math.max(0.35, Math.abs(Math.sin(axis)));
-            const advance = chars > 0 ? along / chars : 0;
-            const em = chars >= 3 && advance >= 6 ? advance : Math.min(region.width, region.height);
-            if (!(em >= 4)) continue;
-            regions.push({
-                ...region,
-                angle: foldAngle(axis),
-                lineLength: along,
-                lineThickness: em,
-                glyphSize: em,
-            });
-            continue;
+        // The reader's own page box, kept beside the named detector box: when
+        // two columns share one blue rectangle, the named box is the same for
+        // both and using it for both put two labels on top of each other. The
+        // own box still says which column is which.
+        if (whole && box.width >= 4 && box.height >= 4) {
+            region.own = {
+                x: Math.max(crop.x, Math.min(crop.x + crop.width - 1, box.x)),
+                y: Math.max(crop.y, Math.min(crop.y + crop.height - 1, box.y)),
+                width: box.width,
+                height: box.height,
+            };
         }
+        // The reader still says "v" and often a lean for a column. Its lean is
+        // not used for geometry: it came back 0 for a 5 degree column and -7
+        // for a 15.5 degree one, with the sign reversed. The ink's own angle is
+        // measured later, where the mask is in hand. Only its em is kept as a
+        // second opinion on the glyph size.
+        const em = Number(item.em);
+        if (Number.isFinite(em) && em >= 4 && em <= 300) region.glyphSize = em;
         for (const piece of splitRegion(region)) {
             // The box is the one the reader read off the grid, so it is already
             // one character across and as long as the line runs.
-            piece.glyphSize = piece.direction === 'v' ? piece.width : piece.height;
+            if (piece.glyphSize === undefined) {
+                piece.glyphSize = piece.direction === 'v' ? piece.width : piece.height;
+            }
             regions.push(piece);
         }
     }
-    return regions;
+    return mergeCharacterRegions(regions);
+}
+
+/**
+ * Fold one-character entries back into the column they are characters of.
+ *
+ * The reader sometimes answers one entry per character: the 回卒業証書授 banner
+ * came back as six entries, all naming the same blue rectangle. Six labels on
+ * one column is not a reading, and each character would be translated on its
+ * own. Entries that share a column, carry at most two glyphs each and run down
+ * the same band are one line; their text joins in reading order.
+ */
+function mergeCharacterRegions(regions: BlockRegion[]): BlockRegion[] {
+    if (regions.length < 2) return regions;
+    const groups = new Map<string, BlockRegion[]>();
+    for (const region of regions) {
+        const id = region.boxIds?.[0];
+        const own = region.own ?? region;
+        const key = id !== undefined
+            ? `box:${id}`
+            : `own:${region.direction}:${Math.round(own.x / 8)}:${Math.round(own.y / 8)}`;
+        const list = groups.get(key);
+        if (list) list.push(region);
+        else groups.set(key, [region]);
+    }
+    const out: BlockRegion[] = [];
+    for (const group of groups.values()) {
+        // One entry per character is the usual shape, but the reader also
+        // splits the 31 off the banner and leaves 回卒業証書授 as one entry.
+        // Two or more entries in one band are pieces of one column when at
+        // least one of them is that short; two full columns stay apart.
+        const oneGlyph = group.some((region) => [...region.text].length <= 2);
+        if (group.length < 2 || !oneGlyph) {
+            out.push(...group);
+            continue;
+        }
+        const direction = group[0].direction;
+        const boxes = group.map((region) => region.own ?? region);
+        const across = (box: { x: number; y: number; width: number; height: number }): [number, number] => (
+            direction === 'v' ? [box.x, box.x + box.width] : [box.y, box.y + box.height]
+        );
+        const [groupFrom, groupTo] = across({
+            x: Math.min(...boxes.map((box) => box.x)),
+            y: Math.min(...boxes.map((box) => box.y)),
+            width: Math.max(...boxes.map((box) => box.x + box.width)) - Math.min(...boxes.map((box) => box.x)),
+            height: Math.max(...boxes.map((box) => box.y + box.height)) - Math.min(...boxes.map((box) => box.y)),
+        });
+        const sameBand = boxes.every((box) => {
+            const [from, to] = across(box);
+            return Math.min(groupTo, to) - Math.max(groupFrom, from) >= Math.min(to - from, groupTo - groupFrom) * 0.4;
+        });
+        if (!sameBand) {
+            out.push(...group);
+            continue;
+        }
+        const along = (box: { x: number; y: number; width: number; height: number }): number => (
+            direction === 'v' ? box.y : box.x
+        );
+        const ordered = [...group].sort((left, right) => along(left.own ?? left) - along(right.own ?? right));
+        const left = Math.min(...ordered.map((region) => (region.own ?? region).x));
+        const top = Math.min(...ordered.map((region) => (region.own ?? region).y));
+        const right = Math.max(...ordered.map((region) => (region.own ?? region).x + (region.own ?? region).width));
+        const bottom = Math.max(...ordered.map((region) => (region.own ?? region).y + (region.own ?? region).height));
+        const sizes = ordered
+            .map((region) => region.glyphSize)
+            .filter((size): size is number => typeof size === 'number' && size >= 4)
+            .sort((a, b) => a - b);
+        const first = ordered[0];
+        out.push({
+            ...first,
+            text: ordered.map((region) => region.text).join(''),
+            x: left,
+            y: top,
+            width: right - left,
+            height: bottom - top,
+            glyphSize: sizes.length > 0 ? sizes[sizes.length >> 1] : first.glyphSize,
+            boxIds: [...new Set(ordered.flatMap((region) => region.boxIds ?? []))],
+            own: { x: left, y: top, width: right - left, height: bottom - top },
+        });
+    }
+    return out;
+}
+
+/**
+ * The lean of the ink inside one box, in radians, clockwise from upright.
+ *
+ * The reader is asked for the lean and still answers 0 for a column that
+ * visibly tilts: it reads the characters as a vertical line and the lean is
+ * not something it reports. The segmentation plane does not have that
+ * ambiguity. Its glyph pixels in a column form an elongated cloud, and the
+ * major axis of that cloud is the direction the column runs. A vertical
+ * column's major axis is near +-90 degrees; the few degrees it is off are the
+ * lean this returns.
+ */
+function leanOfBox(
+    mask: TextMask | null,
+    box: { x: number; y: number; width: number; height: number },
+    direction: 'v' | 'h',
+): { lean: number; thickness: number } | undefined {
+    if (!mask) return undefined;
+    const x0 = Math.max(0, Math.floor(box.x * mask.scale + mask.padX));
+    const y0 = Math.max(0, Math.floor(box.y * mask.scale + mask.padY));
+    const x1 = Math.min(MODEL_SIZE - 1, Math.ceil((box.x + box.width) * mask.scale + mask.padX));
+    const y1 = Math.min(MODEL_SIZE - 1, Math.ceil((box.y + box.height) * mask.scale + mask.padY));
+    if (x1 <= x0 || y1 <= y0) return undefined;
+    const points: { x: number; y: number }[] = [];
+    for (let my = y0; my <= y1; my += 1) {
+        for (let mx = x0; mx <= x1; mx += 1) {
+            if (mask.data[my * MODEL_SIZE + mx] < 0.3) continue;
+            points.push({ x: (mx - mask.padX) / mask.scale, y: (my - mask.padY) / mask.scale });
+            if (points.length >= 40000) break;
+        }
+        if (points.length >= 40000) break;
+    }
+    // A handful of pixels is not a direction; a small glyph still has dozens.
+    if (points.length < 24) return undefined;
+    const axis = majorAxis(points);
+    if (axis === null) return undefined;
+    const lean = direction === 'v'
+        ? (axis < 0 ? axis + Math.PI / 2 : axis - Math.PI / 2)
+        : axis;
+    if (!Number.isFinite(lean) || Math.abs(lean) > Math.PI / 4) return undefined;
+    // How wide the ink is across the lean. The interquartile range drops a
+    // stray stroke and the far column of a merged box, so this is the glyph
+    // column, not the box. The reader's em and this are two measurements of
+    // one glyph; the narrower one is used, because the box edge never
+    // under-states a glyph the way the axis aligned box over-states it.
+    const cos = Math.cos(lean);
+    const sin = Math.sin(lean);
+    const across = points
+        .map((point) => (direction === 'v' ? point.x * cos - point.y * sin : -point.x * sin + point.y * cos))
+        .sort((left, right) => left - right);
+    const thickness = across[Math.floor(across.length * 0.75)] - across[Math.floor(across.length * 0.25)];
+    return { lean, thickness: Number.isFinite(thickness) && thickness >= 4 ? thickness : 0 };
+}
+
+/** The page box a rotated label covers, so the erase and the label agree. */
+function tightBounds(
+    centreX: number,
+    centreY: number,
+    length: number,
+    thickness: number,
+    angle: number,
+    direction: 'v' | 'h',
+): { x: number; y: number; width: number; height: number } {
+    const width = direction === 'v' ? thickness : length;
+    const height = direction === 'v' ? length : thickness;
+    const cos = Math.abs(Math.cos(angle));
+    const sin = Math.abs(Math.sin(angle));
+    return {
+        x: centreX - (width * cos + height * sin) / 2,
+        y: centreY - (width * sin + height * cos) / 2,
+        width: width * cos + height * sin,
+        height: width * sin + height * cos,
+    };
+}
+
+/**
+ * Give every leaned entry a rotated frame and a glyph size that matches the
+ * ink it replaces.
+ *
+ * The reader reports a leaned column as direction "v" with no angle, and its
+ * box is axis aligned: the width of that box is the glyph plus the whole run's
+ * lean, so a 22 pixel glyph became a 78 pixel frame and a 57 pixel font. The
+ * ink is not ambiguous. The lean comes from the segmentation plane, and the
+ * frame is a rectangle of that lean: its thickness is the glyph, its length is
+ * the column run measured along the lean. When several entries share one blue
+ * rectangle, the rectangle is split across the reading axis first, because a
+ * frame wide enough for two columns is a frame for neither.
+ *
+ * An entry the mask cannot measure keeps the reader's own lean or stays
+ * upright: a made-up angle is worse than no angle.
+ */
+export function applyInclination(
+    regions: BlockRegion[],
+    boxes: { x: number; y: number; width: number; height: number }[],
+    mask: TextMask | null,
+): void {
+    if (regions.length === 0) return;
+    const byBox = new Map<number, BlockRegion[]>();
+    for (const region of regions) {
+        const id = (region.boxIds ?? []).find((value) => value >= 1 && value <= boxes.length);
+        if (id === undefined) continue;
+        const list = byBox.get(id);
+        if (list) list.push(region);
+        else byBox.set(id, [region]);
+    }
+    const claimed = new Set<BlockRegion>();
+    for (const [id, group] of byBox) {
+        group.forEach((region) => claimed.add(region));
+        const box = boxes[id - 1];
+        const direction = group[0].direction;
+        const measured = leanOfBox(mask, box, direction);
+        const groupLean = measured?.lean ?? 0;
+        if (measured === undefined || Math.abs(groupLean) < 0.5 * Math.PI / 180) {
+            // No ink measurement: an upright label is wrong but recoverable; a
+            // label rotated by the reader's guess is wrong in a direction the
+            // page never had, and looks like a deliberate slant.
+            group.forEach((region) => { region.angle = undefined; });
+            continue;
+        }
+
+        const acrossStart = direction === 'v' ? box.x : box.y;
+        const acrossSize = direction === 'v' ? box.width : box.height;
+        const alongStart = direction === 'v' ? box.y : box.x;
+        const alongSize = direction === 'v' ? box.height : box.width;
+        const ordered = [...group].sort((left, right) => {
+            const ownLeft = left.own ?? left;
+            const ownRight = right.own ?? right;
+            const acrossOf = (item: { x: number; y: number; width: number; height: number }): number => (
+                direction === 'v' ? item.x + item.width / 2 : item.y + item.height / 2
+            );
+            return direction === 'v'
+                ? acrossOf(ownRight) - acrossOf(ownLeft)
+                : acrossOf(ownLeft) - acrossOf(ownRight);
+        });
+        // A loose detector box is wider than the glyph column; the mask's own
+        // thickness is the glyph, but on a box that holds one column the
+        // reader's em is the better estimate. Cap the reader's em by the band.
+        const band = acrossSize / ordered.length;
+        ordered.forEach((region, index) => {
+            const centreAcross = direction === 'v'
+                ? acrossStart + acrossSize - band * (index + 0.5)
+                : acrossStart + band * (index + 0.5);
+            const centreAlong = alongStart + alongSize / 2;
+            const lean = groupLean;
+            const cos = Math.max(0.5, Math.cos(lean));
+            const length = alongSize / cos;
+            const inkEm = measured?.thickness && measured.thickness >= 4 ? measured.thickness : undefined;
+            const reportedEm = region.glyphSize && region.glyphSize >= 4 ? region.glyphSize : undefined;
+            // One column in the box: the reader's em and 0.6 of the ink's
+            // interquartile width are two estimates, and the larger is used.
+            // The ink width includes the gap to the next column on a loose box,
+            // so it is discounted; the reader's em can be a third too small on
+            // a long banner, so it is not trusted alone. Several columns: the
+            // band and the ink are the caps, and the narrower wins.
+            const em = ordered.length === 1
+                ? (Math.max(reportedEm ?? 0, (inkEm ?? 0) * 0.6) || band)
+                : Math.min(reportedEm ?? band, inkEm ?? band, band);
+            const thickness = Math.max(4, Math.min(em, band * 0.95));
+            const bounds = tightBounds(centreAcross, centreAlong, length, thickness, lean, direction);
+            region.x = bounds.x;
+            region.y = bounds.y;
+            region.width = bounds.width;
+            region.height = bounds.height;
+            region.angle = lean;
+            region.lineLength = length;
+            region.lineThickness = thickness;
+            region.glyphSize = thickness;
+            region.frame = { ...bounds };
+        });
+    }
+    // A region with no named box still has its own box. Measure the ink there
+    // rather than leaving a leaned line upright: the own box is axis aligned,
+    // but the seg plane's major axis inside it is the column's direction.
+    for (const region of regions) {
+        if (claimed.has(region)) continue;
+        const own = region.own ?? region;
+        const measured = leanOfBox(mask, own, region.direction);
+        if (!measured || Math.abs(measured.lean) < 0.5 * Math.PI / 180) {
+            region.angle = undefined;
+            continue;
+        }
+        const lean = measured.lean;
+        const length = (region.direction === 'v' ? own.height : own.width) / Math.max(0.5, Math.cos(lean));
+        const em = region.glyphSize && region.glyphSize >= 4
+            ? Math.min(region.glyphSize, measured.thickness || region.glyphSize)
+            : measured.thickness || (region.direction === 'v' ? own.width : own.height);
+        const thickness = Math.max(4, Math.min(em, (region.direction === 'v' ? own.width : own.height) * 0.95));
+        const bounds = tightBounds(
+            own.x + own.width / 2,
+            own.y + own.height / 2,
+            length,
+            thickness,
+            lean,
+            region.direction,
+        );
+        region.x = bounds.x;
+        region.y = bounds.y;
+        region.width = bounds.width;
+        region.height = bounds.height;
+        region.angle = lean;
+        region.lineLength = length;
+        region.lineThickness = thickness;
+        region.glyphSize = thickness;
+        region.frame = { ...bounds };
+    }
 }
 
 /**
@@ -904,6 +1574,8 @@ export async function readBlockRegions(
     ocr: OcrRequest,
     /** Line boxes the detector found, drawn on the crop as the text to read. */
     detBoxes: { x: number; y: number; width: number; height: number }[] = [],
+    /** Segmentation plane, used to measure the lean the reader did not report. */
+    mask: TextMask | null = null,
 ): Promise<BlockReading[]> {
     const readings: BlockReading[] = blocks.map((block) => ({ block: { ...block }, regions: [], cell: 0, boxes: [] }));
     if (blocks.length === 0) return readings;
@@ -924,35 +1596,50 @@ export async function readBlockRegions(
             // Only the detector's line boxes that reach this block: they are
             // what the prompt calls the text to read, so a stray box from the
             // panel next door must not appear on the crop.
-            const inside = detBoxes.filter((box) => (
+            const inside = columnBoxes(detBoxes.filter((box) => (
                 box.x < padded.x + padded.width && box.x + box.width > padded.x
                 && box.y < padded.y + padded.height && box.y + box.height > padded.y
-            )).slice(0, 40).map((box) => ({ x: box.x, y: box.y, width: box.width, height: box.height }));
+            )).slice(0, 40).map((box) => ({ x: box.x, y: box.y, width: box.width, height: box.height })));
             reading.boxes = inside;
             // Every box drawn on the crop is shown whole: a box cut by the crop
             // edge is the one a reader tends to leave out of its answer, and
-            // that unread column is what a block-wide erase used to blank.
-            const crop = { ...blockCropBox(bitmap.width, bitmap.height, reading.block, inside), score: reading.block.score };
-            let dataUrl: string;
+            // that unread column is what a block-wide erase used to blank. The
+            // crop the reader is shown is the erase box plus the ruler strip,
+            // so its origin is what the grid's numbers are counted from.
+            let cut: { dataUrl: string; crop: { x: number; y: number; width: number; height: number }; cell: number };
             try {
-                dataUrl = blockToDataUrl(bitmap, reading.block, inside);
+                cut = blockCropDataUrl(bitmap, bitmap.width, bitmap.height, reading.block, inside);
             } catch (cause) {
                 console.warn('Block reading could not cut one block.', cause);
                 continue;
             }
+            const crop = { ...cut.crop, score: reading.block.score };
+            const dataUrl = cut.dataUrl;
             for (let attempt = 0; attempt < 2; attempt += 1) {
                 try {
                     const content = await deepSeekContentForSync(ocr.key, [dataUrl], BLOCK_PROMPT, READ_EFFORT);
                     reading.raw = content;
                     console.info(`[read] block ${index + 1}: ${content.slice(0, 3000)}`);
                     reading.cropUrl = dataUrl;
-                    const parsed = readBlockAnswer(content, crop);
+                    const parsed = readBlockAnswer(content, crop, cut.cell, reading.boxes ?? []);
                     const kept = dropReadingsInsideColumns(parsed);
                     if (kept.length !== parsed.length) {
                         console.info(`[read] dropped ${parsed.length - kept.length} reading(s) inside a column`);
                     }
                     reading.regions = separateOverlaps(mergeCompanionRegions(kept));
-                    const geometry = gridGeometry(crop);
+                    // The frame each label will be drawn on, decided here where
+                    // the boxes drawn on the crop and the entries are both in
+                    // hand: the label goes on the ink, not on the estimate.
+                    const frames = blockFrames(reading.regions, reading.boxes ?? []);
+                    reading.regions.forEach((region, at) => {
+                        const frame = frames[at];
+                        if (frame) region.frame = frame;
+                    });
+                    // The reader answers "v" for a column that leans. Measure
+                    // the lean from the ink and give the entry the rotated
+                    // frame and the glyph size the label needs.
+                    applyInclination(reading.regions, reading.boxes ?? [], mask);
+                    const geometry = gridGeometry(cut.crop, cut.cell);
                     reading.cell = geometry.cell;
                     console.info(`[grid] block ${index + 1}: ${geometry.columns} x ${geometry.rows} cells `
                         + `of ${reading.cell}px, ${reading.regions.length} line(s)`);
@@ -975,5 +1662,8 @@ export async function readBlockRegions(
         }
     };
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, () => worker()));
-    return readings;
+    // Two blocks over the same ink are two readings of it: the ones that came
+    // back as a repeat are dropped before the caller builds groups, so a plate
+    // read twice cannot be translated twice.
+    return dropRepeatedReadings(readings);
 }

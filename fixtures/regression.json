@@ -134,6 +134,57 @@
             "erase": {
                 "maxUncoveredShare": 0.02
             }
+        },
+        {
+            "id": "name-plate",
+            "image": "fixtures/page-name.jpg",
+            "note": "The blk head returned the name plate twice: a tight box and a loose one that also covered the 人生の負け組だ caption. Both rows were read, so one group's source held 未婚独身彼女ナシ平社員 twice and a second group repeated 花岡修太郎 / 三十九歳 as one joined line. The page then carried two labels on the same columns and the translation repeated (沒女友, 基層職員 / 普通職員, 人生失敗組).",
+            "effort": "off",
+            "oneInk": true,
+            "maxRepeat": 5,
+            "groups": [
+                {
+                    "source": "花岡",
+                    "onMissing": "skip",
+                    "contains": [
+                        "花岡"
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "incline",
+            "image": "fixtures/page-forty.jpg",
+            "note": "A leaned block is still leaned. The reader says direction v with no lean for the TV speech at 320,580 and the 51回卒業証書授 banner at 202,983, so the labels were drawn upright and sized from the axis-aligned box (57px on a 22px glyph, 140px on a 45px glyph). The label must follow the ink's angle and the source glyph size.",
+            "labels": [
+                {
+                    "region": [
+                        300,
+                        550,
+                        120,
+                        220
+                    ],
+                    "lean": 5,
+                    "leanTolerance": 4,
+                    "em": 22,
+                    "emTolerance": 0.3,
+                    "emMaxGlyphs": 8,
+                    "source": "やつ|やっ",
+                    "onMissing": "skip"
+                },
+                {
+                    "region": [
+                        160,
+                        950,
+                        220,
+                        450
+                    ],
+                    "lean": 15.5,
+                    "leanTolerance": 4,
+                    "onMissing": "skip",
+                    "source": "卒業証書|31"
+                }
+            ]
         }
     ]
 }

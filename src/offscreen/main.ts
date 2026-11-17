@@ -514,7 +514,7 @@ export async function runDetection(request: OffscreenDetectRequest): Promise<Det
         // block, so the block is both the detection unit and the group.
         let readings = null as Awaited<ReturnType<typeof readBlockRegions>> | null;
         if (reader && detected.blkBoxes.length > 0) {
-            readings = await readBlockRegions(bitmap, detected.blkBoxes, reader, detected.detBoxes)
+            readings = await readBlockRegions(bitmap, detected.blkBoxes, reader, detected.detBoxes, detected.mask)
                 .catch((cause: unknown) => {
                     console.warn('Block reading failed, falling back to the line path.', cause);
                     return null;
@@ -600,27 +600,27 @@ export async function runDetection(request: OffscreenDetectRequest): Promise<Det
                     const verticalLine = line.direction === 'vertical';
                     const inclined = Math.abs(line.angle ?? 0) >= 0.01;
                     if (!inclined) {
-                        let slot = {
+                        // The frame was built from the ink when the block was
+                        // read (see blockFrames): the reader said which column,
+                        // the box says where its edges are. Rebuilding it from
+                        // the reader's own edges is what put labels beside their
+                        // columns — a 30 pixel glyph on a 25 pixel grid is two
+                        // cells wide, and a box two cells wide doubles the font
+                        // and centres the label half a character off.
+                        const frame = region.frame;
+                        let slot = frame ?? {
                             x: region.x,
                             y: region.y,
                             width: region.width,
                             height: region.height,
                         };
-                        // The font is the grid: how many cells the character
-                        // covers, times the size of one cell. Two cells of a 9
-                        // pixel grid are an 18 pixel character.
-                        //
-                        // The box across is a lower bound, because it is drawn
-                        // around the ink and an em is wider than its ink: a two
-                        // cell character can come back as a one cell box, which
-                        // halved the font. The run of characters is the better
-                        // estimate, because its rounding error is divided by the
-                        // number of characters, so the larger of the two is used.
+                        // Without a box to snap to (the detector missed the
+                        // line), the cell answer is the only geometry there is.
                         const characters = Math.max(1, [...line.text].length);
-                        const acrossCells = region.cells
+                        const acrossCells = !frame && region.cells
                             ? (verticalLine ? region.cells.width : region.cells.height)
                             : 0;
-                        const alongCells = region.cells
+                        const alongCells = !frame && region.cells
                             ? (verticalLine ? region.cells.height : region.cells.width)
                             : 0;
                         const read = verticalLine ? slot.width : slot.height;
@@ -650,9 +650,12 @@ export async function runDetection(request: OffscreenDetectRequest): Promise<Det
                             + `em ${size.toFixed(1)}px = ${acrossCells} across, ${alongCells}/${characters} along, `
                             + `cell ${reading.cell}px`);
                     } else if (region.glyphSize && region.glyphSize >= 4) {
-                        // An inclined line is not on the cell grid, so its size
-                        // stays the advance the model's own text measured.
-                        line.lineThickness = region.glyphSize / 1.2;
+                        // An inclined line is not on the cell grid. Its
+                        // thickness is the glyph the ink measured, and the
+                        // typesetter draws the font at that size instead of
+                        // growing it by 1.2: the label has to fit the column
+                        // it replaces, not the line box around it.
+                        line.lineThickness = region.glyphSize;
                     }
                     lines.push(line);
                 });
@@ -919,11 +922,18 @@ export async function runDetection(request: OffscreenDetectRequest): Promise<Det
         const groups: GroupData[] = [];
         const perGroup: string[][] = grouped.boxes.map(() => []);
         const perGroupTranslations: string[][] = grouped.boxes.map(() => []);
+        // What the labels will be drawn on, and the ink they must sit on, per
+        // group: kept so a drift check can compare the two without the layout.
+        const perGroupSlots: { x: number; y: number; width: number; height: number }[][] = grouped.boxes.map(() => []);
+        const perGroupInk: { x: number; y: number; width: number; height: number }[][] = grouped.boxes.map(() => []);
         for (const line of usable) {
             for (let index = 0; index < grouped.boxes.length; index += 1) {
                 if (!centreInsideBox(line, grouped.boxes[index])) continue;
                 perGroup[index].push(line.text);
                 perGroupTranslations[index].push(line.translation ?? '');
+                const ink = { x: line.x, y: line.y, width: line.width, height: line.height };
+                perGroupInk[index].push(ink);
+                perGroupSlots[index].push(line.slot ?? ink);
                 break;
             }
         }
@@ -942,6 +952,15 @@ export async function runDetection(request: OffscreenDetectRequest): Promise<Det
                 fontSize: groupFontSize(usable, box),
                 vertical: groupVertical(usable, box),
                 balloon: grouped.balloonFlags[index] ?? false,
+                // Parallel to `lines`, which drops the empty readings.
+                frames: perGroup[index]
+                    .map((value, at) => (value.length > 0 ? at : -1))
+                    .filter((at) => at >= 0)
+                    .map((at) => perGroupSlots[index][at]),
+                inks: perGroup[index]
+                    .map((value, at) => (value.length > 0 ? at : -1))
+                    .filter((at) => at >= 0)
+                    .map((at) => perGroupInk[index][at]),
             });
         });
         for (const line of usable) {
@@ -970,7 +989,8 @@ export async function runDetection(request: OffscreenDetectRequest): Promise<Det
                 continue;
             }
             for (const cluster of clusters) {
-                const text = cluster.map((line) => line.text).filter((value) => value.length > 0);
+                const spoken = cluster.filter((line) => line.text.length > 0);
+                const text = spoken.map((line) => line.text);
                 if (text.length === 0) continue;
                 let minX = Number.POSITIVE_INFINITY;
                 let minY = Number.POSITIVE_INFINITY;
@@ -989,6 +1009,8 @@ export async function runDetection(request: OffscreenDetectRequest): Promise<Det
                     fontSize: groupFontSize(usable, clusterBox),
                     vertical: groupVertical(usable, clusterBox),
                     balloon: group.balloon ?? false,
+                    frames: spoken.map((line) => line.slot ?? { x: line.x, y: line.y, width: line.width, height: line.height }),
+                    inks: spoken.map((line) => ({ x: line.x, y: line.y, width: line.width, height: line.height })),
                 });
             }
         }
@@ -1109,6 +1131,7 @@ export async function runDetection(request: OffscreenDetectRequest): Promise<Det
                     text: region.text,
                     direction: region.direction,
                     kind: region.kind,
+                    frame: region.frame,
                 })),
             })),
             ms: Math.round(performance.now() - started),

@@ -37,6 +37,10 @@ npm run regression                        # every case
 npm run regression -- circle              # one case, by id
 npm run regression -- --effort high       # every case at another level
 
+npm run grid:drift -- --all               # every page in fixtures/drift.json
+npm run grid:drift -- --image <page>      # one page, live reading
+npm run grid:drift -- --detection <json>  # replay a frozen reading, no network
+
 # one page, by hand, with checks and artifacts
 npm run render:page -- fixtures/page.jpg --crop 179,149,143,322 --expect '円,圓'
 npm run render:page -- fixtures/page-320.jpg --save-detection out/eval/det-320.json
@@ -57,6 +61,8 @@ npm run prompt:lab -- out/eval/det-320.json --effort off
 | `scripts/render-page.mjs` | the one-page CLI (`render:page`) |
 | `docs/regression.md` | the human guide: cases, vocabulary, how to add one |
 | `out/regression/` | per run: `<id>.png`, `<id>-erased.png`, `report.json` (git-ignored) |
+| `fixtures/drift.json` | the pages the label placement is measured on |
+| `scripts/grid-drift.mjs` | the placement check, `npm run grid:drift` |
 
 ## Adding a case
 
@@ -98,7 +104,10 @@ npm run prompt:lab -- out/eval/det-320.json --effort off
 | `groups[].sourceIsKana` | the group's source must be kana only |
 | `groups[].onMissing` | `skip` when the reader may not report the group |
 | `loneGlyphs[]` | `{ source, allowed }`: exactly one of `allowed`, exactly one glyph |
+| `labels[]` | `{ region?, source?, lean, em, onMissing? }`: the selected group's labels are drawn at that rotation and glyph size; `source` picks the group, `emMaxGlyphs` skips the font rule for a merged line, and two labels may not cover >40% of one another |
 | `sources.mustNotMatch` | no group's source may contain these |
+| `oneInk` | no piece of ink is read twice: no two overlapping lines with the same word, no line that is the join of the lines it covers, no two groups over one block |
+| `maxRepeat` | no translation may repeat a run of this many glyphs of itself |
 | `erase.maxUncoveredShare` | share of interior strokes under a label that may survive |
 | `effort` | level for this case; `--effort` overrides it |
 
@@ -117,6 +126,9 @@ then had to become a case.
 | "the name must not keep its Japanese honorific" | `groups: [{ source: "伯爵", contains: ["大人"], notContains: ["様"] }]` |
 | "no kana left in a translation" | global check in the runner: kana in any non-empty answer fails |
 | "the reader must not hand over kanji for ねえ" | `sources.mustNotMatch: ["お元", "我元", "我死"]` + `sourceIsKana` at `[176, 700]` |
+| "one piece of ink is translated once" | `oneInk: true` + `maxRepeat: 5` on `page-name.jpg` |
+| "the label must land on its column" | `drift`: frame centre ≤8px and size within 25% of the ink, `fixtures/drift.json` |
+| "a leaned block is drawn leaned, at the source glyph size" | `labels`: lean ±4°, font ±30% of em, no two labels over 40% of each other (`incline`) |
 
 ## Rules that keep the suite honest
 
@@ -146,8 +158,16 @@ then had to become a case.
   `"effort": "high"` explicitly for a high-level case.
 - **One-character balloons** (`loneGlyphs`) only apply to kanji names; a lone
   kana is dialogue.
+- **Placement is measured on the frame, not the reader's box.** The reader names
+  the column; the detector's box gives it its edges. A check that measures the
+  reader's raw box measures the model's mood, and passes or fails on the run.
+- **A duplicate translation is a duplicate reading.** The blk head can return a
+  block nested inside another block's box, and both are read: assert `oneInk`,
+  not the wording. The reader's grids disagree (a cell off, 二十九 for 三十九),
+  so a check that compares cell boxes or exact text across blocks is flaky.
 - The translation prompt lives in `src/lib/translatePrompt.ts`; the layout guard
-  that refuses to cut a declared word is `fitColumns`.
+  that refuses to cut a declared word is `fitColumns`; the duplicate reading is
+  dropped in `src/lib/ocr/cloudOcr.ts` (`dropRepeatedReadings`).
 
 ## How to verify
 

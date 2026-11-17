@@ -331,7 +331,13 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         const glyph = glyphSizes.length > 0
             ? glyphSizes.reduce((sum, value) => sum + value, 0) / glyphSizes.length
             : 0;
-        const font = glyph > 0 ? Math.max(6, Math.round(glyph * 1.2)) : (group.fontSize ?? 12);
+        // A leaned line's glyph is measured across the glyph itself, so the
+        // font is that size. An upright line's thickness is the column width,
+        // which is narrower than the font, so it keeps the 1.2 correction.
+        const inclinedGroup = placedLines.some((line) => Math.abs(line.angle ?? 0) >= 0.01);
+        const font = glyph > 0
+            ? Math.max(6, Math.round(glyph * (inclinedGroup ? 1 : 1.2)))
+            : (group.fontSize ?? 12);
         console.info(`[typeset] group ${index}: glyph ${glyph.toFixed(1)}px, font ${font}px, ${placedLines.length} line(s), thicknesses ${glyphSizes.map((value) => Math.round(value)).join(',')}`);
 
         const translatedColumns = (answer?.columns ?? [])
@@ -362,7 +368,10 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
         //    has, and returns one font factor that makes every part fit.
         const fontOf = (line: BoxData): number => {
             const size = strokeOf(line);
-            return size >= 4 ? Math.max(6, Math.round(size * 1.2)) : fittedFont;
+            // A leaned line's stroke is the glyph itself. An upright line's is
+            // the column width, which is narrower than the glyph, hence the 1.2.
+            const grow = Math.abs(line.angle ?? 0) >= 0.01 ? 1 : 1.2;
+            return size >= 4 ? Math.max(6, Math.round(size * grow)) : fittedFont;
         };
         const fittedFont = Math.max(6, Math.round(font));
 

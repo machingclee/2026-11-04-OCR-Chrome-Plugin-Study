@@ -31,7 +31,7 @@ import type {
 import serviceWorkerRequestFactory from './shared/factories/serviceWorkerRequestFactory';
 import { setOverlayOpacityInPage } from './shared/overlayVisibility';
 import { cropSize } from './lib/warp';
-import { blockCropBox, blockCropDataUrl } from './lib/ocr/blockCrop';
+import { blockCropDataUrl, blockCropScale, readerCropBox } from './lib/ocr/blockCrop';
 import { gridCell } from './lib/ocr/grid';
 
 
@@ -637,8 +637,8 @@ export default function App() {
         }
         const crops: Record<number, { x: number; y: number; width: number; height: number; cell: number }> = {};
         blocks.forEach((block, index) => {
-            const crop = blockCropBox(size.width, size.height, block, blockReadings[index]?.boxes ?? []);
-            crops[index] = { ...crop, cell: gridCell(crop) };
+            const crop = readerCropBox(size.width, size.height, block, blockReadings[index]?.boxes ?? []);
+            crops[index] = { ...crop, cell: gridCell(crop, blockCropScale(crop)) };
         });
         setBlockCrops(crops);
     }, [blocks, blockReadings, size.width, size.height]);

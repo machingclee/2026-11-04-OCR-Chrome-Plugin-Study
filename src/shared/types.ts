@@ -116,6 +116,14 @@ export type GroupData = {
     vertical?: boolean;
     /** True when the group came from a balloon rather than a block. */
     balloon?: boolean;
+    /**
+     * The frame each label is drawn on, in page pixels, parallel to `lines`: the
+     * ink of the column the reader named. Kept on the group so a test can
+     * compare the frame with the ink it was built from, without the layout.
+     */
+    frames?: { x: number; y: number; width: number; height: number }[];
+    /** The ink box of each line, in page pixels, parallel to `lines`. */
+    inks?: { x: number; y: number; width: number; height: number }[];
 };
 
 /** One absolutely positioned translation, in the image's own pixels. */

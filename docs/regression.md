@@ -34,6 +34,32 @@ must appear (`contains`, `oneOf`), the words that must not (`notContains`,
 | `balloon-split` | `page-320.jpg` | この2人連れて勝手に動かせてもらうことにしたんだよ stays one group |
 | `erase-321` | `page-321.jpg` | No Japanese under a label: ≤2% of the strokes under any label survive |
 | `erase-324` | `page-324.jpg` | A block whose columns were only partly labelled is still erased |
+| `name-plate` | `page-name.jpg` | One piece of ink is read once: the plate nested in a bigger block is not translated twice |
+| `incline` | `page-forty.jpg` | A leaned block is drawn leaned, at the source glyph size: the TV speech and the 卒業証書 banner, whatever the reader says about the lean |
+
+## Placement: where the label lands
+
+The checks above judge the reading and the wording. `npm run grid:drift` judges
+the geometry: the frame each label is drawn on, against the ink boxes the
+detector drew on the reader's crop — the blue rectangles the prompt calls the
+text to read.
+
+```bash
+npm run grid:drift -- --all                              # every page in fixtures/drift.json
+npm run grid:drift -- --image fixtures/page-wizard.jpg   # one page, live reading
+npm run grid:drift -- --detection out/eval/det.json      # replay a frozen reading
+```
+
+A frame passes when its centre is within 8 page pixels of its ink on both axes
+and its own width and height are within 25% of the ink's. `--save <json>` freezes
+a reading so a failure can be replayed after the model has moved on, and
+`--crops <dir>` writes the image each block was read from: the grid is the only
+thing that explains a drift, so a failure is not diagnosable without it.
+
+The frames are built from the detector's boxes, not from the reader's estimate —
+that is the fix the check protects. The page passing is not enough on its own:
+the reader names the column, so a block where it drops a column still land one
+label on the wrong ink, and the run prints it.
 
 ## Adding a case
 
@@ -78,16 +104,42 @@ must appear (`contains`, `oneOf`), the words that must not (`notContains`,
 | `groups[].sourceIsKana` | the group's source must be kana only |
 | `groups[].onMissing` | `skip` when the reader may not report the group |
 | `loneGlyphs[]` | `{ source, allowed }`: exactly one of `allowed`, exactly one glyph |
+| `labels[].region` | `[x, y, width, height]` in page pixels; every label whose centre is inside is checked |
+| `labels[].lean` | the label's rotation in degrees, clockwise, with `leanTolerance` (default 4) |
+| `labels[].em` | the source glyph size in page pixels, with `emTolerance` (default 0.3) |
+| `labels[].source` | regex matched against a group's source; only that group's labels are checked |
+| `labels[].onMissing` | `skip` when the group or its label may not be reported |
+| `labels[].emMaxGlyphs` | a longer label skips the font rule (it is a merged line, not a glyph measurement) |
 | `sources.mustNotMatch` | no group's source may contain these |
+| `oneInk` | no piece of ink is read twice: no two overlapping lines with the same word, no line that is the join of the lines it covers, no two groups over one block |
+| `maxRepeat` | no translation may repeat a run of this many glyphs of itself |
 | `erase.maxUncoveredShare` | share of strokes under a label that may survive |
 | `effort` | level for this case; the run's `--effort` overrides it |
+
+`labels` measures what was drawn, not what the reader said: the reader answers
+`direction: "v"` and no lean for a visibly tilted column, so the pipeline has to
+measure the ink itself. The rule also fails two labels that cover more than 40%
+of one another, which is the sign of two columns sharing one box.
+
+`oneInk` measures the reading, and it is the one invariant here that does not
+depend on the model at all: the blocks, the lines and the groups either describe
+the same ink twice or they do not. `maxRepeat` measures the translation and is
+the tolerant half: the threshold sits above a phrase a speaker may say twice on
+purpose (我愛你…我愛你 is four glyphs), so a repeat long enough to trip it means
+the source carried the text twice.
 
 ## The loop that produces a case
 
 `/tool--loop` is the general front door: it asks what to change, how to verify it
 and what counts as done, turns that answer into a check, and adds the check here as
-a case before iterating. The prompt below is the repo-specific version of the same
-request, for when a fix is already made and only the case is missing.
+a case before iterating. Each loop leaves a record under [docs/loops/](loops/):
+the criterion, the baseline, one row per round and what the user's artifacts
+changed — [the label drift loop](loops/2026-11-18-01-label-drift.md),
+[the incline loop](loops/2026-11-18-02-incline-and-font.md),
+[the lean-sign loop](loops/2026-11-18-03-incline-sign.md) and
+[the three-columns loop](loops/2026-11-18-04-three-columns.md) are the worked
+example. The prompt below is the repo-specific version of the same request, for
+when a fix is already made and only the case is missing.
 
 ## Asking an agent for a case
 

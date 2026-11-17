@@ -20,6 +20,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { DEFAULT_REASONING_EFFORT } from '../src/shared/constants.ts';
+import { applyInclination } from '../src/lib/ocr/cloudOcr.ts';
 import { createCanvas, loadImage, prepareOrt, readApiKey } from './harness/env.mjs';
 import { dataUrlBytes, runPage } from './harness/page.mjs';
 import { spokenGlyphs } from '../src/lib/loneGlyph.ts';
@@ -106,6 +107,153 @@ async function canvasOf(dataUrl) {
     return canvas;
 }
 
+/**
+ * The text of a box with the marks that carry no sound removed.
+ *
+ * A caption read twice comes back as 人生の負け組だ… and 人生の負け組だ, and the
+ * ellipsis is the reader's, not a second line of text. Width forms are folded
+ * for the same reason the reader folds them: この２人 and この2人 are one line.
+ */
+const PUNCTUATION = /[\s\u3000、。！？…‥「」『』（）()・,.!?;:—―-]/gu;
+
+function inkText(text) {
+    return text.normalize('NFKC').replace(PUNCTUATION, '');
+}
+
+function areaOf(box) {
+    return box.width * box.height;
+}
+
+/** How much of the smaller box the two boxes share, 0 to 1. */
+function sharedShare(left, right) {
+    const width = Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x);
+    const height = Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y);
+    if (width <= 0 || height <= 0) return 0;
+    return (width * height) / Math.min(areaOf(left), areaOf(right));
+}
+
+/** The order the lines of one block are read in: down, and right to left. */
+function readingOrder(lines) {
+    return [...lines].sort((left, right) => (
+        left.direction === 'vertical' || right.direction === 'vertical'
+            ? (right.x - left.x) || (left.y - right.y)
+            : (left.y - right.y) || (left.x - right.x)
+    ));
+}
+
+/**
+ * The longest run of glyphs one string repeats.
+ *
+ * A group is translated once. When its answer carries the same phrase twice,
+ * the source carried the phrase twice: a 花岡修太郎 三十九歳 / 人生失敗組啦 that
+ * the page had already read. A phrase repeated on purpose (我愛你…我愛你) is
+ * four glyphs, which is why the case's threshold is above that.
+ */
+function longestRepeat(text) {
+    const glyphs = [...text];
+    let longest = 0;
+    for (let from = 0; from < glyphs.length; from += 1) {
+        for (let at = from + 1; at < glyphs.length; at += 1) {
+            let run = 0;
+            while (at + run < glyphs.length && glyphs[from + run] === glyphs[at + run]) run += 1;
+            if (run > longest) longest = run;
+        }
+    }
+    return longest;
+}
+
+/**
+ * Two translations on one piece of ink, one translation made of two.
+ *
+ * The detector's blk head can hand back a block nested inside another block's
+ * box; each block is read on its own, so the inner columns are read twice and
+ * the outer block joins two of them into a line of its own. Every reading is
+ * true and only one of them may reach the page: the same ink, translated once.
+ */
+function oneInkFailures(page) {
+    const failures = [];
+    const lines = (page.detection.boxes ?? [])
+        .filter((box) => box.text.trim().length > 0 && box.kind !== 'sfx')
+        .map((box) => ({ ...box, text: inkText(box.text) }))
+        .filter((box) => box.text.length > 0);
+
+    for (let left = 0; left < lines.length; left += 1) {
+        for (let right = left + 1; right < lines.length; right += 1) {
+            const a = lines[left];
+            const b = lines[right];
+            if (sharedShare(a, b) < 0.3) continue;
+            if (a.text !== b.text) continue;
+            failures.push(`${JSON.stringify(a.text)} is read twice, at `
+                + `${Math.round(a.x)},${Math.round(a.y)} and ${Math.round(b.x)},${Math.round(b.y)}`);
+        }
+    }
+
+    // A joined line is the same ink as the run of columns it covers: the
+    // reader read 花岡修太郎 and 三十九歳 off one block's grid, and the other
+    // block joined them into 花岡修太郎 三十九歳. A window of the overlap in
+    // reading order is the run; a window is used rather than every overlap
+    // because a line also overlaps its neighbours in the next column.
+    for (const line of lines) {
+        const covered = readingOrder(lines.filter((other) => other !== line && sharedShare(line, other) >= 0.3));
+        for (let from = 0; from < covered.length; from += 1) {
+            let joined = '';
+            for (let to = from; to < covered.length; to += 1) {
+                joined += covered[to].text;
+                if (to === from) continue;
+                if (joined === line.text) {
+                    failures.push(`${JSON.stringify(line.text)} at ${Math.round(line.x)},${Math.round(line.y)} `
+                        + `is the join of ${JSON.stringify(covered.slice(from, to + 1).map((one) => one.text))} `
+                        + `and is read twice`);
+                }
+            }
+        }
+    }
+
+    // Two groups over one block put two labels on the same columns. A merged
+    // balloon is split by column gap before translation, so its groups do not
+    // overlap; an overlap this large is one block read as two.
+    const groups = page.detection.groups ?? [];
+    for (let left = 0; left < groups.length; left += 1) {
+        for (let right = left + 1; right < groups.length; right += 1) {
+            const share = sharedShare(groups[left], groups[right]);
+            if (share < 0.6) continue;
+            failures.push(`${JSON.stringify(groups[left].lines.join(''))} and `
+                + `${JSON.stringify(groups[right].lines.join(''))} are two groups on one block `
+                + `(${Math.round(share * 100)}% of the smaller box shared)`);
+        }
+    }
+    return failures;
+}
+
+/**
+ * The reader's lean must never rotate a label.
+ *
+ * It answered `lean: -20` for a column that leaned +5, and a build that used it
+ * drew the TV speech in the wrong direction. The geometry has to come from the
+ * ink; with no mask there is no angle, not the reader's guess.
+ */
+function inclineSelfTest() {
+    const region = {
+        x: 312,
+        y: 580,
+        width: 78,
+        height: 155,
+        text: '…',
+        direction: 'v',
+        columns: 1,
+        rows: 1,
+        boxIds: [1],
+        angle: -20 * Math.PI / 180,
+        glyphSize: 30,
+        kind: 'chat',
+    };
+    applyInclination([region], [{ x: 312, y: 580, width: 78, height: 155 }], null);
+    if (Math.abs(region.angle ?? 0) >= 0.01) {
+        throw new Error(`The reader's lean still rotates a label: ${((region.angle ?? 0) * 180 / Math.PI).toFixed(1)}deg`);
+    }
+    console.log('[selftest] a reader lean with no mask leaves the label upright');
+}
+
 function checkCase(page, testCase) {
     const failures = [];
     const groups = page.detection.groups.map((group, index) => ({
@@ -119,6 +267,18 @@ function checkCase(page, testCase) {
         if (group.answer.length > 0 && KANA.test(group.answer)) {
             failures.push(`kana in the translation of ${JSON.stringify(group.source)}: `
                 + `${JSON.stringify(group.answer)}`);
+        }
+    }
+
+    if (testCase.oneInk) failures.push(...oneInkFailures(page));
+
+    if (testCase.maxRepeat) {
+        for (const group of groups) {
+            const repeat = longestRepeat(inkText(group.answer));
+            if (repeat >= testCase.maxRepeat) {
+                failures.push(`${JSON.stringify(group.answer)} for ${JSON.stringify(group.source)} repeats `
+                    + `${repeat} glyphs: the source held that text twice`);
+            }
         }
     }
 
@@ -138,7 +298,7 @@ function checkCase(page, testCase) {
 
     for (const rule of testCase.groups ?? []) {
         const pattern = rule.source ? new RegExp(rule.source) : null;
-        const matches = page.detection.groups.map((group, index) => ({ ...groups[index], box: group }))
+        const matches = page.detection.groups.map((group, index) => ({ ...groups[index], box: group, lines: group.lines.length }))
             .filter((group) => {
                 if (rule.at) {
                     const [x, y] = rule.at;
@@ -170,6 +330,10 @@ function checkCase(page, testCase) {
                 failures.push(`the text of the bubble at ${JSON.stringify(rule.at)} is `
                     + `${JSON.stringify(match.source)}, not the kana the reader had to correct`);
             }
+            if (rule.minLines && match.lines < rule.minLines) {
+                failures.push(`${JSON.stringify(match.source)} has ${match.lines} line(s), not ${rule.minLines}: `
+                    + `the reader did not split the block into its columns`);
+            }
             if (rule.maxGlyphs && spokenGlyphs(match.answer).length > rule.maxGlyphs) {
                 failures.push(`${JSON.stringify(match.answer)} for ${JSON.stringify(match.source)} is a phrase, `
                     + `not the short sound the source is`);
@@ -182,6 +346,95 @@ function checkCase(page, testCase) {
                 if (match.answer.includes(word)) {
                     failures.push(`${JSON.stringify(match.answer)} for ${JSON.stringify(match.source)} `
                         + `contains ${JSON.stringify(word)}`);
+                }
+            }
+        }
+    }
+
+    // A leaned block must be drawn leaned and at the source glyph size. The
+    // reader answers direction "v" without a lean for a tilted column, so the
+    // label geometry is the pipeline's job: this compares what was drawn with
+    // the ink it replaced, not with what the model said.
+    for (const rule of testCase.labels ?? []) {
+        let selected = page.job.items;
+        if (rule.region) {
+            const [x, y, width, height] = rule.region;
+            selected = selected.filter((item) => {
+                const cx = item.x + item.width / 2;
+                const cy = item.y + item.height / 2;
+                return cx >= x && cx <= x + width && cy >= y && cy <= y + height;
+            });
+        }
+        if (rule.source) {
+            const pattern = new RegExp(rule.source);
+            const ids = new Set(page.detection.groups
+                .map((group, index) => ({ group, index }))
+                .filter((entry) => pattern.test(entry.group.lines.join('')))
+                .map((entry) => entry.index));
+            if (ids.size === 0 && rule.onMissing !== 'skip') {
+                failures.push(`no group matches ${JSON.stringify(rule.source)}`);
+                continue;
+            }
+            selected = selected.filter((item) => item.groupId !== undefined && ids.has(item.groupId));
+        }
+        // A horizontal number plate can sit in the same block as a leaned
+        // column (31 above 回卒業証書授). It is not the thing this rule is
+        // about, so a label with no CJK glyph is left to the other checks.
+        const leaned = selected.filter((item) => /[\u3400-\u9fff]/u.test(item.text));
+        if (rule.minCount && leaned.length < rule.minCount && leaned.length > 0) {
+            failures.push(`${leaned.length} label(s) in the region, not ${rule.minCount}: `
+                + `the block did not become ${rule.minCount} columns`);
+        }
+        if (leaned.length === 0) {
+            // The banner is not reported on every run: the reader sometimes
+            // reads only its top, and then the label lands above this region.
+            // The TV speech is the mandatory half of the case; the banner is
+            // checked when it is there.
+            if (rule.onMissing === 'skip') {
+                console.log(`   (skipped the label region ${JSON.stringify(rule.region)}: nothing drawn there this run)`);
+                continue;
+            }
+            failures.push(`no label in the region ${JSON.stringify(rule.region)}`);
+            continue;
+        }
+        for (const item of leaned) {
+            if (rule.lean !== undefined) {
+                const deg = (item.angle ?? 0) * 180 / Math.PI;
+                const tolerance = rule.leanTolerance ?? 4;
+                if (Math.abs(deg - rule.lean) > tolerance) {
+                    failures.push(`${JSON.stringify(item.text)} is drawn at ${deg.toFixed(1)}deg, `
+                        + `not ${rule.lean}deg (+-${tolerance})`);
+                }
+            }
+            if (rule.em !== undefined) {
+                // A reader run can put every column of the TV speech into one
+                // entry, so the translation is squeezed into one line at a
+                // fraction of the source size. That is a layout failure, not a
+                // glyph measurement; the glyph rule applies to a label that is
+                // one column, and a long merged label is left to the angle.
+                const glyphs = spokenGlyphs(item.text).length;
+                const merged = rule.emMaxGlyphs !== undefined && glyphs > rule.emMaxGlyphs;
+                if (!merged) {
+                    const tolerance = rule.emTolerance ?? 0.3;
+                    const ratio = item.fontSize / rule.em;
+                    if (Math.abs(ratio - 1) > tolerance) {
+                        failures.push(`${JSON.stringify(item.text)} is drawn at ${item.fontSize}px, `
+                            + `not the ${rule.em}px glyph (+-${Math.round(tolerance * 100)}%)`);
+                    }
+                }
+            }
+        }
+        for (let left = 0; left < leaned.length; left += 1) {
+            for (let right = left + 1; right < leaned.length; right += 1) {
+                const a = leaned[left];
+                const b = leaned[right];
+                const overlapWidth = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+                const overlapHeight = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+                if (overlapWidth <= 0 || overlapHeight <= 0) continue;
+                const share = (overlapWidth * overlapHeight) / Math.min(a.width * a.height, b.width * b.height);
+                if (share > 0.4) {
+                    failures.push(`${JSON.stringify(a.text)} and ${JSON.stringify(b.text)} overlap on `
+                        + `${(share * 100).toFixed(0)}% of one label: two columns share one box`);
                 }
             }
         }
@@ -207,6 +460,7 @@ function checkCase(page, testCase) {
 }
 
 async function main() {
+    inclineSelfTest();
     const options = args();
     const manifest = JSON.parse(readFileSync(resolve(ROOT, 'fixtures/regression.json'), 'utf8'));
     const cases = manifest.cases.filter((testCase) => (

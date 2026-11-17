@@ -209,49 +209,48 @@ The detector ships a third head besides `det` and `seg`: `blk`, a region head th
 #### How A Page Is Read {#how-a-page-is-read}
 
 1. The detector returns the block boxes, the `det` plane and the `seg` plane. Blocks are filtered at score 0.35, non maximum suppressed at 0.35 and capped at 96. The det line extraction is skipped entirely, so no det box takes part in detection.
-2. One crop per block is cut, upscaled, and given a grid before it goes to the reader, at 96 pixels on the short side, six requests in flight. The crop is the BLK box with a margin, grown as far as it must be to hold every detector box drawn on it: a box cut by the crop edge is one the reader tends to skip, and the column it held is then translated nowhere. The debug panel prints the rectangle that was cut, in page pixels, beside the BLK box and draws it on the preview as a dashed violet outline.
-3. The model answers with the regions inside that block, in cells of the drawn grid:
+2. One crop per block is cut, upscaled to 440 pixels on the short side, and given a grid and a numbered blue rectangle per detected line before it goes to the reader, six requests in flight. The crop is the BLK box with a margin, grown as far as it must be to hold every detector box drawn on it: a box cut by the crop edge is one the reader tends to skip, and the column it held is then translated nowhere. The crop the reader is shown is the erase box plus a ruler strip on the top and the left; the erase area is computed from the box alone, so growing it for the numbers does not change what is erased. The debug panel prints the rectangle that was cut, in page pixels, beside the BLK box and draws it on the preview as a dashed violet outline.
+3. The model answers with the regions inside that block, naming the rectangle that holds each one:
 
 ```json
-{"regions":[{"text":"…","type":"chat","direction":"v","x":12,"y":2,"width":5,"height":28}]}
+{"regions":[{"text":"…","type":"chat","direction":"v","box":2,"x":1035,"y":133,"width":28,"height":89}]}
 ```
 
 Reading is perception and stops there: it transcribes the text and places it, and never translates. The reader runs at no thinking at all, because a chain of thought over glyphs only adds latency to every block.
 
-The crop also carries the detector's line boxes, drawn in blue, and the prompt makes them the definition of text: **only what sits inside a blue rectangle is a line**, and everything outside every rectangle is artwork or handwriting that must not be reported, translated or allowed to widen a box. The det head is not a box source in this path — the crop is the BLK box, grown only as far as it must be to hold the boxes it draws — but its line boxes are the reader's evidence of what the page intends as text, which a model cannot otherwise tell from a hand drawn formula in the same panel.
+The crop also carries the detector's line boxes, drawn in blue and numbered in green above their top left corner, and the prompt makes them the definition of text: **only what sits inside a blue rectangle is a line**, and everything outside every rectangle is artwork or handwriting that must not be reported, translated or allowed to widen a box. Numbering them is what stopped the drift: a model asked *where* a line sits measures it badly — 20 page pixels out at best, a whole column at worst — while naming *which* rectangle a line is in is a choice, and the rectangle is already the ink. The det head is not a box source in this path — the crop is the BLK box, grown only as far as it must be to hold the boxes it draws — but its line boxes are the reader's evidence of what the page intends as text, which a model cannot otherwise tell from a hand drawn formula in the same panel.
 
 Furigana stays out of the text. The prompt names the reading kana printed beside kanji, forbids merging them into `text`, and skips a region that holds only furigana. A reader still reports one now and then, and a reported reading is a line with its own translation, which is how one sentence came back as two identical columns. So the mapper drops any short kana entry whose box sits inside a wider column's own band: that is what a reading looks like, and a real line never shares another line's band. A short kana column *beside* a box is a different case and is still folded into its neighbour.
 
 Handwriting is excluded for the same reason and a costlier one. A page can have a printed column and a hand drawn formula side by side, and a reader that reads the formula as part of the column returns a box that covers both: the label then sits off the column, the erase covers paper that held no text, and the translation carries digits that were never dialogue. The prompt calls hand drawn marks artwork, keeps them out of `text` and out of the box, and says a printed column keeps its own width. Small kana that belong to a word, such as the `っ` in `いって`, stay. A `ruby` field can carry the reading for inspection, but nothing downstream reads it.
 
-There is one entry per text line, never one entry for two columns. `x` and `y` are the cell holding the line's top left corner, `width` and `height` its size in cells. Every one of them is a whole cell, so a box always starts and ends on a grid line; the parser rounds anything else to the nearer line.
+There is one entry per text line, never one entry for two columns. `box` is the number printed on the rectangle that holds the line, and it is the position: the parser takes the frame from that rectangle, not from any coordinate the model wrote. `x` and `y` are page pixels read off the numbers printed on the grid, and they are only a fallback for a crop whose numbers could not be read — a model that answers them mixes the units often enough that they cannot be the position.
 
 #### The Drawn Grid {#the-drawn-grid}
 
-The crop carries a grid when the model sees it. Every line is numbered: the numbers along the top edge are blue and count x, the ones along the left edge are red and count y, and every fifth line is drawn thicker. One cell is about a twentieth of the crop's long side, which is coarse enough that the lines do not bury the kanji and fine enough to place a character; four pixel cells were drawn first and the grid crowded out the text.
+The crop carries a grid when the model sees it, and every line of it carries the page coordinate it sits on: the numbers along the top edge are blue and are that line's x in page pixels, the ones down the left edge are red and are its y, and every fifth line is drawn thicker with its cell index in grey. The column numbers are laid flat and staggered over two rows, because the space between two lines is narrower than a four digit number.
 
-Numbering every line rather than every fifth is what the reader needed. With numbers only at 0 and 5 on the top edge it interpolated badly and answered x 12 on a grid nine columns wide, borrowing the 0 to 20 scale it could see on the left edge; the parser slid that box back to the last column, so the page was right while the answer was not.
+This replaced a grid of twenty cells on the long side, and the reason is the drift. One cell was as wide as a character, and a cell box quantises upward: a 30 pixel glyph touching two 25 pixel cells was answered as two cells wide, which doubled the font and centred the label half a character off its column. At about twenty canvas pixels between lines the grid is a third of a glyph, and printing the page coordinate on each line means the answer needs no multiplication and no counting — the older grid numbered only the edges, and a reader that had to interpolate between 0 and 5 answered a column the grid did not have.
 
-The point of drawing it is that a box stops being a measurement. A fraction of the crop is a number the model invents, and its fractions were wrong often enough that a line landed beside its column. A cell is a line the model can see and a number printed on the image, so the answer is a reading, and the mapping back is one multiplication:
+Turned digits do not work for this. The first version printed the column numbers a quarter turn to fit them, and the reader returned 62 for the line printed 42 and then answered the boxes from an estimate; the same numbers laid flat were read correctly on the first try.
 
-```
-left   = crop.x + x * cell
-top    = crop.y + y * cell
-width  = width * cell
-height = height * cell
-```
-
-`cell` is computed from the crop alone, so the same value the grid was drawn with is the value the answer is mapped with. A box read past the edge of the crop is pulled back inside it.
+A box read as page pixels is taken as it is. An answer in the pixels of the crop image itself is divided by the crop's scale, and an answer in cells is still mapped by multiplication, so a reader that ignores the numbers does not lose the line — but those are fallbacks now, and the frame comes from the named rectangle.
 
 A region that claims to hold two columns of text (`columns` 2) is still cut in two, right to left, because the reader sometimes merges a pair of short columns into one entry.
 
-An answer that still speaks in fractions is accepted, and a leaned line needs them: a grid cannot describe a lean, so `direction: "i"` keeps `left`, `top`, `width` and `height` alongside `angle`. The box the model reports is axis aligned, so the length along the text is the projecting side divided by the cosine or sine of the lean, and the em is that length divided by the character count. The line is stored as a rotated rectangle, with the text direction taken from the angle: above 45 degrees the text reads vertically.
+An answer that still speaks in fractions is accepted as a fallback. A leaned line cannot be described by the axis aligned box alone: the width of that box is the glyph plus the run's whole lean, so a 22 pixel glyph on a 135 pixel column came back as a 78 pixel box and a 57 pixel font.
+
+The reader is asked for `lean` (degrees clockwise from upright) and `em` (one character in page pixels), but it still answers `direction: "v"` and `lean: 0` for the two tilted blocks on the 四十歲 page, and on another run it answered `lean: -20` for a column that leans `+5`. The reader's lean is therefore **not stored on the region at all**: geometry is not something to take from a model that has the sign wrong. Only its `em` is kept, as a second opinion on the glyph size. If the mask gives no measurement the label is left upright, not rotated by the guess.
+
+`leanOfBox` takes the segmentation plane inside the blue rectangle, finds the major axis of the glyph pixels, and folds it against the page axis: a vertical column near -90 degrees is a few degrees off, and those degrees are the lean. The frame is a rectangle of that lean — thickness is the glyph, length is the column run measured along the lean — and the page box is the rotated rectangle's axis aligned bounds. Several entries that name one blue rectangle are split across the reading axis first; one entry that arrived as one character per line is folded back into its column.
+
+The font follows the same measurement. `em` from the reader is one opinion; the interquartile width of the ink across the lean is another. A single column uses the run divided by its characters, floored at 0.85 of that pitch; a merged box uses the narrower of the reader's em and the ink. A leaned line's label is drawn at that glyph size without the 1.2 correction an upright column needs, because the upright width is the column, not the glyph.
 
 #### Where The Font Comes From {#where-the-font-comes-from}
 
-The font is the grid, not a second measurement: the reader says how many cells the character covers and the cell size is known, so the em is that count times the cell. Two cells of a nine pixel grid are an eighteen pixel character, and the label is laid out in the box the reader gave, which is why a translation fills the space the original filled instead of a guessed one.
+The font is the ink, not a second measurement. The frame is the blue rectangle the reader named, so the character's width is the width of that rectangle across the line, and the label is laid out there: a translation fills the space the original filled instead of a guessed one. When the reader names nothing and no box is left to match, the frame falls back to the reader's own box, and the font to that box's side across the line.
 
-An answer in fractions has no cell count, so it falls back to the side across its box, and an inclined line falls back to its own text: the length along the lean divided by the character count. Only a piece cut out of a merged entry loses its cell box, because the entry described several columns and the piece is one of them.
+The same frame is what the placement check measures, against the boxes the detector drew: see [regression.md](regression.md#placement-where-the-label-lands).
 
 When a translation is shorter than the box it fills, the spare room goes into the gaps between the characters, so the label covers the box instead of bunching at its top. The spacing is in em, so it follows the font when the fit shrinks the label.
 
@@ -290,6 +289,16 @@ The reader reports one region per column, and the block path groups regions back
 On the first test page that split one speech into four groups — この2人 / 連れて / 勝手に動かせて / もらうことに / したんだよ — and each group was translated alone: 「帶上這兩個人」「擅自操控我」「決定收下」「是他做的喔」. One sentence, four wrong translations.
 
 The split now also asks whether two columns share a band: if their runs overlap most of the way and they start on the same line of the block, they are columns of one speech whatever the gap says, and the allowance for that gap widens to two and a half character widths. Columns in different balloons sit in different bands, which is the case the splitter exists for.
+
+#### One Piece Of Ink, One Line {#one-piece-of-ink-one-line}
+
+The block head does not always answer with disjoint boxes. On the page with the 花岡修太郎 name plate it answered three blocks for two pieces of ink: the plate (`212,958 79x339`), the caption (`99,1228 38x237`), and a loose box (`94,962 193x525`) that covered both. The non maximum suppression is an IoU test, and a container against its child is a small IoU, so the nested pair survives.
+
+Every block is cropped and read on its own, so the plate was read twice. Worse, the loose block's grid was twice the cell size, so it reported 花岡修太郎 and 三十九歳 as one line. Both readings were true, and both reached the page: two groups over the same columns, the caption read twice, and each group's source holding the other block's copy — `花岡修太郎…普通職員 花岡修太郎…`, `人生失敗組啦……人生失敗組啦`. The translator translated what it was given, so the duplication was in the reading, not in the translation.
+
+`dropRepeatedReadings` runs after the reading pass. A block nested inside another block's box is the tighter reading of that ink, so the container's region is dropped when its word is the word of a region inside it, when its word is the join of a run of them, or when it simply lies on one of their boxes — the two grids need not agree on the cell box, and they do not have to agree on the glyph either: the loose block read 三十九歳 where the tight one read 二十九歳. Two blocks that are not nested repeat each other only when their boxes overlap and the words match, so an identical line in the next balloon is left alone. A block whose regions are all repeats is left with none and is dropped by the existing filter, so it neither asks for a translation nor gates the erase.
+
+The invariant is asserted, not eyeballed: `npm run regression -- name-plate` fails when one piece of ink is read twice, when two groups cover one block, or when one translation repeats five or more glyphs of itself.
 
 #### What Inpainting Uses {#what-inpainting-uses}
 
