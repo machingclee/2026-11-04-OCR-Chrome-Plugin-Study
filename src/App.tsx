@@ -783,7 +783,7 @@ export default function App() {
                             Debug Client
                         </button>
                     </div>
-                    <span className="shrink-0 rounded bg-[#ece4d9] px-2.5 py-1 text-xs font-medium text-[#7a5c43]">v1.1.1</span>
+                    <span className="shrink-0 rounded bg-[#ece4d9] px-2.5 py-1 text-xs font-medium text-[#7a5c43]">v1.1.2</span>
                 </div>
                 <div className="flex w-full flex-wrap items-center gap-2">
                     <span className="text-xs font-medium text-[#6d523b]">Translation</span>
