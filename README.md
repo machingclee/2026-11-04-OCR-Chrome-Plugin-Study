@@ -1,15 +1,6 @@
 # Comic Translator Extension
 
-All technical details are documented in the full walkthrough: [Build a Chrome Extension From Scratch: From an Empty Folder to a Page Translated In Place](https://www.machingclee.com/blog/article/Build-a-Chrome-Extension-From-Scratch-From-an-Empty-Folder-to-a-Page-Translated-In-Place)
 
-
-<img width="600" alt="image" src="https://github.com/user-attachments/assets/8034b371-9d26-4c65-b00a-eac93e50b9bf" />
-
-<img width="600" alt="image" src="https://github.com/user-attachments/assets/222839f8-9ab9-4b2a-9d03-c38a6045b865" />
-
-
-
-https://github.com/user-attachments/assets/ef98c1e0-05fe-49b5-a218-e226f141de7f
 
 
 
@@ -18,6 +9,26 @@ A Manifest V3 extension built with React 18 and TypeScript, bundled by Vite.
 It reads the comic image on the current page, finds the text lines, recognises
 what each one says, groups them by speech balloon, and places the translation as
 absolutely positioned text over the image in the page.
+
+All technical details are documented in the full walkthrough: [Build a Chrome Extension From Scratch: From an Empty Folder to a Page Translated In Place](https://www.machingclee.com/blog/article/Build-a-Chrome-Extension-From-Scratch-From-an-Empty-Folder-to-a-Page-Translated-In-Place)
+
+
+## Inpainting and Translation
+
+<img width="600" alt="image" src="https://github.com/user-attachments/assets/8034b371-9d26-4c65-b00a-eac93e50b9bf" />
+
+<img width="600" alt="image" src="https://github.com/user-attachments/assets/222839f8-9ab9-4b2a-9d03-c38a6045b865" />
+
+## Video (Speed of ONNX box detection + OCR + ClourOCR via LLM + final LLM Transation)
+
+https://github.com/user-attachments/assets/ef98c1e0-05fe-49b5-a218-e226f141de7f
+
+**Remark.** Only images recognized as text region will be sent to LLM, it is not reading the entire page, for example:
+
+<img width="283" height="366" alt="image" src="https://github.com/user-attachments/assets/06eb110a-6a1f-4f59-a4e6-40fec7511a83" />
+
+Each image is cropped by yellow rectangles before being sent to the LLM for the OCR process, which significantly reduces the number of tokens needed just for the OCR process.
+
 
 ## Install and build
 
