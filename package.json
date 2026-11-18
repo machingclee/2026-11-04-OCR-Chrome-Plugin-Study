@@ -1,7 +1,7 @@
 {
   "name": "comic-translator-extension",
   "private": true,
-  "version": "0.5.0",
+  "version": "1.1.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,7 +11,9 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json",
     "preview": "vite preview",
     "render:page": "esbuild scripts/render-page.mjs --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=out/render-page.bundle.mjs && node out/render-page.bundle.mjs",
-    "prompt:lab": "esbuild scripts/prompt-lab.mjs --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=out/prompt-lab.bundle.mjs && node out/prompt-lab.bundle.mjs"
+    "prompt:lab": "esbuild scripts/prompt-lab.mjs --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=out/prompt-lab.bundle.mjs && node out/prompt-lab.bundle.mjs",
+    "regression": "esbuild scripts/regression.mjs --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=out/regression.bundle.mjs && node out/regression.bundle.mjs",
+    "grid:drift": "esbuild scripts/grid-drift.mjs --bundle --platform=node --format=esm --packages=external --log-level=warning --outfile=out/grid-drift.bundle.mjs && node out/grid-drift.bundle.mjs"
   },
   "dependencies": {
     "onnxruntime-web": "^1.31.1",

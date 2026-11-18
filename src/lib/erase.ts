@@ -525,9 +525,38 @@ function maskOfBlock(page: ImageData, planes: ErasePlanes, box: EraseBox): BoxMa
     ));
 
     const seed = new Uint8Array(total);
+    let seeded = 0;
     for (let y = 0; y < height; y += 1) {
         for (let x = 0; x < width; x += 1) {
-            if (planeAt(planes.det, area.x0 + x + 0.5, area.y0 + y + 0.5) >= DET_FLOOR) seed[y * width + x] = 1;
+            if (planeAt(planes.det, area.x0 + x + 0.5, area.y0 + y + 0.5) < DET_FLOOR) continue;
+            seed[y * width + x] = 1;
+            seeded += 1;
+        }
+    }
+    // The det plane is the mask, but it can be silent inside a block the reader
+    // read: a small balloon, a caption on a light screentone. With no band there
+    // is nothing to unclip and the block was never erased at all — the Japanese
+    // stayed under the translation. Where the plane says nothing and the block is
+    // mostly paper, its ink is the text, and the ink seeds the mask instead.
+    if (seeded === 0) {
+        const areaLumas: number[] = [];
+        for (let y = 0; y < height; y += 1) {
+            for (let x = 0; x < width; x += 1) {
+                const offset = ((area.y0 + y) * page.width + area.x0 + x) * 4;
+                areaLumas.push(luma(page.data, offset));
+            }
+        }
+        areaLumas.sort((left, right) => left - right);
+        const ownPaper = areaLumas[areaLumas.length >> 1] ?? 255;
+        const paperShare = areaLumas.filter((value) => Math.abs(value - ownPaper) <= FLAT_SPREAD).length
+            / Math.max(1, areaLumas.length);
+        if (paperShare >= 0.55) {
+            for (let y = 0; y < height; y += 1) {
+                for (let x = 0; x < width; x += 1) {
+                    const offset = ((area.y0 + y) * page.width + area.x0 + x) * 4;
+                    if (Math.abs(luma(page.data, offset) - ownPaper) > BLOCK_INK_STEP) seed[y * width + x] = 1;
+                }
+            }
         }
     }
     // A band that belongs to kept text (a sound effect, a line with no

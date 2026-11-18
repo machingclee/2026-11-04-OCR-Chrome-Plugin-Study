@@ -1,0 +1,9 @@
+{
+    "description": "Pages whose labels must sit on the ink. The label frame is measured against the detector's line boxes, drawn on the reader's crop in blue: the frame's centre must be within 8 page pixels of the ink's on both axes, and its width and height within 25%. Run with: npm run grid:drift -- --all",
+    "tolerance": 8,
+    "size": 0.25,
+    "pages": [
+        "fixtures/page-wizard.jpg",
+        "fixtures/page-office.jpg"
+    ]
+}

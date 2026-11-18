@@ -1,6 +1,6 @@
 import type { Box, TextMask } from './types';
 
-const MODEL_SIZE = 1024;
+export const MODEL_SIZE = 1024;
 const GLYPH = 0.25;
 /** seg above this is a stroke, so a paper sample skips it. */
 const GLYPH_PAPER = 0.3;

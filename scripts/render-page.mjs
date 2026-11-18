@@ -21,14 +21,21 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, extname, resolve } from 'node:path';
 
-import { DEFAULT_REASONING_EFFORT, OFFSCREEN_TARGET } from '../src/shared/constants.ts';
 import { createCanvas, loadImage, prepareOrt, readApiKey } from './harness/env.mjs';
-import { runDetection, runInpaint } from '../src/offscreen/main.ts';
-import { translateGroups } from '../src/lib/translationJob.ts';
-import { requestDeepSeek } from '../src/lib/ocr/cloudOcr.ts';
+import {
+    CACHE_VERSION,
+    cacheableDetection,
+    cropTo,
+    dataUrlBytes,
+    imageDataUrl,
+    overlaps,
+    readCrop,
+    rectOf,
+    runPage,
+} from './harness/page.mjs';
 import { isLoneGlyph, preserveLoneName, spokenGlyphs } from '../src/lib/loneGlyph.ts';
+import { DEFAULT_REASONING_EFFORT } from '../src/shared/constants.ts';
 
-/** The Traditional form a lone source glyph may come back as. */
 const TRADITIONAL = { 円: '圓' };
 
 const FONT_FAMILY = '"PingFang TC", "Heiti TC", "Hiragino Sans", "Arial Unicode MS", sans-serif';
@@ -101,186 +108,6 @@ function selfTest() {
     console.log(`[selftest] ${cases.length} lone-glyph case(s) hold`);
 }
 
-const rectOf = (box) => ({ x: box.x, y: box.y, width: box.width, height: box.height });
-const overlaps = (left, right) => (
-    left.x < right.x + right.width && right.x < left.x + left.width
-    && left.y < right.y + right.height && right.y < left.y + left.height
-);
-const overlapShare = (box, other) => {
-    const width = Math.min(box.x + box.width, other.x + other.width) - Math.max(box.x, other.x);
-    const height = Math.min(box.y + box.height, other.y + other.height) - Math.max(box.y, other.y);
-    if (width <= 0 || height <= 0) return 0;
-    return (width * height) / Math.min(box.width * box.height, other.width * other.height);
-};
-
-/**
- * The rectangles to erase, built the way the service worker builds them
- * (src/background/index.ts, runTranslation): only a block that carries a label
- * is erased, and only the area its own lines and labels cover, so a column the
- * reader missed cannot leave a blank balloon.
- */
-function eraseBoxesFor(detection, job) {
-    const areaOf = (block) => {
-        let minX = Number.POSITIVE_INFINITY;
-        let minY = Number.POSITIVE_INFINITY;
-        let maxX = Number.NEGATIVE_INFINITY;
-        let maxY = Number.NEGATIVE_INFINITY;
-        const include = (box) => {
-            if (!overlaps(box, block)) return;
-            minX = Math.min(minX, box.x);
-            minY = Math.min(minY, box.y);
-            maxX = Math.max(maxX, box.x + box.width);
-            maxY = Math.max(maxY, box.y + box.height);
-        };
-        for (const box of job.erase) include(box);
-        for (const box of job.labelled) include(box);
-        return maxX > minX && maxY > minY
-            ? { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
-            : null;
-    };
-    const readable = (detection.blockReadings ?? [])
-        .filter((reading) => reading.regions.some((region) => region.kind !== 'sfx' && region.text.trim().length > 0));
-    const dialogueBlocks = readable
-        .filter((reading) => job.labelled.some((box) => overlaps(box, reading.block)))
-        .map((reading) => ({
-            ...(areaOf(reading.block) ?? rectOf(reading.block)),
-            kind: 'block',
-            keep: [
-                ...reading.regions
-                    .filter((region) => region.kind === 'sfx')
-                    .map(rectOf),
-                ...job.keep.filter((line) => overlaps(line, reading.block)),
-            ],
-        }));
-    const fallback = readable.length > 0
-        ? []
-        : job.erase
-            .map((box) => ({ ...box, kind: 'region' }))
-            .filter((box) => !job.keep.some((line) => overlapShare(line, box) > 0.5));
-    return [...dialogueBlocks, ...fallback];
-}
-
-const dataUrlBytes = (dataUrl) => Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64');
-
-/**
- * One label, painted the way content-script/overlay.ts paints it: an upright
- * column is one glyph per row, a column wide, centred on its slot; horizontal
- * text wraps inside its box. The halo is the white stroke the content script
- * puts under the glyphs.
- */
-function paintLabel(context, item) {
-    const size = Math.max(7, Math.round(item.fontSize ?? 12));
-    const centreX = item.x + item.width / 2;
-    context.save();
-    context.font = `${size}px ${FONT_FAMILY}`;
-    context.textBaseline = 'middle';
-    context.textAlign = 'center';
-    context.lineJoin = 'round';
-    context.lineWidth = Math.max(2, Math.round(size * 0.2));
-    context.strokeStyle = '#ffffff';
-    context.fillStyle = item.color ?? '#111111';
-    if (Math.abs(item.angle ?? 0) >= 0.01) {
-        const centreY = item.y + item.height / 2;
-        context.translate(centreX, centreY);
-        context.rotate(item.angle);
-        context.translate(-centreX, -centreY);
-    }
-    const draw = (text, x, y) => {
-        context.strokeText(text, x, y);
-        context.fillText(text, x, y);
-    };
-    if (item.vertical) {
-        const glyphs = [...item.text].filter((character) => character !== '\u2060' && !/\s/u.test(character));
-        glyphs.forEach((glyph, index) => {
-            draw(glyph, centreX, item.y + index * size + size / 2);
-        });
-    } else {
-        const lines = [];
-        let current = '';
-        for (const glyph of item.text) {
-            const next = current + glyph;
-            if (context.measureText(next).width > item.width && current.length > 0) {
-                lines.push(current);
-                current = glyph;
-            } else {
-                current = next;
-            }
-        }
-        if (current.length > 0) lines.push(current);
-        const top = item.y + Math.max(0, (item.height - lines.length * size) / 2) + size / 2;
-        lines.forEach((line, index) => draw(line, centreX, top + index * size));
-    }
-    context.restore();
-}
-
-/**
- * The page as the content script shows it: the original image, the erased
- * cutout over it (transparent except where a stroke was painted out), then the
- * labels. The cutout is an overlay, not a replacement — drawing it as the base
- * turns the whole page into paper.
- */
-async function paintPage(originalDataUrl, erasedDataUrl, width, height, items, path) {
-    const canvas = createCanvas(width, height);
-    const context = canvas.getContext('2d');
-    context.drawImage(await loadImage(dataUrlBytes(originalDataUrl)), 0, 0, width, height);
-    if (erasedDataUrl) {
-        context.drawImage(await loadImage(dataUrlBytes(erasedDataUrl)), 0, 0, width, height);
-    }
-    for (const item of items) paintLabel(context, item);
-    writeFileSync(path, canvas.toBuffer('image/png'));
-    return canvas;
-}
-
-function cropTo(canvas, rect, scale, path) {
-    const out = createCanvas(Math.round(rect.width * scale), Math.round(rect.height * scale));
-    const context = out.getContext('2d');
-    context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = 'high';
-    context.drawImage(canvas, rect.x, rect.y, rect.width, rect.height, 0, 0, out.width, out.height);
-    if (path) writeFileSync(path, out.toBuffer('image/png'));
-    return out;
-}
-
-/**
- * The detection result, minus the images. A run can be replayed against the
- * same blocks and boxes, which is what makes two prompts comparable: the
- * reader returns slightly different cell boxes every time, and a different
- * grouping changes the translation more than the prompt does.
- */
-const CACHE_VERSION = 1;
-
-function cacheableDetection(detection) {
-    return {
-        version: CACHE_VERSION,
-        imageWidth: detection.imageWidth,
-        imageHeight: detection.imageHeight,
-        groups: detection.groups.map((group) => ({ ...group, maskUrl: undefined })),
-        boxes: detection.boxes,
-        bubbles: (detection.bubbles ?? []).map((bubble) => ({
-            x: bubble.x,
-            y: bubble.y,
-            width: bubble.width,
-            height: bubble.height,
-            paper: bubble.paper,
-            outline: bubble.outline,
-        })),
-        blocks: detection.blocks ?? [],
-        blockReadings: (detection.blockReadings ?? []).map((reading) => ({ ...reading, cropUrl: undefined })),
-    };
-}
-
-async function imageDataUrl(path) {
-    const image = await loadImage(path);
-    const canvas = createCanvas(image.width, image.height);
-    canvas.getContext('2d').drawImage(image, 0, 0);
-    return canvas.toDataURL('image/png');
-}
-
-async function readCrop(key, canvas) {
-    const lines = await requestDeepSeek(key, [canvas.toDataURL('image/jpeg', 0.92)]);
-    return lines.map((line) => line.text);
-}
-
 function parseRect(text) {
     const parts = text.split(',').map(Number);
     if (parts.length !== 4 || parts.some((value) => !Number.isFinite(value))) {
@@ -302,71 +129,37 @@ async function main() {
     const outDir = resolve(options.out);
     mkdirSync(outDir, { recursive: true });
 
-    console.log(`[page] ${imagePath}`);
-    let detection;
+    let cached = null;
     if (options.detection) {
-        const cached = JSON.parse(readFileSync(resolve(options.detection), 'utf8'));
+        cached = JSON.parse(readFileSync(resolve(options.detection), 'utf8'));
         if (cached.version !== CACHE_VERSION) throw new Error('That detection cache is from another version.');
-        detection = {
-            ...cached,
-            ok: true,
-            canInpaint: false,
-            erasedUrl: null,
-            originalUrl: await imageDataUrl(imagePath),
-        };
-        console.log(`[page] replayed detection from ${options.detection}`);
-    } else {
-        detection = await runDetection({
-            target: OFFSCREEN_TARGET,
-            type: 'detect',
-            imageUrl: imagePath,
-            ocr: { provider: 'deepseek', key, effort: 'off' },
-        });
-        if (!detection.ok) throw new Error(detection.error);
-        if (options.saveDetection) {
-            writeFileSync(resolve(options.saveDetection), `${JSON.stringify(cacheableDetection(detection))}\n`);
-            console.log(`[page] detection saved to ${options.saveDetection}`);
-        }
+        cached = { ...cached, ok: true, canInpaint: false, erasedUrl: null, originalUrl: await imageDataUrl(imagePath) };
     }
+    const page = await runPage({
+        imagePath,
+        key,
+        effort: options.effort,
+        erase: options.erase,
+        detection: cached,
+    });
+    const { detection, job, eraseBoxes } = page;
+    console.log(`[page] ${imagePath}`);
     console.log(`[page] ${detection.imageWidth}x${detection.imageHeight}, `
         + `${detection.groups.length} group(s), ${detection.blocks?.length ?? 0} block(s), `
         + `${detection.bubbles.length} balloon(s)`);
-
-    const job = await translateGroups({
-        groups: detection.groups,
-        boxes: detection.boxes,
-        balloons: detection.bubbles,
-        imageWidth: detection.imageWidth,
-        imageHeight: detection.imageHeight,
-        settings: { translator: 'deepseek', deepSeekKey: key, effort: options.effort },
-    });
     console.log(`[page] ${job.used}, ${job.items.length} label(s), ${job.skipped} skipped`);
-
-    let erasedUrl = detection.erasedUrl;
-    let eraseBoxes = [];
-    if (options.erase && detection.canInpaint && job.items.length > 0) {
-        const boxes = eraseBoxesFor(detection, job);
-        eraseBoxes = boxes;
-        const painted = await runInpaint({ target: OFFSCREEN_TARGET, type: 'inpaint', boxes });
-        if (!painted.ok) throw new Error(painted.error);
-        erasedUrl = painted.erasedUrl;
-        console.log(`[page] erased ${boxes.length} box(es): ${painted.erasedUrl ? 'cutout ready' : 'nothing covered'}`);
-        if (options.saveErased && erasedUrl) {
-            writeFileSync(resolve(options.saveErased), dataUrlBytes(erasedUrl));
-            console.log(`[out] ${resolve(options.saveErased)}`);
-        }
+    if (options.saveDetection && !cached) {
+        writeFileSync(resolve(options.saveDetection), `${JSON.stringify(cacheableDetection(detection))}\n`);
+        console.log(`[page] detection saved to ${options.saveDetection}`);
     }
-
-    if (!detection.originalUrl) throw new Error('The detection produced no page image.');
-    const canvas = await paintPage(
-        detection.originalUrl,
-        erasedUrl,
-        detection.imageWidth,
-        detection.imageHeight,
-        job.items,
-        resolve(outDir, `${stem}-translated.png`),
-    );
-    console.log(`[out] ${resolve(outDir, `${stem}-translated.png`)}`);
+    if (options.saveErased && page.erasedUrl) {
+        writeFileSync(resolve(options.saveErased), dataUrlBytes(page.erasedUrl));
+        console.log(`[out] ${resolve(options.saveErased)}`);
+    }
+    const translatedPath = resolve(outDir, `${stem}-translated.png`);
+    page.save(translatedPath);
+    const canvas = page.canvas;
+    console.log(`[out] ${translatedPath}`);
 
     const report = {
         image: imagePath,
