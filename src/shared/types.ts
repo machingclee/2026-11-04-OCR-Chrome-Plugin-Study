@@ -38,7 +38,18 @@ export type BoxData = {
      * reader counted the block's cells, so the translation is spread over that
      * band instead of the guessed line box, which stays tight for erasing.
      */
-    slot?: { x: number; y: number; width: number; height: number };
+    slot?: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+        /**
+         * The frame stuck out of its block and was cut back to it. The label
+         * uses this rectangle even when the line is leaned, because the lean
+         * was measured on the part that is not text.
+         */
+        insideBlock?: boolean;
+    };
 };
 
 /**
@@ -279,6 +290,11 @@ export type BlockReadingData = {
         text: string;
         direction: string;
         kind: string;
+        /**
+         * The reader's own page box for this column, kept when a detector box
+         * was used as the frame. Absent when the reader did not report one.
+         */
+        characters?: { x: number; y: number; width: number; height: number };
     }[];
 };
 

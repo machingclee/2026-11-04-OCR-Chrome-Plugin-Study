@@ -269,6 +269,19 @@ export async function translateGroups(input: TranslationJobInput): Promise<Trans
                 : sortedLines;
         const placedLines = bodyLines.length > 0 ? bodyLines : sortedLines;
         const frameOf = (line: BoxData) => {
+            // A detector box can start above the glyphs and run out of the
+            // block. The part that was cut back to the block is where the
+            // column is drawn; the uncut box is what put the translation
+            // outside the balloon.
+            if (line.slot?.insideBlock) {
+                return {
+                    x: line.slot.x,
+                    y: line.slot.y,
+                    width: line.slot.width,
+                    height: line.slot.height,
+                    ...(Math.abs(line.angle ?? 0) >= 0.01 ? { angle: line.angle } : {}),
+                };
+            }
             const ink = placedFrame(line);
             if (!line.slot || Math.abs(line.angle ?? 0) >= 0.01) return ink;
             // The reader's box is snapped to its cell grid and can land a cell or

@@ -155,22 +155,21 @@
         {
             "id": "incline",
             "image": "fixtures/page-forty.jpg",
-            "note": "A leaned block is still leaned. The reader says direction v with no lean for the TV speech at 320,580 and the 51回卒業証書授 banner at 202,983, so the labels were drawn upright and sized from the axis-aligned box (57px on a 22px glyph, 140px on a 45px glyph). The label must follow the ink's angle and the source glyph size.",
+            "note": "A leaned block is still leaned, its columns are all read, and the labels follow the ink. The reader says direction v with lean 0 for the TV speech at 320,580, and the detector boxes its three columns as one rectangle. On the device the columns are found in the ink and read upright, and that reading goes into the block prompt as a reference, so the speech comes back as three lines instead of two. The labels must lean with the ink (about -16deg, counter-clockwise, not the +5 the run's diagonal measures) and the translation must carry 英雄. The banner's label must be ~60px, the tight column in its 169x358 leaned box, not the 96-160 the axis aligned box gives; the tolerance is wider on that side because a nine character translation is fitted down to 0.6 of it.",
             "labels": [
                 {
                     "region": [
-                        300,
-                        550,
-                        120,
+                        290,
+                        545,
+                        130,
                         220
                     ],
-                    "lean": 5,
-                    "leanTolerance": 4,
-                    "em": 22,
-                    "emTolerance": 0.3,
+                    "lean": -16,
+                    "leanTolerance": 5,
+                    "em": 24,
+                    "emTolerance": 0.35,
                     "emMaxGlyphs": 8,
-                    "source": "やつ|やっ",
-                    "onMissing": "skip"
+                    "minCount": 3
                 },
                 {
                     "region": [
@@ -180,9 +179,94 @@
                         450
                     ],
                     "lean": 15.5,
-                    "leanTolerance": 4,
+                    "leanTolerance": 5,
                     "onMissing": "skip",
-                    "source": "卒業証書|31"
+                    "source": "卒業証書|31",
+                    "em": 60,
+                    "emTolerance": 0.4
+                }
+            ],
+            "groups": [
+                {
+                    "source": "やっ|やつ|ヒーロ|熱いな",
+                    "minLines": 2,
+                    "contains": [
+                        "英雄"
+                    ],
+                    "notContains": [
+                        "還是誰",
+                        "廣森",
+                        "人類",
+                        "一個人的浪漫"
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "font-size",
+            "image": "fixtures/page-325.jpg",
+            "note": "The glyph size is measured from the page, not read off the grid by the model. On this page the reader answered em 44 and then em 13 for the same 27 pixel column in two runs, and a 13 pixel answer drew the label at a third of the source. Each label must be within +-30% of its own column: 27px for the cup speech, 30px for 2カ月後の試験で, 42px for 訓練校を退学してもらいます. The reader's em must not decide any of them.",
+            "labels": [
+                {
+                    "region": [
+                        900,
+                        120,
+                        140,
+                        320
+                    ],
+                    "em": 27,
+                    "emTolerance": 0.3,
+                    "minCount": 2,
+                    "source": "私が直接|指導させ",
+                    "onMissing": "skip"
+                },
+                {
+                    "region": [
+                        525,
+                        115,
+                        80,
+                        250
+                    ],
+                    "em": 30,
+                    "emTolerance": 0.3,
+                    "minCount": 1,
+                    "source": "2カ月後",
+                    "onMissing": "skip"
+                },
+                {
+                    "region": [
+                        480,
+                        870,
+                        80,
+                        470
+                    ],
+                    "em": 42,
+                    "emTolerance": 0.3,
+                    "minCount": 1,
+                    "source": "訓練校",
+                    "onMissing": "skip"
+                }
+            ],
+            "groups": [
+                {
+                    "source": "私が直接|指導させ",
+                    "minLines": 2,
+                    "contains": [
+                        "指導"
+                    ],
+                    "onMissing": "skip"
+                }
+            ]
+        },
+        {
+            "id": "bubble-start",
+            "image": "fixtures/page-shield.jpg",
+            "note": "The two columns in the shield bubble (二人はその隙に / 魔法で攻撃してくれ) were drawn on a detector box that starts above the glyphs, so the translation sat outside the bubble. On the full page that block is BLK 483,1168 66×256; this export is 720×1024, so the same rectangle is 309,748 42×164. The drawn characters of both columns stay inside that rectangle.",
+            "columns": [
+                {
+                    "block": [309, 748, 42, 164],
+                    "count": 2,
+                    "onMissing": "skip"
                 }
             ]
         }
