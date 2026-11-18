@@ -35,7 +35,9 @@ must appear (`contains`, `oneOf`), the words that must not (`notContains`,
 | `erase-321` | `page-321.jpg` | No Japanese under a label: ≤2% of the strokes under any label survive |
 | `erase-324` | `page-324.jpg` | A block whose columns were only partly labelled is still erased |
 | `name-plate` | `page-name.jpg` | One piece of ink is read once: the plate nested in a bigger block is not translated twice |
-| `incline` | `page-forty.jpg` | A leaned block is drawn leaned, at the source glyph size: the TV speech and the 卒業証書 banner, whatever the reader says about the lean |
+| `incline` | `page-forty.jpg` | A leaned block is drawn leaned and counter-clockwise, its columns are all read, and the translation carries 英雄: the TV speech and the 卒業証書 banner |
+| `font-size` | `page-325.jpg` | The label's glyph is measured from the box and the ink, not read off the grid by the reader: 27px ±30% on a 29px column, whatever `em` the reader answers |
+| `bubble-start` | `page-shield.jpg` | The shield bubble's two columns are drawn inside the block; a detector box that starts above the glyphs must not carry the translation out of it |
 
 ## Placement: where the label lands
 
@@ -114,6 +116,8 @@ label on the wrong ink, and the run prints it.
 | `oneInk` | no piece of ink is read twice: no two overlapping lines with the same word, no line that is the join of the lines it covers, no two groups over one block |
 | `maxRepeat` | no translation may repeat a run of this many glyphs of itself |
 | `erase.maxUncoveredShare` | share of strokes under a label that may survive |
+| `columns[].block` | `[x, y, width, height]` in the fixture's page pixels; the group that overlaps it is the one checked, and each drawn column's glyphs must lie inside it |
+| `columns[].count` | that group is drawn as this many columns |
 | `effort` | level for this case; the run's `--effort` overrides it |
 
 `labels` measures what was drawn, not what the reader said: the reader answers
@@ -136,9 +140,11 @@ a case before iterating. Each loop leaves a record under [docs/loops/](loops/):
 the criterion, the baseline, one row per round and what the user's artifacts
 changed — [the label drift loop](loops/2026-11-18-01-label-drift.md),
 [the incline loop](loops/2026-11-18-02-incline-and-font.md),
-[the lean-sign loop](loops/2026-11-18-03-incline-sign.md) and
-[the three-columns loop](loops/2026-11-18-04-three-columns.md) are the worked
-example. The prompt below is the repo-specific version of the same request, for
+[the lean-sign loop](loops/2026-11-18-03-incline-sign.md),
+[the three-columns loop](loops/2026-11-18-04-three-columns.md),
+[the on-device reference loop](loops/2026-11-18-05-onnx-reference.md),
+[the font-size loop](loops/2026-11-18-06-font-from-grid.md) and
+[the banner loop](loops/2026-11-18-07-banner-tight.md) are the worked example. The prompt below is the repo-specific version of the same request, for
 when a fix is already made and only the case is missing.
 
 ## Asking an agent for a case

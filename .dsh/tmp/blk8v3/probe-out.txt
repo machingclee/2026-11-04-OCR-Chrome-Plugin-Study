@@ -1,0 +1,80 @@
+Detector provider: wasm
+[read] block 1: widened an uncertain box [{"x":311.8052884615384,"y":581.8125,"width":78.2572115384616,"height":155.125}] -> [{"x":284.8064950073418,"y":581.8125,"width":105.25600499265818,"height":155.125}]
+[cloud-ocr] deepseek: 1 crops, 1669 input tokens (floor 330)
+[read] deepseek effort off, tokens 92, reasoning 0
+[read] block 2: {"regions":[{"text":"31","type":"name","direction":"v","lean":0,"em":36,"box":1,"x":290,"y":975,"width":45,"height":55},{"text":"回卒業証書授","type":"name","direction":"v","lean":0,"em":45,"box":1,"x":258,"y":1021,"width":63,"height":372}]}
+[grid] block 2: 22 x 49 cells of 9px, 1 line(s)
+[cloud-ocr] deepseek: 1 crops, 1585 input tokens (floor 330)
+[read] deepseek effort off, tokens 137, reasoning 0
+[read] block 1: {"regions":[{"text":"やっぱり","type":"chat","direction":"v","lean":0,"em":33,"box":1,"x":337,"y":576,"width":36,"height":156},{"text":"熱いな…","type":"chat","direction":"v","lean":0,"em":33,"box":1,"x":283,"y":584,"width":36,"height":150},{"text":"ヒロイモノは","type":"chat","direction":"v","lean":0,"em":33,"box":1,"x":205,"y":600,"width":36,"height":216}]}
+[grid] block 1: 22 x 31 cells of 6px, 1 line(s)
+BLOCK {"x":312,"y":580,"width":73,"height":135,"score":0.55}
+BOXES [{"x":284.8064950073418,"y":581.8125,"width":105.25600499265818,"height":155.125}]
+RAW {"regions":[{"text":"やっぱり","type":"chat","direction":"v","lean":0,"em":33,"box":1,"x":337,"y":576,"width":36,"height":156},{"text":"熱いな…","type":"chat","direction":"v","lean":0,"em":33,"box":1,"x":283,"y":584,"width":36,"height":150},{"text":"ヒロイモノは","type":"chat","direction":"v","lean":0,"em":33,"box":1,"x":205,"y":600,"width":36,"height":216}]}
+REGIONS [
+ {
+  "x": 310.14273523071756,
+  "y": 579.5051576751383,
+  "width": 54.583524545906684,
+  "height": 159.73968464972344,
+  "text": "やっぱり熱いな…ヒロイモノは",
+  "direction": "v",
+  "columns": 1,
+  "rows": 1,
+  "boxIds": [
+   1
+  ],
+  "kind": "chat",
+  "own": {
+   "x": 262.8064950073418,
+   "y": 576,
+   "width": 110.19350499265818,
+   "height": 240
+  },
+  "glyphSize": 33,
+  "frame": {
+   "x": 310.14273523071756,
+   "y": 579.5051576751383,
+   "width": 54.583524545906684,
+   "height": 159.73968464972344
+  },
+  "angle": 0.14029874327190606,
+  "lineLength": 156.6643423970282,
+  "lineThickness": 33
+ }
+]
+BLOCK {"x":202,"y":983,"width":146,"height":376,"score":0.97}
+BOXES [{"x":177.26883484798498,"y":1033.375,"width":168.7338291896168,"height":358.25}]
+RAW {"regions":[{"text":"31","type":"name","direction":"v","lean":0,"em":36,"box":1,"x":290,"y":975,"width":45,"height":55},{"text":"回卒業証書授","type":"name","direction":"v","lean":0,"em":45,"box":1,"x":258,"y":1021,"width":63,"height":372}]}
+REGIONS [
+ {
+  "x": 183.07914669062717,
+  "y": 1025.3710376976046,
+  "width": 157.1132055043324,
+  "height": 374.2579246047908,
+  "text": "31回卒業証書授",
+  "direction": "v",
+  "columns": 1,
+  "rows": 1,
+  "boxIds": [
+   1
+  ],
+  "kind": "name",
+  "own": {
+   "x": 258,
+   "y": 975,
+   "width": 77,
+   "height": 418
+  },
+  "glyphSize": 59.84933287734762,
+  "frame": {
+   "x": 183.07914669062717,
+   "y": 1025.3710376976046,
+   "width": 157.1132055043324,
+   "height": 374.2579246047908
+  },
+  "angle": 0.2707668161892198,
+  "lineLength": 371.7959855469167,
+  "lineThickness": 59.84933287734762
+ }
+]

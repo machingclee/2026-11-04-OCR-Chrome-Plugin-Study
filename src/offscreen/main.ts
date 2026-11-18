@@ -362,6 +362,19 @@ function boxLuma(pixels: Uint8ClampedArray, pageWidth: number, box: { x: number;
  * falls in its own band and is left out. That is what keeps a label from being
  * placed where the reading starts.
  */
+/** The part of `box` that lies inside `block`, or null when that part is too small to be a line. */
+function clipToBlock(
+    box: { x: number; y: number; width: number; height: number },
+    block: { x: number; y: number; width: number; height: number },
+): { x: number; y: number; width: number; height: number } | null {
+    const x = Math.max(box.x, block.x);
+    const y = Math.max(box.y, block.y);
+    const right = Math.min(box.x + box.width, block.x + block.width);
+    const bottom = Math.min(box.y + box.height, block.y + block.height);
+    if (right - x < 4 || bottom - y < 4) return null;
+    return { x, y, width: right - x, height: bottom - y };
+}
+
 function pageInkBounds(
     pixels: Uint8ClampedArray,
     pageWidth: number,
@@ -656,6 +669,59 @@ export async function runDetection(request: OffscreenDetectRequest): Promise<Det
                         // growing it by 1.2: the label has to fit the column
                         // it replaces, not the line box around it.
                         line.lineThickness = region.glyphSize;
+                    }
+                    // The rectangle the label will be drawn on. An inclined
+                    // line is centred on its box at the measured thickness;
+                    // an upright line uses the slot, which is the detector box.
+                    const verticalDrawn = line.direction === 'vertical';
+                    const drawn = Math.abs(line.angle ?? 0) >= 0.01 && line.lineLength && line.lineThickness
+                        ? {
+                            x: line.x + line.width / 2 - (verticalDrawn ? line.lineThickness : line.lineLength) / 2,
+                            y: line.y + line.height / 2 - (verticalDrawn ? line.lineLength : line.lineThickness) / 2,
+                            width: verticalDrawn ? line.lineThickness : line.lineLength,
+                            height: verticalDrawn ? line.lineLength : line.lineThickness,
+                        }
+                        : (line.slot ?? { x: line.x, y: line.y, width: line.width, height: line.height });
+                    const clipped = clipToBlock(drawn, reading.block);
+                    const overflow = clipped === null ? 0 : Math.max(
+                        clipped.y - drawn.y,
+                        clipped.x - drawn.x,
+                        drawn.y + drawn.height - (clipped.y + clipped.height),
+                        drawn.x + drawn.width - (clipped.x + clipped.width),
+                    );
+                    // A pixel of rounding is the detector box and the block
+                    // disagreeing about an edge. The shield columns start
+                    // eighty pixels above their block; that is the cut.
+                    const stuckOut = clipped !== null && overflow > 4;
+                    // A detector box that starts above the glyphs is cut back
+                    // to the block. The font is the clipped column, so the
+                    // drawn characters stay inside the block instead of
+                    // following the box up out of the balloon.
+                    if (stuckOut && clipped) {
+                        const room = verticalDrawn ? clipped.width : clipped.height;
+                        const grow = Math.abs(line.angle ?? 0) >= 0.01 ? 1 : 1.2;
+                        let font = Math.round(Math.min(room, verticalDrawn ? drawn.width : drawn.height));
+                        if (font > room) font = Math.floor(room);
+                        if (font < 6) font = Math.max(4, Math.floor(room));
+                        const along = verticalDrawn ? clipped.height : clipped.width;
+                        if (verticalDrawn) {
+                            let x = clipped.x + clipped.width / 2 - font / 2;
+                            if (x < reading.block.x) x = reading.block.x;
+                            const limit = reading.block.x + reading.block.width - font;
+                            if (x > limit) x = Math.max(reading.block.x, limit);
+                            line.slot = { x, y: clipped.y, width: font, height: along, insideBlock: true };
+                        } else {
+                            let y = clipped.y + clipped.height / 2 - font / 2;
+                            if (y < reading.block.y) y = reading.block.y;
+                            const limit = reading.block.y + reading.block.height - font;
+                            if (y > limit) y = Math.max(reading.block.y, limit);
+                            line.slot = { x: clipped.x, y, width: along, height: font, insideBlock: true };
+                        }
+                        line.lineThickness = font / grow;
+                        line.lineLength = along;
+                        console.info(`[block] "${line.text.slice(0, 12)}" cut to `
+                            + `${Math.round(line.slot.x)},${Math.round(line.slot.y)} `
+                            + `${Math.round(line.slot.width)}x${Math.round(line.slot.height)}`);
                     }
                     lines.push(line);
                 });
@@ -1132,6 +1198,7 @@ export async function runDetection(request: OffscreenDetectRequest): Promise<Det
                     direction: region.direction,
                     kind: region.kind,
                     frame: region.frame,
+                    characters: region.own,
                 })),
             })),
             ms: Math.round(performance.now() - started),

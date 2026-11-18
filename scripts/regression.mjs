@@ -232,6 +232,44 @@ function oneInkFailures(page) {
  * drew the TV speech in the wrong direction. The geometry has to come from the
  * ink; with no mask there is no angle, not the reader's guess.
  */
+/**
+ * The label's glyph is the frame, not the reader's em.
+ *
+ * On the cup page the reader answered `em: 44` and `em: 13` for the same 27
+ * pixel column, and the label followed it. The two numbers that come from the
+ * page are the box the reader named (29-30 px, one column) and the ink; the
+ * reader's em may neither shrink nor stretch the label. This runs without the
+ * network, so it is the half of the case that cannot flake.
+ */
+function fontSizeSelfTest() {
+    const box = { x: 937, y: 139, width: 29, height: 266 };
+    const make = (em) => ({
+        x: box.x - 2, y: box.y - 3, width: box.width, height: box.height,
+        text: '…', direction: 'v', columns: 1, rows: 1, boxIds: [1], glyphSize: em, kind: 'chat',
+    });
+    for (const em of [13, 44]) {
+        const region = make(em);
+        applyInclination([region], [box], null);
+        if (Math.abs((region.glyphSize ?? 0) - box.width) > 1.5) {
+            throw new Error(`a reader em of ${em} still decides the glyph: ${region.glyphSize}px on a ${box.width}px box`);
+        }
+    }
+    // Three columns in one loose box: a third of the box is one glyph, whatever
+    // the reader answered.
+    const wide = { x: 935, y: 136, width: 78, height: 266 };
+    const group = [0, 1, 2].map((index) => ({
+        x: wide.x + index * 26, y: wide.y, width: 26, height: wide.height,
+        text: '…', direction: 'v', columns: 1, rows: 1, boxIds: [1], glyphSize: 9, kind: 'chat',
+    }));
+    applyInclination(group, [wide], null);
+    for (const region of group) {
+        if (Math.abs((region.glyphSize ?? 0) - wide.width / 3) > 1.5) {
+            throw new Error(`a three column box gives a ${region.glyphSize}px glyph, not ${(wide.width / 3).toFixed(1)}px`);
+        }
+    }
+    console.log('[selftest] the glyph follows the box and the ink, not the reader em');
+}
+
 function inclineSelfTest() {
     const region = {
         x: 312,
@@ -252,6 +290,91 @@ function inclineSelfTest() {
         throw new Error(`The reader's lean still rotates a label: ${((region.angle ?? 0) * 180 / Math.PI).toFixed(1)}deg`);
     }
     console.log('[selftest] a reader lean with no mask leaves the label upright');
+}
+
+function rectIoU(left, right) {
+    const width = Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x);
+    const height = Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y);
+    if (width <= 0 || height <= 0) return 0;
+    const inter = width * height;
+    const union = left.width * left.height + right.width * right.height - inter;
+    return union > 0 ? inter / union : 0;
+}
+
+function holdsCentre(outer, inner) {
+    const x = inner.x + inner.width / 2;
+    const y = inner.y + inner.height / 2;
+    return x >= outer.x && x <= outer.x + outer.width && y >= outer.y && y <= outer.y + outer.height;
+}
+
+/** The painted glyphs of one label, in page pixels. The box is the em stack, not the slot. */
+function glyphBoxOf(item) {
+    const glyphs = [...item.text].filter((character) => (
+        character !== '\u2060' && character !== '\n' && !/\s/u.test(character)
+    ));
+    const size = Math.max(7, Math.round(item.fontSize ?? 12));
+    const step = size * (1 + (item.spacing || 0));
+    if (item.vertical) {
+        return {
+            x: item.x + item.width / 2 - size / 2,
+            y: item.y,
+            width: size,
+            height: glyphs.length > 0 ? (glyphs.length - 1) * step + size : 0,
+        };
+    }
+    return {
+        x: item.x,
+        y: item.y + item.height / 2 - size / 2,
+        width: glyphs.length > 0 ? (glyphs.length - 1) * step + size : 0,
+        height: size,
+    };
+}
+
+function glyphInside(block, glyph) {
+    return glyph.x >= block.x - 0.5
+        && glyph.y >= block.y - 0.5
+        && glyph.x + glyph.width <= block.x + block.width + 0.5
+        && glyph.y + glyph.height <= block.y + block.height + 0.5;
+}
+
+/**
+ * The drawn characters of one block must lie inside that block.
+ *
+ * The block rectangle is the container. A detector box that runs above the
+ * glyphs used to be the label's frame, so the column started outside the
+ * balloon. This checks the characters that were painted, not the box the
+ * reader reported and not the detector rectangle.
+ */
+function checkColumns(page, rule, failures) {
+    const block = { x: rule.block[0], y: rule.block[1], width: rule.block[2], height: rule.block[3] };
+    let best = null;
+    page.detection.groups.forEach((group, index) => {
+        const overlap = rectIoU(block, group);
+        const score = Math.max(overlap, holdsCentre(group, block) || holdsCentre(block, group) ? 0.5 : 0);
+        if (!best || score > best.score) best = { group, index, score };
+    });
+    if (!best || best.score < 0.25) {
+        if (rule.onMissing === 'skip') {
+            console.log(`   (skipped the block ${rule.block.join(',')}: the reader did not report it this run)`);
+            return;
+        }
+        failures.push(`no group overlaps the block ${rule.block.join(',')}`);
+        return;
+    }
+    const labels = page.job.items.filter((item) => (
+        item.groupId === best.index && /[\u3400-\u9fff]/u.test(item.text)
+    ));
+    if (labels.length !== rule.count) {
+        failures.push(`${labels.length} column(s) on the block ${rule.block.join(',')}, not ${rule.count}: `
+            + labels.map((item) => JSON.stringify(item.text)).join(', '));
+    }
+    for (const label of labels) {
+        const glyph = glyphBoxOf(label);
+        if (!glyphInside(block, glyph)) {
+            failures.push(`${JSON.stringify(label.text)} glyphs at ${glyph.x.toFixed(0)},${glyph.y.toFixed(0)} `
+                + `${glyph.width.toFixed(0)}×${glyph.height.toFixed(0)} leave the block ${rule.block.join(',')}`);
+        }
+    }
 }
 
 function checkCase(page, testCase) {
@@ -440,6 +563,8 @@ function checkCase(page, testCase) {
         }
     }
 
+    for (const rule of testCase.columns ?? []) checkColumns(page, rule, failures);
+
     for (const rule of testCase.loneGlyphs ?? []) {
         const pattern = new RegExp(rule.source);
         const matches = groups.filter((group) => pattern.test(group.source));
@@ -461,6 +586,7 @@ function checkCase(page, testCase) {
 
 async function main() {
     inclineSelfTest();
+    fontSizeSelfTest();
     const options = args();
     const manifest = JSON.parse(readFileSync(resolve(ROOT, 'fixtures/regression.json'), 'utf8'));
     const cases = manifest.cases.filter((testCase) => (

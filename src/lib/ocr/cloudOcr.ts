@@ -8,6 +8,7 @@ import { cellToPage, gridGeometry } from './grid';
 import { recognizeLine } from './recognize';
 import { isLoneGlyph, spokenGlyphs } from '../loneGlyph';
 import { MODEL_SIZE } from '../mask';
+import { readBlockHint, type BlockHint } from './blockHints';
 
 /**
  * Cloud reading.
@@ -474,6 +475,8 @@ export type BlockRegion = {
 export type BlockReading = {
     block: { x: number; y: number; width: number; height: number; score: number };
     regions: BlockRegion[];
+    /** The on-device reading the reader was given as a reference, if any. */
+    hint?: BlockHint;
     /** Page pixels per cell of the grid drawn on the crop. */
     cell: number;
     /** The detector's line boxes that were drawn in blue on this crop. */
@@ -535,6 +538,32 @@ const BLOCK_PROMPT = [
     'Do not round a corner to a grid line and do not count cells: answer with the pixels the number reads, so a character whose left edge is a few pixels past the line printed 1034 has x 1037. x, y, width and height are whole pixels. When an edge is cut off by the crop, still give the page pixel of the visible ink.',
     `The numbers in the example show the shape of the answer, not this crop. Skip artwork with no text. Return JSON only: ${JSON.stringify(BLOCK_EXAMPLE)}`,
 ].join(' ');
+
+/**
+ * The block prompt, with the on-device reading spliced in when there is one.
+ *
+ * The reference is written as evidence about characters, not as an answer: the
+ * recogniser is decisive on a column it can see and blind to the structure
+ * around it, so it is quoted column by column and the reader is told what it
+ * does wrong. Quoted as a bare string it would read like a transcription to
+ * copy, and on this page that is `モノ` for `もの`.
+ */
+function blockPrompt(hint: BlockHint | null): string {
+    if (!hint || hint.lines.length === 0) return BLOCK_PROMPT;
+    const read = hint.lines.filter((line) => line.text.trim().length > 0);
+    if (read.length === 0) return BLOCK_PROMPT;
+    const quoted = hint.lines
+        .map((line) => (line.text.trim().length > 0 ? `"${line.text}"` : '(nothing)'))
+        .join(', ');
+    const complete = read.length === hint.lines.length;
+    const reference = [
+        `A Japanese recogniser also read this crop on the device, uprighted by about ${Math.round(hint.lean * 180 / Math.PI)} degrees and cut into ${hint.lines.length} column(s). It read ${quoted}, in reading order (right to left).`,
+        complete ? `It found text in every one of those columns, so this crop holds at least ${read.length} text line(s).`
+            : 'It left at least one column blank, so treat its cut as a guess about where the columns are.',
+        'Its characters are often right where its words are wrong: it confuses ヒ and ビ, っ and つ, prints a run of hiragana as katakana, and cuts a column short. Where the quote prints a word in katakana that the image prints in hiragana, write it in hiragana: モノ in the quote is もの when the page prints もの. Read the kana from the image, and use the reference only to confirm a glyph the image leaves ambiguous: never let it replace what the image shows, and never add a line the image does not have.',
+    ].join(' ');
+    return `${BLOCK_PROMPT} ${reference}`;
+}
 
 function clamp01(value: number): number {
     return Math.max(0, Math.min(1, value));
@@ -622,6 +651,14 @@ export function readingHostOf<T extends Inked>(region: T, others: T[], widest: n
         if (host === region) return false;
         if (host.direction !== region.direction) return false;
         if (acrossSize(region) > acrossSize(host)) return false;
+        // A reading is printed beside its column, so its box is narrower than
+        // the column's. Equal widths mean the reader named one rectangle for
+        // both entries — every entry of a block the detector boxed as one — and
+        // then the only thing that differs is the length of the text. The
+        // advance test below would read a six glyph column as a reading of a
+        // four glyph one and drop it, which is how a three column speech lost
+        // its ヒーローものは.
+        if (acrossSize(region) > acrossSize(host) - 2) return false;
         const [hostFrom, hostTo] = spanAlong(host);
         const [from, to] = spanAlong(region);
         const overlap = Math.min(hostTo, to) - Math.max(hostFrom, from);
@@ -1451,6 +1488,15 @@ export function applyInclination(
     regions: BlockRegion[],
     boxes: { x: number; y: number; width: number; height: number }[],
     mask: TextMask | null,
+    /**
+     * Lean measured from the ink of the whole block, when the block was cut
+     * into columns and each of them was read upright. The segmentation plane
+     * cannot measure it on a box that holds several columns: it returns the
+     * diagonal of the run (down to the left on a three column speech) with the
+     * opposite sign to the columns, which drew the label about 20 degrees the
+     * wrong way.
+     */
+    blockLean?: number,
 ): void {
     if (regions.length === 0) return;
     const byBox = new Map<number, BlockRegion[]>();
@@ -1467,19 +1513,47 @@ export function applyInclination(
         const box = boxes[id - 1];
         const direction = group[0].direction;
         const measured = leanOfBox(mask, box, direction);
-        const groupLean = measured?.lean ?? 0;
-        if (measured === undefined || Math.abs(groupLean) < 0.5 * Math.PI / 180) {
-            // No ink measurement: an upright label is wrong but recoverable; a
-            // label rotated by the reader's guess is wrong in a direction the
-            // page never had, and looks like a deliberate slant.
-            group.forEach((region) => { region.angle = undefined; });
-            continue;
-        }
-
+        const groupLean = direction === 'v' && blockLean !== undefined ? blockLean : measured?.lean ?? 0;
         const acrossStart = direction === 'v' ? box.x : box.y;
         const acrossSize = direction === 'v' ? box.width : box.height;
         const alongStart = direction === 'v' ? box.y : box.x;
         const alongSize = direction === 'v' ? box.height : box.width;
+        const inkEm = measured?.thickness && measured.thickness >= 4 ? measured.thickness : undefined;
+        // The glyph is measured from the page, not read off the grid by the
+        // model: on the cup page the reader answered 44 and then 13 for the same
+        // 27 pixel column, so its arithmetic may be off by 2x either way.
+        //
+        // What is left is the box and the ink. The box the reader named is axis
+        // aligned, so on a leaned column its width is the glyph *plus* the lean:
+        // the 卒業証書 banner's box is 169 wide for a 60 pixel glyph. The tight
+        // rectangle that fits in that box has thickness W·cos θ − H·sin θ, which
+        // is the column — 169·0.964 − 358·0.267 = 67 on the banner, and simply
+        // the width when nothing leans. That is only meaningful for a box that
+        // holds one column: three entries in one box are a third of a column
+        // each, and the band is the answer there.
+        //
+        // The ink's interquartile width caps it, while it is credible: the
+        // segmentation plane misses a faint column, and a 12 pixel reading on a
+        // 30 pixel box is the plane missing, not a 12 pixel glyph.
+        const tight = group.length === 1
+            ? Math.max(4, acrossSize * Math.cos(groupLean) - alongSize * Math.abs(Math.sin(groupLean)))
+            : acrossSize / group.length;
+        const credible = inkEm !== undefined && inkEm >= tight * 0.6;
+        const boxEm = credible ? Math.min(tight, inkEm) : tight;
+        if ((measured === undefined && blockLean === undefined) || Math.abs(groupLean) < 0.5 * Math.PI / 180) {
+            // No ink measurement: an upright label is wrong but recoverable; a
+            // label rotated by the reader's guess is wrong in a direction the
+            // page never had, and looks like a deliberate slant. The glyph is
+            // still measurable from the box, so the label keeps its size even
+            // when the plane cannot say which way it leans.
+            group.forEach((region) => {
+                region.angle = undefined;
+                region.glyphSize = boxEm;
+                region.lineThickness = Math.max(4, Math.min(boxEm, acrossSize * 0.95));
+            });
+            continue;
+        }
+
         const ordered = [...group].sort((left, right) => {
             const ownLeft = left.own ?? left;
             const ownRight = right.own ?? right;
@@ -1490,9 +1564,6 @@ export function applyInclination(
                 ? acrossOf(ownRight) - acrossOf(ownLeft)
                 : acrossOf(ownLeft) - acrossOf(ownRight);
         });
-        // A loose detector box is wider than the glyph column; the mask's own
-        // thickness is the glyph, but on a box that holds one column the
-        // reader's em is the better estimate. Cap the reader's em by the band.
         const band = acrossSize / ordered.length;
         ordered.forEach((region, index) => {
             const centreAcross = direction === 'v'
@@ -1502,17 +1573,7 @@ export function applyInclination(
             const lean = groupLean;
             const cos = Math.max(0.5, Math.cos(lean));
             const length = alongSize / cos;
-            const inkEm = measured?.thickness && measured.thickness >= 4 ? measured.thickness : undefined;
-            const reportedEm = region.glyphSize && region.glyphSize >= 4 ? region.glyphSize : undefined;
-            // One column in the box: the reader's em and 0.6 of the ink's
-            // interquartile width are two estimates, and the larger is used.
-            // The ink width includes the gap to the next column on a loose box,
-            // so it is discounted; the reader's em can be a third too small on
-            // a long banner, so it is not trusted alone. Several columns: the
-            // band and the ink are the caps, and the narrower wins.
-            const em = ordered.length === 1
-                ? (Math.max(reportedEm ?? 0, (inkEm ?? 0) * 0.6) || band)
-                : Math.min(reportedEm ?? band, inkEm ?? band, band);
+            const em = boxEm;
             const thickness = Math.max(4, Math.min(em, band * 0.95));
             const bounds = tightBounds(centreAcross, centreAlong, length, thickness, lean, direction);
             region.x = bounds.x;
@@ -1615,10 +1676,26 @@ export async function readBlockRegions(
             }
             const crop = { ...cut.crop, score: reading.block.score };
             const dataUrl = cut.dataUrl;
+            // The same crop, read on the device first: the columns are found
+            // from the ink and each one is transcribed alone, which is the one
+            // thing a leaned, small column needs. The reading goes into the
+            // prompt as a reference and never becomes the answer.
+            let hint: BlockHint | null = null;
+            try {
+                hint = await readBlockHint(bitmap, reading.block, mask, inside.length);
+                if (hint) {
+                    console.info(`[hint] block ${index + 1}: ${hint.columns} column(s) at `
+                        + `${(hint.lean * 180 / Math.PI).toFixed(1)}deg: `
+                        + hint.lines.map((line) => `${line.text}(${line.confidence.toFixed(2)})`).join(' | '));
+                }
+            } catch (cause) {
+                console.warn('The on-device reading of one block failed.', cause);
+            }
             for (let attempt = 0; attempt < 2; attempt += 1) {
                 try {
-                    const content = await deepSeekContentForSync(ocr.key, [dataUrl], BLOCK_PROMPT, READ_EFFORT);
+                    const content = await deepSeekContentForSync(ocr.key, [dataUrl], blockPrompt(hint), READ_EFFORT);
                     reading.raw = content;
+                    if (hint) reading.hint = hint;
                     console.info(`[read] block ${index + 1}: ${content.slice(0, 3000)}`);
                     reading.cropUrl = dataUrl;
                     const parsed = readBlockAnswer(content, crop, cut.cell, reading.boxes ?? []);
@@ -1638,7 +1715,7 @@ export async function readBlockRegions(
                     // The reader answers "v" for a column that leans. Measure
                     // the lean from the ink and give the entry the rotated
                     // frame and the glyph size the label needs.
-                    applyInclination(reading.regions, reading.boxes ?? [], mask);
+                    applyInclination(reading.regions, reading.boxes ?? [], mask, hint?.lean);
                     const geometry = gridGeometry(cut.crop, cut.cell);
                     reading.cell = geometry.cell;
                     console.info(`[grid] block ${index + 1}: ${geometry.columns} x ${geometry.rows} cells `
@@ -1656,7 +1733,8 @@ export async function readBlockRegions(
                         await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
                         continue;
                     }
-                    console.warn('Block reading failed for one block.', cause);
+                    console.warn('Block reading failed for one block.', cause,
+                        JSON.stringify((reading.raw ?? '').slice(0, 160)));
                 }
             }
         }
