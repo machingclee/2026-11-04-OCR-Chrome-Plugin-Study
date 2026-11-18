@@ -38,6 +38,7 @@ must appear (`contains`, `oneOf`), the words that must not (`notContains`,
 | `incline` | `page-forty.jpg` | A leaned block is drawn leaned and counter-clockwise, its columns are all read, and the translation carries 英雄: the TV speech and the 卒業証書 banner |
 | `font-size` | `page-325.jpg` | The label's glyph is measured from the box and the ink, not read off the grid by the reader: 27px ±30% on a 29px column, whatever `em` the reader answers |
 | `bubble-start` | `page-shield.jpg` | The shield bubble's two columns are drawn inside the block; a detector box that starts above the glyphs must not carry the translation out of it |
+| `paper-rows` | `page-paper.jpg` | The note at BLK 553,365 is three rows on a sheet tilted −32°: three parallel lines at that lean, one row deep, none on another |
 
 ## Placement: where the label lands
 

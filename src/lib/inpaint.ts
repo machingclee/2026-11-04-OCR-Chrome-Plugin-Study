@@ -1,36 +1,10 @@
 import * as ort from 'onnxruntime-web/webgpu';
 import { INPAINT_INPUT_SIZE, INPAINT_MODEL_PATH } from '../shared/constants';
+import { runSession, sessionFor } from './onnx';
 
-if (ort.env?.wasm) ort.env.wasm.numThreads = 1;
-
-const webgpu = typeof navigator !== 'undefined' && 'gpu' in navigator;
-
-let sessionPromise: Promise<ort.InferenceSession> | null = null;
-
+/** Load the inpainting model once per page; a failed load is retried later. */
 function loadSession(): Promise<ort.InferenceSession> {
-    if (!sessionPromise) {
-        sessionPromise = ort.InferenceSession.create(chrome.runtime.getURL(INPAINT_MODEL_PATH), {
-            executionProviders: webgpu ? ['webgpu', 'wasm'] : ['wasm'],
-            graphOptimizationLevel: 'all',
-        }).catch(async (cause: unknown) => {
-            if (!webgpu) {
-                sessionPromise = null;
-                throw cause;
-            }
-            console.warn('WebGPU inpaint failed, using WASM.', cause);
-            try {
-                return await ort.InferenceSession.create(chrome.runtime.getURL(INPAINT_MODEL_PATH), {
-                    executionProviders: ['wasm'],
-                    graphOptimizationLevel: 'all',
-                });
-            } catch (fallbackCause) {
-                sessionPromise = null;
-                throw fallbackCause;
-            }
-        });
-    }
-    void sessionPromise.then(() => console.info(`Inpaint provider: ${webgpu ? 'webgpu preferred' : 'wasm'}`));
-    return sessionPromise;
+    return sessionFor('inpaint', chrome.runtime.getURL(INPAINT_MODEL_PATH), 'inpaint model');
 }
 
 function canvas2d(width: number, height: number): OffscreenCanvasRenderingContext2D {
@@ -84,10 +58,10 @@ export async function inpaintTile(
             input[channel * plane + index] = masked ? 0 : image.data[source + channel] / 127.5 - 1;
         }
     }
-    const outputs = await session.run({
+    const outputs = await runSession(session, {
         [inputName]: new ort.Tensor('float32', input, [1, 3, size, size]),
         [maskName]: new ort.Tensor('float32', holes, [1, 1, size, size]),
-    });
+    }, 'inpaint model');
     const first = Object.values(outputs)[0] as ort.Tensor | undefined;
     if (!first || first.type !== 'float32' || !(first.data instanceof Float32Array)
         || first.data.length < plane * 3) {

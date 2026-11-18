@@ -1,40 +1,23 @@
 import * as ort from 'onnxruntime-web/webgpu';
 import { OCR_DICT_PATH, OCR_MODEL_PATH } from '../../shared/constants';
+import { runSession, sessionFor } from '../onnx';
 import { loadCharset } from './charset';
 import { decodeCtc } from './decode';
 import { buildOcrInput } from './prepare';
 import type { Box, OcrResult } from '../types';
 
-const webgpu = typeof navigator !== 'undefined' && 'gpu' in navigator;
-let sessionPromise: Promise<ort.InferenceSession> | null = null;
-
+/** Load the recogniser once per page; a failed load is retried on the next line. */
 function loadSession(): Promise<ort.InferenceSession> {
-    if (!sessionPromise) {
-        sessionPromise = ort.InferenceSession.create(chrome.runtime.getURL(OCR_MODEL_PATH), {
-            executionProviders: webgpu ? ['webgpu', 'wasm'] : ['wasm'],
-            graphOptimizationLevel: 'all',
-        }).catch(async (cause: unknown) => {
-            if (!webgpu) {
-                sessionPromise = null;
-                throw cause;
-            }
-            console.warn('WebGPU OCR failed, using WASM.', cause);
-            try {
-                return await ort.InferenceSession.create(chrome.runtime.getURL(OCR_MODEL_PATH), {
-                    executionProviders: ['wasm'],
-                    graphOptimizationLevel: 'all',
-                });
-            } catch (fallbackCause) {
-                sessionPromise = null;
-                throw fallbackCause;
-            }
-        });
-    }
-    void sessionPromise.then(() => console.info(`OCR provider: ${webgpu ? 'webgpu preferred' : 'wasm'}`));
-    return sessionPromise;
+    return sessionFor('recogniser', chrome.runtime.getURL(OCR_MODEL_PATH), 'recogniser');
 }
 
-export async function recognizeLine(bitmap: ImageBitmap, box: Box, vertical: boolean): Promise<OcrResult> {
+export async function recognizeLine(
+    bitmap: ImageBitmap,
+    box: Box,
+    vertical: boolean,
+    /** Shown in the progress pill, e.g. "line 7/48". */
+    note?: string,
+): Promise<OcrResult> {
     const [session, charset] = await Promise.all([
         loadSession(),
         loadCharset(chrome.runtime.getURL(OCR_DICT_PATH)),
@@ -45,7 +28,7 @@ export async function recognizeLine(bitmap: ImageBitmap, box: Box, vertical: boo
     if (!inputName) throw new Error('The recogniser exposes no input.');
 
     const tensor = new ort.Tensor('float32', input.data, input.dims);
-    const outputs = await session.run({ [inputName]: tensor });
+    const outputs = await runSession(session, { [inputName]: tensor }, 'recogniser', undefined, note);
     const first = Object.values(outputs)[0];
     if (!first || !(first.data instanceof Float32Array)) throw new Error('The recogniser returned no logits.');
 

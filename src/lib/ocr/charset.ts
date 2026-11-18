@@ -1,9 +1,14 @@
 /** Index 0 is the CTC blank, then one entry per dictionary line, then a space. */
 let charsetPromise: Promise<string[]> | null = null;
 
+/** The dictionary ships with the extension; a fetch this slow has stalled. */
+const CHARSET_TIMEOUT_MS = 15_000;
+
 export function loadCharset(url: string): Promise<string[]> {
     if (!charsetPromise) {
-        charsetPromise = fetch(url)
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), CHARSET_TIMEOUT_MS);
+        charsetPromise = fetch(url, { signal: controller.signal })
             .then((response) => {
                 if (!response.ok) throw new Error(`The charset request failed with ${response.status}.`);
                 return response.text();
@@ -17,8 +22,12 @@ export function loadCharset(url: string): Promise<string[]> {
             })
             .catch((cause: unknown) => {
                 charsetPromise = null;
+                if (controller.signal.aborted) {
+                    throw new Error(`The character dictionary did not load within ${CHARSET_TIMEOUT_MS / 1000} s.`);
+                }
                 throw cause;
-            });
+            })
+            .finally(() => clearTimeout(timer));
     }
     return charsetPromise;
 }

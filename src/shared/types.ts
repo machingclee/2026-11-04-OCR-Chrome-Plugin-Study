@@ -271,6 +271,11 @@ export type DetectTimings = {
     group: number;
     ocr: number;
     extras: number;
+    /**
+     * What each model cost on this pass: its load (which includes the first
+     * WebGPU shader compilation), its last run, and the device it ran on.
+     */
+    inference?: { label: string; backend: string; loadMs: number; runMs: number }[];
 };
 
 /** One block reading, as the debug view shows it: the box and the raw answer. */

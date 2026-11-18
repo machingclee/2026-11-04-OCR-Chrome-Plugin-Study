@@ -28,6 +28,22 @@ export const OVERLAY_TARGET_ATTRIBUTE = 'data-comic-translator-target';
 
 export const LAST_RESULT_KEY = 'lastDetection';
 export const BATCH_STATE_KEY = 'translationBatch';
+/**
+ * Where the offscreen detector is right now, written while a pass runs and
+ * removed when it ends. It is the only clue about a pass whose response never
+ * arrives, so the service worker can name the stage when it gives up.
+ */
+export const DETECT_STAGE_KEY = 'detectStage';
+
+/**
+ * Which device the four ONNX models run on. `webgpu` is the fast path; `wasm`
+ * is the path the regression harness measures and the one that cannot wedge the
+ * GPU process. The popup writes this key; the offscreen document watches it.
+ */
+export const INFERENCE_BACKEND_KEY = 'inferenceBackend';
+export const INFERENCE_BACKENDS = ['webgpu', 'wasm'] as const;
+export type InferenceBackend = (typeof INFERENCE_BACKENDS)[number];
+export const DEFAULT_INFERENCE_BACKEND: InferenceBackend = 'webgpu';
 /** One compact detection per selected page, so the debug view can step through them. */
 export const DEBUG_PAGES_KEY = 'debugPages';
 /** Session-only cursor into the debug pages, so the popup reopens on the same page. */

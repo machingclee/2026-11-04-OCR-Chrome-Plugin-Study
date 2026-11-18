@@ -292,6 +292,65 @@ function inclineSelfTest() {
     console.log('[selftest] a reader lean with no mask leaves the label upright');
 }
 
+/**
+ * Three rows on a tilted sheet must become three parallel lines, not one stack.
+ *
+ * This is the page-paper block with the reader's own answer: three entries
+ * naming one leaned box (the detector fitted the middle row), direction v (the
+ * reader takes the tilted rows for columns), no mask. The geometry may only
+ * come from the block and the box's angle. Before the fix this produced three
+ * frames on one another at a 267px glyph.
+ */
+function paperRowsSelfTest() {
+    const block = { x: 553.6, y: 366.3, width: 239.3, height: 195.1 };
+    const box = {
+        x: 563.0, y: 378.9, width: 241.5, height: 165.4,
+        angle: -0.5536813, direction: 'horizontal', lineLength: 265.1, lineThickness: 30.56,
+    };
+    const texts = ['戻るまでが試験です', '気を抜かずに頑張っ', 'てくださいね〜'];
+    const regions = texts.map((text) => ({
+        x: box.x, y: box.y, width: box.width, height: box.height,
+        text, direction: 'v', columns: 1, rows: 1, boxIds: [1], glyphSize: 30, kind: 'chat',
+    }));
+    applyInclination(regions, [box], null, undefined, block);
+    const failures = [];
+    const centres = regions.map((region) => ({
+        x: region.x + region.width / 2,
+        y: region.y + region.height / 2,
+        angle: region.angle ?? 0,
+        thickness: region.lineThickness ?? 0,
+        text: region.text,
+    }));
+    for (const [index, centre] of centres.entries()) {
+        const degrees = centre.angle * 180 / Math.PI;
+        if (Math.abs(degrees + 31.7) > 3) {
+            failures.push(`${JSON.stringify(centre.text)} is ${degrees.toFixed(1)}deg, not the sheet's -31.7deg`);
+        }
+        if (centre.thickness < 24 || centre.thickness > 34) {
+            failures.push(`${JSON.stringify(centre.text)} is ${centre.thickness.toFixed(0)}px thick, not one 30px row`);
+        }
+        if (regions[index].direction !== 'h') {
+            failures.push(`${JSON.stringify(centre.text)} is still a column, not a row`);
+        }
+    }
+    // Adjacent rows share their angle, so a stack shows as a zero perpendicular
+    // gap; a correct split leaves about one row of paper between the centres.
+    for (let left = 0; left < centres.length; left += 1) {
+        for (let right = left + 1; right < centres.length; right += 1) {
+            const dx = centres[left].x - centres[right].x;
+            const dy = centres[left].y - centres[right].y;
+            const across = Math.abs(-dx * Math.sin(centres[left].angle) + dy * Math.cos(centres[left].angle));
+            const along = Math.abs(dx * Math.cos(centres[left].angle) + dy * Math.sin(centres[left].angle));
+            if (along > 1) failures.push(`rows ${left + 1} and ${right + 1} are offset along the text`);
+            if (across < 24) {
+                failures.push(`rows ${left + 1} and ${right + 1} are ${across.toFixed(0)}px apart across the text: stacked`);
+            }
+        }
+    }
+    if (failures.length > 0) throw new Error(failures.join('; '));
+    console.log('[selftest] three rows on a tilted sheet are three parallel rows');
+}
+
 function rectIoU(left, right) {
     const width = Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x);
     const height = Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y);
@@ -299,6 +358,53 @@ function rectIoU(left, right) {
     const inter = width * height;
     const union = left.width * left.height + right.width * right.height - inter;
     return union > 0 ? inter / union : 0;
+}
+
+/**
+ * How much two drawn labels cover the same ink.
+ *
+ * The page box of a rotated label is not the label: three parallel rows of a
+ * note tilted -32 degrees are 207x143 each and only 30px apart, so their page
+ * boxes overlap by 80% while the rows themselves do not touch. Measuring the
+ * boxes would report a stack where the labels are correctly side by side (or
+ * row by row). Two labels at nearly the same angle are compared along their
+ * own axes: the perpendicular distance between their centres against the sum
+ * of their thicknesses, and the distance along the text against the sum of
+ * their lengths.
+ */
+function labelOverlapShare(left, right) {
+    const bbox = () => {
+        const width = Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x);
+        const height = Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y);
+        if (width <= 0 || height <= 0) return 0;
+        return (width * height) / Math.min(left.width * left.height, right.width * right.height);
+    };
+    const leftAngle = left.angle ?? 0;
+    const rightAngle = right.angle ?? 0;
+    if (Math.abs(leftAngle) < 0.01 || Math.abs(rightAngle) < 0.01) return bbox();
+    if (Math.abs(leftAngle - rightAngle) > 0.05) return bbox();
+    const angle = (leftAngle + rightAngle) / 2;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    // The label's own axes: a vertical label runs down its rotated frame (the
+    // frame's local +y), a horizontal one along its local +x. Reading a column
+    // with the row's axes puts its thickness on the wrong side and reports a
+    // stack where two columns are side by side.
+    const vertical = left.vertical === true && right.vertical === true;
+    const alongX = vertical ? -sin : cos;
+    const alongY = vertical ? cos : sin;
+    const acrossX = vertical ? cos : -sin;
+    const acrossY = vertical ? sin : cos;
+    const dx = (left.x + left.width / 2) - (right.x + right.width / 2);
+    const dy = (left.y + left.height / 2) - (right.y + right.height / 2);
+    const across = Math.abs(dx * acrossX + dy * acrossY);
+    const along = Math.abs(dx * alongX + dy * alongY);
+    const thickness = (i) => (i.vertical ? i.width : i.height);
+    const length = (i) => (i.vertical ? i.height : i.width);
+    const reachesAcross = Math.max(0, (thickness(left) + thickness(right)) / 2 - across);
+    const reachesAlong = Math.max(0, (length(left) + length(right)) / 2 - along);
+    if (reachesAcross === 0 || reachesAlong === 0) return 0;
+    return (reachesAcross * reachesAlong) / Math.min(left.width * left.height, right.width * right.height);
 }
 
 function holdsCentre(outer, inner) {
@@ -551,10 +657,7 @@ function checkCase(page, testCase) {
             for (let right = left + 1; right < leaned.length; right += 1) {
                 const a = leaned[left];
                 const b = leaned[right];
-                const overlapWidth = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
-                const overlapHeight = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
-                if (overlapWidth <= 0 || overlapHeight <= 0) continue;
-                const share = (overlapWidth * overlapHeight) / Math.min(a.width * a.height, b.width * b.height);
+                const share = labelOverlapShare(a, b);
                 if (share > 0.4) {
                     failures.push(`${JSON.stringify(a.text)} and ${JSON.stringify(b.text)} overlap on `
                         + `${(share * 100).toFixed(0)}% of one label: two columns share one box`);
@@ -587,6 +690,7 @@ function checkCase(page, testCase) {
 async function main() {
     inclineSelfTest();
     fontSizeSelfTest();
+    paperRowsSelfTest();
     const options = args();
     const manifest = JSON.parse(readFileSync(resolve(ROOT, 'fixtures/regression.json'), 'utf8'));
     const cases = manifest.cases.filter((testCase) => (
@@ -670,6 +774,20 @@ async function main() {
             effort,
             rendered: image,
             labels: page.job.items.length,
+            // What was drawn, not just how many: the angle and the font are the
+            // criterion this suite measures, and a reader of the report needs
+            // them without re-running the page.
+            drawn: page.job.items.map((item) => ({
+                text: item.text,
+                group: item.groupId,
+                x: Number(item.x.toFixed(1)),
+                y: Number(item.y.toFixed(1)),
+                width: Number(item.width.toFixed(1)),
+                height: Number(item.height.toFixed(1)),
+                angle: Number(((item.angle ?? 0) * 180 / Math.PI).toFixed(2)),
+                fontSize: item.fontSize,
+                vertical: item.vertical,
+            })),
             erased: Boolean(page.erasedUrl),
             note: testCase.note,
             groups,

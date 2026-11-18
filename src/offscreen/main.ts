@@ -8,7 +8,10 @@ import { erasePage, type ErasePlanes } from '../lib/erase';
 import { inkBounds, paintSamples, paperColour } from '../lib/mask';
 import { groupByRegion, splitGroupByColumnGap, toOrderedTextLines } from '../lib/readingOrder';
 import { recognizeLine } from '../lib/ocr/recognize';
-import { DETECTOR_INPUT_SIZE, OCR_MIN_CONFIDENCE, OFFSCREEN_TARGET } from '../shared/constants';
+import { withTimeout } from '../shared/timing';
+import { inferenceTimings } from '../lib/onnx';
+import { announceStage } from '../shared/progress';
+import { DETECT_STAGE_KEY, DETECTOR_INPUT_SIZE, OCR_MIN_CONFIDENCE, OFFSCREEN_TARGET } from '../shared/constants';
 import type {
     BoxData,
     DetectResponse,
@@ -30,6 +33,47 @@ const MAX_UNCLAIMED_LINES = 6;
 
 /** The page from the last detection, so translation can erase only the lines it keeps. */
 let heldPage: { image: ImageData; planes: ErasePlanes } | null = null;
+
+/** A stalled image download is reported, not waited on forever. */
+const IMAGE_FETCH_TIMEOUT_MS = 20_000;
+/** Decoding a very large page can take a while; it never takes this long. */
+const IMAGE_DECODE_TIMEOUT_MS = 60_000;
+
+/**
+ * Which step detection is on. A pass that never answers leaves the user with a
+ * spinner and no error, so the stage is logged and written to storage as it
+ * changes: the service worker reads it when its own deadline expires, and the
+ * offscreen console shows how far the pass got.
+ */
+let detectStage = 'starting';
+let detectStageStarted = performance.now();
+
+function enterStage(stage: string): void {
+    detectStage = stage;
+    detectStageStarted = performance.now();
+    console.info(`[detect] ${stage}`);
+    announceStage(stage);
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+        void chrome.storage.local
+            .set({ [DETECT_STAGE_KEY]: { stage, since: Date.now() } })
+            .catch(() => undefined);
+    }
+}
+
+function leaveStage(): void {
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+        void chrome.storage.local.remove(DETECT_STAGE_KEY).catch(() => undefined);
+    }
+}
+
+/** The host of an image URL, for an error a user can act on. */
+function hostOf(url: string): string {
+    try {
+        return new URL(url).host || 'the page';
+    } catch {
+        return 'the page';
+    }
+}
 
 /** Decode inline pixels locally: no round trip, and no data: fetch to trust. */
 function decodeImageDataUrl(dataUrl: string): Blob | null {
@@ -53,9 +97,25 @@ async function fetchImageBlob(url: string): Promise<Blob> {
     if (inline) return inline;
     if (url.startsWith('data:')) throw new Error('The inline image could not be decoded.');
 
-    const response = await fetch(url, { credentials: 'include' });
-    if (!response.ok) throw new Error(`Image fetch failed with ${response.status}.`);
-    return response.blob();
+    // The referer rule gets the bytes past a hotlink check; this makes sure a
+    // server that accepts the request and then stalls is reported as a failed
+    // download rather than left pending forever.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), IMAGE_FETCH_TIMEOUT_MS);
+    try {
+        const response = await fetch(url, { credentials: 'include', signal: controller.signal });
+        if (!response.ok) {
+            throw new Error(`The page image could not be downloaded (${response.status}) from ${hostOf(url)}.`);
+        }
+        return await response.blob();
+    } catch (cause) {
+        if (controller.signal.aborted) {
+            throw new Error(`The page image did not download within ${IMAGE_FETCH_TIMEOUT_MS / 1000} s from ${hostOf(url)}.`);
+        }
+        throw cause;
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 /** Phone/UI strings that must not be sent to the translator as dialogue. */
@@ -456,12 +516,18 @@ async function recognizeLines(
     lines: TextLine[],
 ): Promise<BoxData[]> {
     const collected: BoxData[] = [];
-    for (const line of lines) {
+    for (const [index, line] of lines.entries()) {
+        // One line at a time is the slowest stage of a page, so it says which
+        // line it is on: a stuck line and a slow run look the same otherwise.
         const recognised = await recognizeLine(
             bitmap,
             line,
             line.direction === 'vertical',
-        ).catch(() => ({ text: '', confidence: 0 }));
+            `line ${index + 1}/${lines.length}`,
+        ).catch((cause: unknown) => {
+            console.warn(`[read] line ${index + 1}/${lines.length} could not be read.`, cause);
+            return { text: '', confidence: 0 };
+        });
         collected.push({ ...line, text: recognised.text, confidence: recognised.confidence });
     }
     return collected;
@@ -483,20 +549,27 @@ export async function runDetection(request: OffscreenDetectRequest): Promise<Det
         const inline = typeof request.imageDataUrl === 'string' && request.imageDataUrl.length > 0
             ? request.imageDataUrl
             : '';
+        enterStage(inline ? 'decoding the captured image' : `downloading the page image from ${hostOf(request.imageUrl)}`);
         const blob = inline
             ? decodeImageDataUrl(inline)
             : await fetchImageBlob(request.imageUrl);
         if (!blob) return { ok: false, error: 'The captured image could not be decoded.' };
 
-        const bitmap = await createImageBitmap(blob);
+        const bitmap = await withTimeout(
+            createImageBitmap(blob),
+            IMAGE_DECODE_TIMEOUT_MS,
+            `The page image could not be decoded within ${IMAGE_DECODE_TIMEOUT_MS / 1000} s.`,
+        );
         timings.fetch = Math.round(performance.now() - fetchStarted);
 
         // Balloons first, so a column that grows to finish a sentence stops at the
         // balloon edge instead of running into the balloon below.
+        enterStage('detecting text balloons');
         let bubbleError: string | null = null;
         const bubbleStarted = performance.now();
         const bubbles = await detectBubbles(bitmap).catch((cause: unknown) => {
             bubbleError = cause instanceof Error ? cause.message : String(cause);
+            console.warn('[detect] bubbles failed; continuing without them.', cause);
             return null;
         });
         timings.bubble = Math.round(performance.now() - bubbleStarted);
@@ -517,6 +590,7 @@ export async function runDetection(request: OffscreenDetectRequest): Promise<Det
         // are still extracted because they are the fallback when every block
         // comes back empty, and because a page that answers nothing must not
         // leave the user with no boxes at all.
+        enterStage('detecting text lines');
         const detected = await detectLines(bitmap, balloonRects);
         timings.detect = Math.round(performance.now() - detectStarted);
 
@@ -527,6 +601,7 @@ export async function runDetection(request: OffscreenDetectRequest): Promise<Det
         // block, so the block is both the detection unit and the group.
         let readings = null as Awaited<ReturnType<typeof readBlockRegions>> | null;
         if (reader && detected.blkBoxes.length > 0) {
+            enterStage(`reading ${detected.blkBoxes.length} text block(s)`);
             readings = await readBlockRegions(bitmap, detected.blkBoxes, reader, detected.detBoxes, detected.mask)
                 .catch((cause: unknown) => {
                     console.warn('Block reading failed, falling back to the line path.', cause);
@@ -960,11 +1035,13 @@ export async function runDetection(request: OffscreenDetectRequest): Promise<Det
             if (paintedLines.length !== grouped.lines.length) {
                 console.info(`Dropped ${grouped.lines.length - paintedLines.length} line boxes with no paint or no own text.`);
             }
+            enterStage(`reading ${paintedLines.length} text line(s)`);
             if (reader) {
                 cloud = await recognizeLinesInCloud(bitmap, paintedLines, reader);
             }
             collected = cloud ? cloud.lines : await recognizeLines(bitmap, paintedLines);
         }
+        enterStage('laying out the page');
         timings.group = Math.round(performance.now() - groupStarted);
         timings.ocr = 0;
         timings.extras = Math.round(performance.now() - started - timings.fetch - timings.detect - timings.group - timings.ocr);
@@ -1203,10 +1280,22 @@ export async function runDetection(request: OffscreenDetectRequest): Promise<Det
             })),
             ms: Math.round(performance.now() - started),
             warm,
-            timings,
+            timings: { ...timings, inference: inferenceTimings() },
         };
     } catch (cause) {
-        return { ok: false, error: cause instanceof Error ? cause.message : String(cause) };
+        // The stage is part of the error: a bare message from a model says what
+        // failed, not where the pass had got to.
+        const elapsed = Math.round(performance.now() - started);
+        const held = Math.round(performance.now() - detectStageStarted);
+        const detail = cause instanceof Error ? cause.message : String(cause);
+        console.error(`[detect] failed at "${detectStage}" after ${elapsed} ms: ${detail}`, cause);
+        return {
+            ok: false,
+            error: `${detail} (stage: ${detectStage}, ${(held / 1000).toFixed(1)} s in that stage, ${(elapsed / 1000).toFixed(1)} s total)`,
+        };
+    } finally {
+        console.info(`[detect] finished at "${detectStage}" in ${Math.round(performance.now() - started)} ms`);
+        leaveStage();
     }
 }
 

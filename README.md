@@ -41,8 +41,8 @@ the failing case, what has been tried and the diagnostics that would pin it down
 
 ## Settings
 
-The popup stores the DeepSeek key and the translation effort in
-`chrome.storage.local`, so both survive a browser restart. The effort is written
+The popup stores the DeepSeek key, the translation effort and the inference
+device in `chrome.storage.local`, so they survive a browser restart. The effort is written
 the moment the menu changes; the key is only written when **Save settings** is
 pressed.
 
@@ -60,6 +60,54 @@ low, high and max.
 The keys in `manifest.json` are suggestions. If one clashes with another
 extension, rebind it at `chrome://extensions/shortcuts`; the popup reads the
 bound key and prints it in its hint box.
+
+## When detection seems stuck
+
+The batch pill shows how many seconds the current stage has run, and when a
+batch fails it prints the failing item's reason. Before those two, a stage that
+never returned and a stage that was merely slow looked the same, and a failed
+batch said only `1 failed`.
+
+Every wait now has a deadline, and a missed deadline is an error that names the
+model and the stage:
+
+| Wait | Deadline |
+| --- | --- |
+| Page image download | 20 s |
+| Image decode | 60 s |
+| Each model load | 180 s |
+| Each inference pass | 120 s |
+| One whole detection (service-worker watchdog) | 10 min |
+
+The reason is also in the page's console and in the offscreen document's
+console, which is where the detail lives if the pill is not enough:
+
+1. Open `chrome://extensions`, find Comic Translator, click **Inspect views:
+   service worker** (and **offscreen.html** if it is listed).
+2. The offscreen console logs `[detect] <stage>` as the pass moves, and
+   `[inference] <model> loaded in … on wasm` after each model loads.
+3. A pass that stops after `[detect] detecting text lines` was inside the
+   detector; one that stops at `downloading the page image` never got the
+   bytes.
+
+Inference runs on the GPU by default, because the detector on the CPU is slow.
+The device is the **Inference device** menu in the popup; it is saved the moment
+it changes, and the offscreen document drops its sessions so the next detection
+reloads the models on the new device. The same setting from a console is:
+
+```js
+chrome.storage.local.set({ inferenceBackend: 'wasm' });  // CPU: stable, slow
+chrome.storage.local.set({ inferenceBackend: 'webgpu' }); // GPU: fast
+```
+
+GPU is the one failure this extension can cause that takes the whole browser
+with it: when the GPU process wedges, the toolbar stops responding too. Two
+things stand between a bad GPU and a silent hang. Before the 94 MB detector
+loads, a five-second probe asks for a GPU device; if the probe fails or times
+out, the page uses CPU. And a WebGPU load or run that fails or times out
+downgrades that page to CPU, so one bad GPU is not retried for every model. The
+probe cannot save a driver that wedges mid-inference, so if Chrome freezes
+while a page is detecting, switch the device to CPU.
 
 ## Models
 
