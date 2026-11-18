@@ -7,35 +7,17 @@ import {
     BUBBLE_NMS,
     BUBBLE_SCORE_THRESHOLD,
 } from '../shared/constants';
+import { hasSession, runSession, sessionFor } from './onnx';
 import { insidePolygon } from './rect';
 import type { Bubble, BubbleMask, Box, TextMask } from './types';
 
-if (ort.env?.wasm) ort.env.wasm.numThreads = 1;
-
-const webgpu = typeof navigator !== 'undefined' && 'gpu' in navigator;
-
-let sessionPromise: Promise<ort.InferenceSession> | null = null;
-
+/** Load the bubble model once per page; a failed load is retried on the next pick. */
 function loadBubble(): Promise<ort.InferenceSession> {
-    if (!sessionPromise) {
-        sessionPromise = ort.InferenceSession.create(chrome.runtime.getURL(BUBBLE_MODEL_PATH), {
-            executionProviders: webgpu ? ['webgpu', 'wasm'] : ['wasm'],
-            graphOptimizationLevel: 'all',
-        }).catch(async (cause: unknown) => {
-            if (!webgpu) throw cause;
-            console.warn('WebGPU bubble model failed, using WASM.', cause);
-            return ort.InferenceSession.create(chrome.runtime.getURL(BUBBLE_MODEL_PATH), {
-                executionProviders: ['wasm'],
-                graphOptimizationLevel: 'all',
-            });
-        });
-    }
-    void sessionPromise.then(() => console.info(`Bubble provider: ${webgpu ? 'webgpu preferred' : 'wasm'}`));
-    return sessionPromise;
+    return sessionFor('bubble', chrome.runtime.getURL(BUBBLE_MODEL_PATH), 'bubble model');
 }
 
 export function isBubbleReady(): boolean {
-    return sessionPromise !== null;
+    return hasSession('bubble');
 }
 
 function intersectionOverUnion(a: Box, b: Box): number {
@@ -122,7 +104,7 @@ export async function detectBubbles(bitmap: ImageBitmap): Promise<{ mask: Bubble
         tensor[size * size * 2 + index] = pixels[offset + 2] / 255;
     }
 
-    const outputs = await session.run({ [inputName]: new ort.Tensor('float32', tensor, [1, 3, size, size]) });
+    const outputs = await runSession(session, { [inputName]: new ort.Tensor('float32', tensor, [1, 3, size, size]) }, 'bubble model');
     const values = Object.values(outputs) as ort.Tensor[];
     const detection = values.find((value) => value.dims.length === 3 && value.dims[1] < value.dims[2]);
     const prototypes = values.find((value) => value.dims.length === 4);

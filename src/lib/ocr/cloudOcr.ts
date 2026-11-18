@@ -436,6 +436,18 @@ export function splitLineInBox<T extends TextLine>(line: T, count: number): T[] 
     return pieces;
 }
 
+/** A detector box on the crop, with the line it was fitted to when leaned. */
+export type NamedBox = {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    angle?: number;
+    direction?: 'vertical' | 'horizontal';
+    lineLength?: number;
+    lineThickness?: number;
+};
+
 /** A region the model found inside one block, in page pixels. */
 export type BlockRegion = {
     x: number;
@@ -479,8 +491,13 @@ export type BlockReading = {
     hint?: BlockHint;
     /** Page pixels per cell of the grid drawn on the crop. */
     cell: number;
-    /** The detector's line boxes that were drawn in blue on this crop. */
-    boxes: { x: number; y: number; width: number; height: number }[];
+    /**
+     * The detector's line boxes that were drawn in blue on this crop. A leaned
+     * box keeps the angle and the line it was fitted to: when several entries
+     * name one leaned box, those numbers are the only geometry that says which
+     * way the rows run and how deep one row is.
+     */
+    boxes: NamedBox[];
     /** The answer as the model sent it, for the debug view. */
     raw?: string;
     /** The crop the model saw, as a data URL. */
@@ -1468,6 +1485,68 @@ function tightBounds(
     };
 }
 
+type LeanedRows = {
+    lean: number;
+    length: number;
+    thickness: number;
+    centres: [number, number][];
+};
+
+/**
+ * Where the rows of a tilted run go, when several entries name one leaned box.
+ *
+ * A horizontal box the detector fitted to the ink is one row long and one row
+ * thick, whatever its page rectangle looks like after rotation: the note at
+ * 553,365 is 265x31 at -32 degrees, and that rectangle is 241x165. Three
+ * entries naming it are three rows of the note. Splitting the rectangle's
+ * height is not a split of the run (it is mostly the rotation), and neither is
+ * centring them on the rectangle's own bands: the rows would be twice the
+ * source glyph and land on top of one another.
+ *
+ * The block, rotated by the same angle, holds the whole run. Its rotated
+ * extents are the row length and the depth of the run; the depth divided by
+ * the entry count is one row, and the centres step along the perpendicular.
+ */
+function leanedRowsIn(
+    group: BlockRegion[],
+    box: NamedBox | undefined,
+    block?: { x: number; y: number; width: number; height: number },
+): LeanedRows | undefined {
+    if (!block || group.length < 2 || !box) return undefined;
+    // The detector boxes carry no direction (the reading builds it from the
+    // page rectangle), so the same test the reading uses applies here: a box
+    // wider than it is tall is a row, and a leaned row's rectangle is this
+    // tall only because the row is rotated.
+    if (box.height >= box.width) return undefined;
+    const lean = box.angle;
+    if (typeof lean !== 'number' || Math.abs(lean) < 0.01) return undefined;
+    const cos = Math.abs(Math.cos(lean));
+    const sin = Math.abs(Math.sin(lean));
+    const square = cos * cos - sin * sin;
+    // Near 45 degrees the rectangle cannot say which side is which; the
+    // ordinary band split is the safer answer there.
+    if (!(square > 0.05)) return undefined;
+    const length = (cos * block.width - sin * block.height) / square;
+    const depth = (cos * block.height - sin * block.width) / square;
+    const band = depth / group.length;
+    if (!(length > 8) || !(band > 5)) return undefined;
+    // One row does not fill its band edge to edge: the remaining fifth is the
+    // gap the source rows had. The existing band split uses the same 0.95.
+    const thickness = Math.max(4, band * 0.95);
+    const centreX = block.x + block.width / 2;
+    const centreY = block.y + block.height / 2;
+    // Rows run top to bottom: the perpendicular points down the page for a
+    // lean whose sign is the pipeline's (a horizontal line rising to the right
+    // is negative).
+    const acrossX = -Math.sin(lean);
+    const acrossY = Math.cos(lean);
+    const centres = group.map((_, index): [number, number] => {
+        const offset = (index - (group.length - 1) / 2) * band;
+        return [centreX + acrossX * offset, centreY + acrossY * offset];
+    });
+    return { lean, length, thickness, centres };
+}
+
 /**
  * Give every leaned entry a rotated frame and a glyph size that matches the
  * ink it replaces.
@@ -1486,7 +1565,7 @@ function tightBounds(
  */
 export function applyInclination(
     regions: BlockRegion[],
-    boxes: { x: number; y: number; width: number; height: number }[],
+    boxes: NamedBox[],
     mask: TextMask | null,
     /**
      * Lean measured from the ink of the whole block, when the block was cut
@@ -1497,6 +1576,14 @@ export function applyInclination(
      * wrong way.
      */
     blockLean?: number,
+    /**
+     * The block the crop was cut from. When several entries name one leaned
+     * box, the rows they sit on span the block, not the box: the box is the
+     * one row the detector found, and its page rectangle is tall only because
+     * the row is rotated (a 265x31 row at -32 degrees has a 241x165 box). The
+     * block is what says how deep the run of rows goes.
+     */
+    block?: { x: number; y: number; width: number; height: number },
 ): void {
     if (regions.length === 0) return;
     const byBox = new Map<number, BlockRegion[]>();
@@ -1511,6 +1598,36 @@ export function applyInclination(
     for (const [id, group] of byBox) {
         group.forEach((region) => claimed.add(region));
         const box = boxes[id - 1];
+        // Several entries on one *leaned horizontal* box are rows of a tilted
+        // run, not a column the reader split. The box is one row: the detector
+        // fitted it along the ink, and rotation alone gives it the height of
+        // the whole run, so a band split of its page rectangle (below) cuts
+        // 165/3 = 55px rows on a note whose rows are 30px and puts their
+        // centres on the page axis instead of the text's. The label then comes
+        // out at twice the source glyph and all three land on one another.
+        //
+        // Here the block, rotated by the box's own angle, says how long a row
+        // is and how deep the run is; the rows are laid across that depth, one
+        // band each, parallel and adjacent, and the label follows them.
+        const rows = leanedRowsIn(group, box, block);
+        if (rows) {
+            const { lean, length, thickness, centres } = rows;
+            group.forEach((region, index) => {
+                const [centreX, centreY] = centres[index];
+                const bounds = tightBounds(centreX, centreY, length, thickness, lean, 'h');
+                region.x = bounds.x;
+                region.y = bounds.y;
+                region.width = bounds.width;
+                region.height = bounds.height;
+                region.direction = 'h';
+                region.angle = lean;
+                region.lineLength = length;
+                region.lineThickness = thickness;
+                region.glyphSize = thickness;
+                region.frame = { ...bounds };
+            });
+            continue;
+        }
         const direction = group[0].direction;
         const measured = leanOfBox(mask, box, direction);
         const groupLean = direction === 'v' && blockLean !== undefined ? blockLean : measured?.lean ?? 0;
@@ -1634,7 +1751,7 @@ export async function readBlockRegions(
     blocks: { x: number; y: number; width: number; height: number; score: number }[],
     ocr: OcrRequest,
     /** Line boxes the detector found, drawn on the crop as the text to read. */
-    detBoxes: { x: number; y: number; width: number; height: number }[] = [],
+    detBoxes: NamedBox[] = [],
     /** Segmentation plane, used to measure the lean the reader did not report. */
     mask: TextMask | null = null,
 ): Promise<BlockReading[]> {
@@ -1657,10 +1774,23 @@ export async function readBlockRegions(
             // Only the detector's line boxes that reach this block: they are
             // what the prompt calls the text to read, so a stray box from the
             // panel next door must not appear on the crop.
-            const inside = columnBoxes(detBoxes.filter((box) => (
+            const inside: NamedBox[] = columnBoxes(detBoxes.filter((box) => (
                 box.x < padded.x + padded.width && box.x + box.width > padded.x
                 && box.y < padded.y + padded.height && box.y + box.height > padded.y
-            )).slice(0, 40).map((box) => ({ x: box.x, y: box.y, width: box.width, height: box.height })));
+            )).slice(0, 40).map((box) => ({
+                x: box.x,
+                y: box.y,
+                width: box.width,
+                height: box.height,
+                ...(box.angle !== undefined && Math.abs(box.angle) >= 0.01
+                    ? {
+                        angle: box.angle,
+                        direction: box.direction,
+                        lineLength: box.lineLength,
+                        lineThickness: box.lineThickness,
+                    }
+                    : {}),
+            })));
             reading.boxes = inside;
             // Every box drawn on the crop is shown whole: a box cut by the crop
             // edge is the one a reader tends to leave out of its answer, and
@@ -1715,7 +1845,7 @@ export async function readBlockRegions(
                     // The reader answers "v" for a column that leans. Measure
                     // the lean from the ink and give the entry the rotated
                     // frame and the glyph size the label needs.
-                    applyInclination(reading.regions, reading.boxes ?? [], mask, hint?.lean);
+                    applyInclination(reading.regions, reading.boxes ?? [], mask, hint?.lean, reading.block);
                     const geometry = gridGeometry(cut.crop, cut.cell);
                     reading.cell = geometry.cell;
                     console.info(`[grid] block ${index + 1}: ${geometry.columns} x ${geometry.rows} cells `

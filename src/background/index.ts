@@ -1,5 +1,6 @@
 import offscreenRequestFactory from '../shared/factories/offscreenRequestFactory';
-import { DETECTION_CACHE_VERSION } from '../shared/constants';
+import { DETECTION_CACHE_VERSION, DETECT_STAGE_KEY } from '../shared/constants';
+import { withTimeout } from '../shared/timing';
 import {
     BATCH_STATE_KEY,
     CONTENT_SCRIPT_FILE,
@@ -47,6 +48,8 @@ let translationQueue: Promise<void> = Promise.resolve();
 let batchRunning = false;
 let activeBatchId: string | null = null;
 let batchAbort: AbortController | null = null;
+/** The tab whose detection is running, so stage updates can be relayed to it. */
+let activeDetectionTabId: number | null = null;
 
 /**
  * Pixels captured in the page, keyed by the token of the element they came
@@ -54,6 +57,16 @@ let batchAbort: AbortController | null = null;
  * held here instead: a batch of ten captured pages would not fit in 10 MB.
  */
 const capturedPixels = new Map<string, string>();
+
+/** A batch whose worker died is only resumed while it is this fresh. */
+const RESUME_GRACE_MS = 60_000;
+/**
+ * The last-resort deadline for one detection, including the cloud reading. A
+ * model or a blocked request has its own shorter deadline; this catches the
+ * case where the offscreen document stops answering altogether (a wedged GPU
+ * process, or a document that Chrome closed) and no error ever comes back.
+ */
+const DETECTION_WATCHDOG_MS = 10 * 60_000;
 
 function notifyProgress(tabId: number | undefined, stage: string, provider?: string): void {
     const message = { kind: 'translate-progress' as const, stage, provider };
@@ -69,6 +82,18 @@ function notifyProgress(tabId: number | undefined, stage: string, provider?: str
 // like pinging the offscreen document and relaying the detection request to it. 
 
 chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
+    // The offscreen document announces each detection stage. Content scripts
+    // cannot hear runtime messages, so the worker relays the stage to the tab
+    // that asked for the detection.
+    const staged = message as { kind?: string; stage?: string } | undefined;
+    if (staged?.kind === 'detect-stage' && typeof staged.stage === 'string') {
+        if (typeof activeDetectionTabId === 'number') {
+            void chrome.tabs
+                .sendMessage(activeDetectionTabId, staged, { frameId: 0 })
+                .catch(() => undefined);
+        }
+        return false;
+    }
     // message directly form the frontend
     const request = message as IncomingMessage | undefined;
     if (!request || request.target !== SERVICE_WORKER_TARGET) return false;
@@ -229,6 +254,20 @@ async function resolveOcr(request: DetectRequest): Promise<OcrRequest | undefine
     return key.length > 0 ? { provider: 'deepseek', key } : undefined;
 }
 
+async function readDetectStage(): Promise<{ stage: string; since: number } | null> {
+    try {
+        const stored = await chrome.storage.local.get(DETECT_STAGE_KEY);
+        const value = stored[DETECT_STAGE_KEY] as { stage?: unknown; since?: unknown } | undefined;
+        if (!value || typeof value.stage !== 'string') return null;
+        return {
+            stage: value.stage,
+            since: typeof value.since === 'number' ? value.since : Date.now(),
+        };
+    } catch {
+        return null;
+    }
+}
+
 async function runDetection(request: DetectRequest): Promise<DetectResponse> {
     const imageDataUrl = typeof request.imageDataUrl === 'string' && request.imageDataUrl.length > 0
         ? request.imageDataUrl
@@ -249,9 +288,19 @@ async function runDetection(request: DetectRequest): Promise<DetectResponse> {
     }
 
     try {
-        const response = (await chrome.runtime.sendMessage(
-            offscreenRequestFactory.ofDetection(request.imageUrl, imageDataUrl, ocr),
-        )) as DetectResponse | undefined;
+        const response = await withTimeout(
+            chrome.runtime.sendMessage(
+                offscreenRequestFactory.ofDetection(request.imageUrl, imageDataUrl, ocr),
+            ) as Promise<DetectResponse | undefined>,
+            DETECTION_WATCHDOG_MS,
+            `The detector did not answer within ${DETECTION_WATCHDOG_MS / 60_000} minutes.`,
+        ).catch(async (cause: unknown) => {
+            const detail = cause instanceof Error ? cause.message : String(cause);
+            const stage = await readDetectStage();
+            if (!stage) throw new Error(detail);
+            const held = Math.round((Date.now() - stage.since) / 1000);
+            throw new Error(`${detail} Last stage: "${stage.stage}" (${held} s in that stage).`);
+        });
 
         if (!response) return { ok: false, error: 'The offscreen document sent no answer.' };
 
@@ -538,6 +587,20 @@ async function resumeBatch(): Promise<void> {
     if (batchRunning) return;
     const state = await readBatch().catch(() => null);
     if (!state || state.status !== 'running') return;
+    // A worker that died mid-run leaves the batch marked running. Resuming every
+    // such batch on the next wake-up re-runs a detection that may itself be the
+    // thing that hung, so the page never stops "detecting". Only a batch that
+    // was live a moment ago is resumed; an older one is closed, which also
+    // replaces the stale progress toast with "Batch cancelled".
+    const idle = Date.now() - (typeof state.updatedAt === 'number' ? state.updatedAt : 0);
+    if (idle > RESUME_GRACE_MS) {
+        console.warn(`[batch] ${state.id} was left running ${Math.round(idle / 1000)} s ago; closing it instead of resuming.`);
+        state.status = 'cancelled';
+        state.updatedAt = Date.now();
+        await saveBatch(state).catch(() => undefined);
+        await notifyBatch(state);
+        return;
+    }
     activeBatchId = state.id;
     batchAbort = new AbortController();
     batchRunning = true;
@@ -619,6 +682,7 @@ async function runTranslation(request: TranslateRequest, sender: chrome.runtime.
 
     try {
         const tabId = await resolveTabId(request, sender);
+        activeDetectionTabId = tabId;
         let tabPageUrl = request.tabPageUrl;
         if (!tabPageUrl) {
             const tab = await chrome.tabs.get(tabId).catch(() => null);
@@ -811,6 +875,8 @@ async function runTranslation(request: TranslateRequest, sender: chrome.runtime.
         };
     } catch (cause) {
         return { ok: false, error: cause instanceof Error ? cause.message : String(cause) };
+    } finally {
+        activeDetectionTabId = null;
     }
 }
 

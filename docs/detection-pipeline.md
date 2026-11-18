@@ -470,7 +470,7 @@ For the page above, the accepted area is `179,149 143×322` — the padded crop 
 
 Stylised handwriting still costs recognition confidence: two columns on the narration page read at 0.76 and 0.82. Both stay above the 0.7 floor, and the cause is the recogniser, not the box.
 
-A line that the `det` head misses, that sits outside every balloon, and that has one glyph is not detected. A large sound effect outside a balloon is detected only when the `det` head marks it. The harness runs on the WASM provider, so the WebGPU path is exercised only by the build.
+A line that the `det` head misses, that sits outside every balloon, and that has one glyph is not detected. A large sound effect outside a balloon is detected only when the `det` head marks it. The harness and the build both run on the WASM provider by default; WebGPU is opt-in through `chrome.storage.local.inferenceBackend`, so the measured path and the shipped path are the same unless someone asks for the GPU.
 
 The model is the limiting factor for stylised lettering. A different detector export, such as the `detector.ort` asset in ShinobuTranslator, may mark those lines. The pipeline would accept it without a change, because the seed rule only depends on one line band per column.
 

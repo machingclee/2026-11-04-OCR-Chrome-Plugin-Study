@@ -264,8 +264,42 @@
             "note": "The two columns in the shield bubble (二人はその隙に / 魔法で攻撃してくれ) were drawn on a detector box that starts above the glyphs, so the translation sat outside the bubble. On the full page that block is BLK 483,1168 66×256; this export is 720×1024, so the same rectangle is 309,748 42×164. The drawn characters of both columns stay inside that rectangle.",
             "columns": [
                 {
-                    "block": [309, 748, 42, 164],
+                    "block": [
+                        309,
+                        748,
+                        42,
+                        164
+                    ],
                     "count": 2,
+                    "onMissing": "skip"
+                }
+            ]
+        },
+        {
+            "id": "paper-rows",
+            "image": "fixtures/page-paper.jpg",
+            "note": "The note in the coffin (BLK 553,365 241x197) is three rows of horizontal text on a sheet tilted about -32 degrees (counter-clockwise). The det head fits one leaned box to the ink (265x31), so the reader's three entries all name that one blue rectangle. The layout used to band-split the box's page rectangle (241x165, most of it rotation), give each row 55px, draw all three at the same 267px glyph in the same place, and stack them over the artwork. Three lines, parallel, at the sheet's lean, each about the source glyph size, none on another.",
+            "labels": [
+                {
+                    "region": [
+                        545,
+                        355,
+                        260,
+                        220
+                    ],
+                    "source": "戻るまでが",
+                    "minCount": 3,
+                    "lean": -31.7,
+                    "leanTolerance": 7,
+                    "em": 24,
+                    "emTolerance": 0.4,
+                    "emMaxGlyphs": 8
+                }
+            ],
+            "groups": [
+                {
+                    "source": "戻るまでが",
+                    "minLines": 3,
                     "onMissing": "skip"
                 }
             ]

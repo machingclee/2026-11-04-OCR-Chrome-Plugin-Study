@@ -18,6 +18,10 @@ import {
     REASONING_EFFORTS,
     DEFAULT_REASONING_EFFORT,
     type ReasoningEffort,
+    INFERENCE_BACKEND_KEY,
+    INFERENCE_BACKENDS,
+    DEFAULT_INFERENCE_BACKEND,
+    type InferenceBackend,
 } from './shared/constants';
 import type {
     BatchStatusResponse,
@@ -91,7 +95,14 @@ function prettyJson(raw: string): string {
 
 function stageBreakdown(timings?: DetectTimings): string {
     if (!timings) return '';
-    return `detect ${seconds(timings.detect)}, OCR ${seconds(timings.ocr)}, bubbles ${seconds(timings.bubble)}`;
+    // The device and the per-model load are what distinguish a slow model from
+    // a slow machine: a cold WebGPU load is the shader compilation, and it is
+    // paid once per offscreen document, not on every page.
+    const models = (timings.inference ?? [])
+        .map((model) => `${model.label} ${seconds(model.runMs)} (load ${seconds(model.loadMs)}, ${model.backend})`)
+        .join(', ');
+    const suffix = models.length > 0 ? `; ${models}` : '';
+    return `detect ${seconds(timings.detect)}, OCR ${seconds(timings.ocr)}, bubbles ${seconds(timings.bubble)}${suffix}`;
 }
 
 function stageSummary(timings?: DetectTimings): string {
@@ -154,6 +165,7 @@ export default function App() {
     const [groups, setGroups] = useState<GroupStroke[]>([]);
     const [deepSeekKey, setDeepSeekKey] = useState('');
     const [effort, setEffort] = useState<ReasoningEffort>(DEFAULT_REASONING_EFFORT);
+    const [backend, setBackend] = useState<InferenceBackend>(DEFAULT_INFERENCE_BACKEND);
     const [dirty, setDirty] = useState(false);
     const [view, setView] = useState<PopupView>('production');
     const [translationVisible, setTranslationVisible] = useState(true);
@@ -261,6 +273,7 @@ export default function App() {
                 PICKED_IMAGE_TARGET_KEY,
                 DEEPSEEK_KEY,
                 REASONING_EFFORT_KEY,
+                INFERENCE_BACKEND_KEY,
                                         LAST_RESULT_KEY,
                 DEBUG_PAGES_KEY,
                 SHOW_TRANSLATION_KEY,
@@ -274,6 +287,9 @@ export default function App() {
                 const storedEffort = local[REASONING_EFFORT_KEY];
                 const level = REASONING_EFFORTS.find((value) => value === storedEffort);
                 if (level) setEffort(level);
+                const storedBackend = local[INFERENCE_BACKEND_KEY];
+                const device = INFERENCE_BACKENDS.find((value) => value === storedBackend);
+                if (device) setBackend(device);
                 const storedView = session[POPUP_VIEW_KEY];
                 if (storedView === 'production' || storedView === 'debug') {
                     setView(storedView);
@@ -551,6 +567,21 @@ export default function App() {
             setStatus(`Thinking effort set to ${level === 'off' ? 'off' : level}.`);
         } catch (cause) {
             setError(`Could not save the thinking effort: ${cause instanceof Error ? cause.message : String(cause)}`);
+        }
+    }, []);
+
+    // The device is saved the moment it changes, like the effort. The offscreen
+    // document watches storage and drops its sessions, so the next detection
+    // uses the new device without reloading the extension.
+    const handleBackendChange = useCallback(async (device: InferenceBackend) => {
+        setBackend(device);
+        try {
+            await chrome.storage.local.set({ [INFERENCE_BACKEND_KEY]: device });
+            setStatus(device === 'webgpu'
+                ? 'Inference device set to GPU. The next detection reloads the models on it.'
+                : 'Inference device set to CPU. The next detection reloads the models on it.');
+        } catch (cause) {
+            setError(`Could not save the inference device: ${cause instanceof Error ? cause.message : String(cause)}`);
         }
     }, []);
 
@@ -883,6 +914,26 @@ export default function App() {
                             Off is the default: the prompt carries the procedure a chain of thought would perform,
                             and thinking was the wall-clock cost of a page. High and max buy a harder look at a
                             block at the cost of waiting.
+                        </p>
+                        <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                            Inference device
+                            <select
+                                value={backend}
+                                onChange={(event) => {
+                                    const device = INFERENCE_BACKENDS.find((value) => value === event.target.value);
+                                    if (device) void handleBackendChange(device);
+                                }}
+                                className="rounded border border-slate-300 bg-white px-2 py-2 text-sm text-slate-900 outline-none transition focus:border-[#b08a68] focus:ring-2 focus:ring-[#eadfd2]"
+                            >
+                                <option value="webgpu">GPU: WebGPU (fast)</option>
+                                <option value="wasm">CPU: WASM (stable, slow)</option>
+                            </select>
+                        </label>
+                        <p className="text-[11px] font-medium text-[#8a6a4f]">
+                            The detector runs on this device. GPU is much faster, but a stuck GPU driver can take
+                            Chrome down with it; if the page freezes, pick CPU. GPU is probed before the models
+                            load, and a probe or run that fails or times out falls back to CPU for that page, so
+                            the detection still reports an error instead of waiting forever.
                         </p>
                         <p className="text-[11px] font-medium text-[#8a6a4f]">
                             DeepSeek reads each block and writes its translation. Without a key no translation runs.

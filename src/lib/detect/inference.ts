@@ -3,11 +3,8 @@ import {
     DETECTOR_INPUT_SIZE,
     DETECTOR_MODEL_PATH,
 } from '../../shared/constants';
+import { hasSession, runSession, sessionFor } from '../onnx';
 import type { Prepared } from '../types';
-
-ort.env.wasm.numThreads = 1;
-
-const webgpu = typeof navigator !== 'undefined' && 'gpu' in navigator;
 
 export type DetectorRun = {
     /** Channel 0 of the det head: one band per text line. */
@@ -28,36 +25,13 @@ export type DetectedBlock = {
     score: number;
 };
 
-let sessionPromise: Promise<ort.InferenceSession> | null = null;
-
 export function isSessionReady(): boolean {
-    return sessionPromise !== null;
+    return hasSession('detector');
 }
 
+/** Load the detector once per page; a failed load is retried on the next pick. */
 export function loadDetector(): Promise<ort.InferenceSession> {
-    if (!sessionPromise) {
-        sessionPromise = ort.InferenceSession.create(chrome.runtime.getURL(DETECTOR_MODEL_PATH), {
-            executionProviders: webgpu ? ['webgpu', 'wasm'] : ['wasm'],
-            graphOptimizationLevel: 'all',
-        }).catch(async (cause: unknown) => {
-            if (!webgpu) {
-                sessionPromise = null;
-                throw cause;
-            }
-            console.warn('WebGPU detector failed, using WASM.', cause);
-            try {
-                return await ort.InferenceSession.create(chrome.runtime.getURL(DETECTOR_MODEL_PATH), {
-                    executionProviders: ['wasm'],
-                    graphOptimizationLevel: 'all',
-                });
-            } catch (fallbackCause) {
-                sessionPromise = null;
-                throw fallbackCause;
-            }
-        });
-    }
-    void sessionPromise.then(() => console.info(`Detector provider: ${webgpu ? 'webgpu preferred' : 'wasm'}`));
-    return sessionPromise;
+    return sessionFor('detector', chrome.runtime.getURL(DETECTOR_MODEL_PATH), 'detector');
 }
 
 type PixelSource = ImageBitmap | HTMLCanvasElement;
@@ -218,7 +192,7 @@ export async function runDetector(bitmap: PixelSource): Promise<DetectorRun> {
     if (!inputName) throw new Error('The detector exposes no input.');
 
     const prepared = await prepareInput(bitmap);
-    const outputs = await session.run({ [inputName]: prepared.tensor }) as Record<string, ort.Tensor>;
+    const outputs = await runSession(session, { [inputName]: prepared.tensor }, 'detector');
     const det = pickDet(outputs);
     if (!det) throw new Error('The detector returned no score map.');
     return { det, seg: pickSeg(outputs), blocks: readBlocks(outputs, prepared), prepared };

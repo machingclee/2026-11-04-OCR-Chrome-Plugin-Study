@@ -556,12 +556,13 @@ function start(): void {
 
                     progressListener = (message: unknown): void => {
                         const progress = message as { kind?: string; stage?: string; provider?: string } | undefined;
-                        if (progress?.kind !== 'translate-progress') return;
-                        if (progress.stage === 'detecting') text.textContent = 'Detecting boxes ...';
-                        if (progress.stage === 'inpainting') text.textContent = 'Inpainting ...';
-                        if (progress.stage === 'calling') {
-                            text.textContent = 'Reading and translating with DeepSeek ...';
+                        if (progress?.kind === 'detect-stage' && typeof progress.stage === 'string') {
+                            text.textContent = `${phasePhrase(progress.stage)} ...`;
+                            return;
                         }
+                        if (progress?.kind !== 'translate-progress') return;
+                        const phrase = stagePhrase(progress.stage ?? '');
+                        if (phrase) text.textContent = `${phrase} ...`;
                     };
                     chrome.runtime.onMessage.addListener(progressListener);
 
@@ -1347,6 +1348,8 @@ type BatchProgressUi = {
     text: HTMLElement;
     cancel: HTMLButtonElement;
     hideTimer?: number;
+    /** Repaints the elapsed seconds while a stage is running. */
+    ticker?: number;
 };
 
 /**
@@ -1373,12 +1376,67 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 let batchProgressUi: BatchProgressUi | null = null;
 let batchStage = '';
+let batchStageSince = 0;
+/** The stage text without its trailing "· 620 ms/run", so the timer survives updates. */
+let batchStageBase = '';
 let batchRunningIndex = -1;
+/** "Processing 1/3 images", without the stage, so the ticker can repaint it. */
+let batchCountText = '';
+
+/** One line of text, short enough for the pill, with the full text on hover. */
+function shorten(text: string, limit: number): string {
+    const clean = text.replace(/\s+/g, ' ').trim();
+    return clean.length > limit ? `${clean.slice(0, limit - 1)}…` : clean;
+}
+
+/**
+ * Paint the count, the stage and how long that stage has been running. The
+ * seconds are the difference between "slow" and "stuck": before this, a stage
+ * that never returned looked the same after one second and after ten minutes.
+ */
+function paintBatchText(): void {
+    const ui = batchProgressUi;
+    if (!ui) return;
+    const held = batchStage && batchStageSince > 0
+        ? Math.max(0, Math.round((Date.now() - batchStageSince) / 1000))
+        : 0;
+    const elapsed = held >= 5 ? ` (${held} s)` : '';
+    ui.text.textContent = `${batchCountText}${batchStage ? ` · ${batchStage}${elapsed}` : ''}`;
+}
+
+/**
+ * The page shows three phases. Download, balloon and line detection are the
+ * first. The local recogniser and the cloud read are the second. Translation,
+ * and the inpaint that follows it, are the third.
+ */
+function phasePhrase(stage: string): string {
+    if (stage === 'calling' || stage === 'inpainting' || stage.includes('inpaint')) return 'Translating';
+    if (/^reading \d+ text /.test(stage) || stage === 'laying out the page' || stage.includes('recogniser')) {
+        return 'Doing OCR';
+    }
+    if (stage === 'Detecting boxes' || stage === 'Doing OCR' || stage === 'Translating') return stage;
+    return 'Detecting boxes';
+}
+
+/**
+ * Set the pill's stage. The seconds restart only when the kind of work changes,
+ * not when the same stage reports a fresh per-run number: "Running the
+ * recogniser · 620 ms/run" has the same base as "Running the recogniser", so
+ * the total keeps counting across the model's many calls.
+ */
+function setBatchStage(phrase: string): void {
+    const base = phrase.split(' · ')[0];
+    if (base !== batchStageBase) {
+        batchStageBase = base;
+        batchStageSince = Date.now();
+    }
+    batchStage = phrase;
+    paintBatchText();
+}
 
 function stagePhrase(stage: string): string {
     if (stage === 'detecting') return 'Detecting boxes';
-    if (stage === 'inpainting') return 'Inpainting';
-    if (stage === 'calling') return 'DeepSeek API reading and translating';
+    if (stage === 'calling' || stage === 'inpainting') return 'Translating';
     return '';
 }
 
@@ -1400,7 +1458,10 @@ function updateBatchProgress(state: BatchState): void {
         element.style.font = '12px/1.35 system-ui, sans-serif';
         element.style.boxShadow = '0 5px 18px rgba(0, 0, 0, 0.25)';
         element.style.pointerEvents = 'auto';
+        element.style.maxWidth = 'calc(100vw - 36px)';
         const text = document.createElement('span');
+        text.style.minWidth = '0';
+        text.style.whiteSpace = 'normal';
         const cancel = document.createElement('button');
         cancel.type = 'button';
         cancel.textContent = 'Cancel';
@@ -1413,7 +1474,9 @@ function updateBatchProgress(state: BatchState): void {
         cancel.style.font = 'inherit';
         element.append(text, cancel);
         document.documentElement.append(element);
-        batchProgressUi = { element, text, cancel };
+        // A second repaint keeps the elapsed time honest even when the worker
+        // sends no progress message for the stage that is running.
+        batchProgressUi = { element, text, cancel, ticker: window.setInterval(paintBatchText, 1000) };
     }
     const ui = batchProgressUi;
     const total = state.items.length;
@@ -1423,22 +1486,37 @@ function updateBatchProgress(state: BatchState): void {
     if (running !== batchRunningIndex) {
         batchRunningIndex = running;
         batchStage = '';
+        batchStageBase = '';
+        batchStageSince = 0;
     }
     if (state.status === 'done') {
+        const firstError = state.items.find((item) => item.status === 'error' && typeof item.error === 'string');
         batchStage = '';
+        batchStageBase = '';
+        batchStageSince = 0;
         batchRunningIndex = -1;
-        ui.text.textContent = `Batch done: ${done}/${total}${failed ? `, ${failed} failed` : ''}`;
+        // The reason used to live only in storage and the popup's debug view, so
+        // a failed batch said "1 failed" and nothing else. The stage the failure
+        // names ("loading the detector", "detecting text lines") is the part
+        // that says where to look.
+        const reason = failed > 0 && firstError ? ` — ${shorten(firstError.error ?? '', 160)}` : '';
+        ui.text.textContent = `Batch done: ${done}/${total}${failed ? `, ${failed} failed` : ''}${reason}`;
+        ui.text.title = firstError?.error ?? '';
         ui.cancel.style.display = 'none';
+        window.clearInterval(ui.ticker);
         window.clearTimeout(ui.hideTimer);
         ui.hideTimer = window.setTimeout(() => {
             ui.element.remove();
             batchProgressUi = null;
-        }, 6000);
+        }, failed > 0 ? 15000 : 6000);
     } else if (state.status === 'cancelled') {
         batchStage = '';
+        batchStageBase = '';
+        batchStageSince = 0;
         batchRunningIndex = -1;
         ui.text.textContent = `Batch cancelled: ${done}/${total}`;
         ui.cancel.style.display = 'none';
+        window.clearInterval(ui.ticker);
         window.clearTimeout(ui.hideTimer);
         ui.hideTimer = window.setTimeout(() => {
             ui.element.remove();
@@ -1446,18 +1524,25 @@ function updateBatchProgress(state: BatchState): void {
         }, 4000);
     } else {
         ui.cancel.style.display = '';
-        const count = running >= 0
+        ui.cancel.disabled = false;
+        ui.cancel.textContent = 'Cancel';
+        batchCountText = running >= 0
             ? `Processing ${Math.min(done + 1, total)}/${total} images`
             : `Queued ${total} images...`;
-        ui.text.textContent = running >= 0 && batchStage ? `${count} · ${batchStage}` : count;
+        paintBatchText();
         ui.cancel.onclick = (event) => {
             event.preventDefault();
             event.stopPropagation();
             ui.cancel.disabled = true;
+            ui.cancel.textContent = 'Cancelling…';
             void chrome.runtime.sendMessage(serviceWorkerRequestFactory.ofCancel(state.id)).then((response: { ok?: boolean } | undefined) => {
-                if (!response?.ok) ui.cancel.disabled = false;
+                if (!response?.ok) {
+                    ui.cancel.disabled = false;
+                    ui.cancel.textContent = 'Cancel';
+                }
             }).catch(() => {
                 ui.cancel.disabled = false;
+                ui.cancel.textContent = 'Cancel';
             });
         };
     }
@@ -1468,16 +1553,13 @@ if (!batchWindow.__comicTranslatorBatchListener) {
     batchWindow.__comicTranslatorBatchListener = true;
     chrome.runtime.onMessage.addListener((message: unknown) => {
         const progress = message as BatchProgressMessage | { kind?: string; stage?: string; provider?: string } | undefined;
+        if (progress && 'kind' in progress && progress.kind === 'detect-stage' && typeof progress.stage === 'string') {
+            if (batchProgressUi) setBatchStage(phasePhrase(progress.stage));
+            return false;
+        }
         if (progress && 'kind' in progress && progress.kind === 'translate-progress' && typeof progress.stage === 'string') {
             const phrase = stagePhrase(progress.stage);
-            if (phrase && batchProgressUi) {
-                batchStage = phrase;
-                const current = batchProgressUi.text.textContent ?? '';
-                const count = current.split(' · ')[0];
-                if (count.startsWith('Processing ') || count.startsWith('Queued ')) {
-                    batchProgressUi.text.textContent = `${count} · ${batchStage}`;
-                }
-            }
+            if (phrase && batchProgressUi) setBatchStage(phrase);
             return false;
         }
         if (!progress || !('type' in progress) || progress.type !== 'batch-progress') return false;
