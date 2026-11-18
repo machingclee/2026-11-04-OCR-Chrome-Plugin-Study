@@ -19,7 +19,7 @@ All technical details are documented in the full walkthrough: [Build a Chrome Ex
 
 <img width="600" alt="image" src="https://github.com/user-attachments/assets/222839f8-9ab9-4b2a-9d03-c38a6045b865" />
 
-## Video (Speed of ONNX box detection + OCR + CloudOCR via LLM + final LLM Transation)
+## Video (Speed of ONNX box detection + OCR + CloudOCR via LLM + final LLM Translation)
 
 https://github.com/user-attachments/assets/ef98c1e0-05fe-49b5-a218-e226f141de7f
 
