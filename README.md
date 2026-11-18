@@ -13,6 +13,13 @@ absolutely positioned text over the image in the page.
 All technical details are documented in the full walkthrough: [Build a Chrome Extension From Scratch: From an Empty Folder to a Page Translated In Place](https://www.machingclee.com/blog/article/Build-a-Chrome-Extension-From-Scratch-From-an-Empty-Folder-to-a-Page-Translated-In-Place)
 
 
+## App Layout as a Chrome Popup Window
+
+<img width="1042" height="604" alt="image" src="https://github.com/user-attachments/assets/a7be5760-c6fa-4f1d-a626-90a51e060bc3" />
+
+
+
+
 ## Inpainting and Translation
 
 <img width="600" alt="image" src="https://github.com/user-attachments/assets/8034b371-9d26-4c65-b00a-eac93e50b9bf" />
