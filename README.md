@@ -153,6 +153,9 @@ Four contexts, one message protocol:
 - `npm run dev` serves the popup in a normal browser tab for layout work.
 - `npm run typecheck` runs `tsc` with no emit.
 - `npm run build` stamps a build id, type-checks, and bundles into `dist/`.
+- `npm run zip` packs `dist/` into `dist.zip`, with `manifest.json` at the
+  archive root so the zip uploads to the Web Store and unzips loadable.
+  `scripts/zip-dist.sh [out.zip]` does the same from a shell.
 - `scripts/prepare-assets.ts` downloads and verifies the models.
 - `scripts/probe-detector-outputs.py` prints the detector outputs offline.
 
