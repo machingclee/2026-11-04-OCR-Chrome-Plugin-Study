@@ -28,11 +28,11 @@ the models, which are not committed.
 4. Press `Opt+T` / `Alt+T` on a page (or press Pick an image in the debug
    view), then click an image. It gets a check mark, and that check mark
    translates the page in place. Detect boxes only inspects the detection in
-   the popup. With the picker on, right-click an image and choose **Show/Hide
-   Translation** to compare the result with the original page; the item is
-   greyed out on a page that has no translation yet. The **Translation** switch
-   in the popup does the same thing. The stored result belongs to the document
-   it was picked from, so a page reload clears it and the popup starts empty.
+   the popup. With the picker on, right-click an image for more functionality,
+   such as **Show/Hide Translation** to compare the result with the original
+   page. The **Translation** switch in the popup does the same thing. The stored
+   result belongs to the document it was picked from, so a page reload clears it
+   and the popup starts empty.
 
 ## Open work
 

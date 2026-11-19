@@ -520,7 +520,7 @@ async function processBatch(state: BatchState, settings?: TranslateSettings): Pr
             const captured = item.captured && item.token ? capturedPixels.get(item.token) : undefined;
             if (item.captured && !captured) {
                 item.status = 'error';
-                item.error = 'The captured pixels were lost when the worker restarted. Select the image again.';
+                item.error = 'The captured pixels were lost when the worker restarted. Pick the image again.';
                 await saveBatch(state);
                 await notifyBatch(state);
                 continue;

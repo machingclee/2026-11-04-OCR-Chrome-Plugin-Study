@@ -39,12 +39,35 @@ const H2V = new Map<string, string>([
     ['ー', '︱'],
     ['ｰ', '︱'],
     ['─', '︱'],
+    // A wave dash is drawn across in horizontal text and down the column in
+    // vertical text. U+2240 is the vertical squiggle; leaving ～ upright put a
+    // horizontal tilde in the middle of a vertical label.
+    ['～', '≀'],
+    ['〜', '≀'],
+    ['~', '≀'],
+    ['〰', '≀'],
 ]);
+
+/**
+ * One mark for a run of exclamation and question marks, the way a Japanese
+ * page sets it: ！？ is one glyph, not two.
+ *
+ * Two full-width marks in a vertical column take two cells and read as two
+ * beats, so the translation drew "！？" down the column where the source had a
+ * single ⁉. The composed forms are one character, one cell and one mark.
+ */
+export function normalizeMarks(text: string): string {
+    return text
+        // ⁉ first: "！？" and "?!" both name surprise, not two questions.
+        .replace(/[!！]\s*[?？]/gu, '⁉')
+        .replace(/[?？]\s*[!！]/gu, '⁈')
+        .replace(/[?？]{2,}/gu, '⁇');
+}
 
 export function toHorizontal(text: string): string {
     // Chinese and Japanese horizontal text uses two ellipsis marks, not three
     // ASCII periods. Keep a single period because it may be a decimal point.
-    return text
+    return normalizeMarks(text)
         .replace(/(?:[.．・·]\s*){2,}/g, '……')
         .replace(/…+/g, '……')
         .replace(/⋯+/g, '……');
@@ -53,7 +76,7 @@ export function toHorizontal(text: string): string {
 export function toVertical(text: string): string {
     // Three ASCII dots or a run of ellipsis marks is one vertical ellipsis, not
     // three full stops or a horizontal row of dots beside the column.
-    const collapsed = text
+    const collapsed = normalizeMarks(text)
         .replace(/(?:[.．・·]\s*){2,}/g, '︙')
         .replace(/…+/g, '︙')
         .replace(/⋯+/g, '︙')
@@ -68,14 +91,14 @@ export function toVertical(text: string): string {
 
 /** A mark that may not start a line, which is where a break is forbidden. */
 const NO_START = new Set([
-    '。', '，', '、', '！', '？', '；', '：', '!', '?', '︕', '︖', '︒', '︐', '︔', '︓',
+    '。', '，', '、', '！', '？', '；', '：', '!', '?', '⁉', '⁈', '⁇', '︕', '︖', '︒', '︐', '︔', '︓',
     ')', '）', '」', '』', '】', '〕', '︶', '﹂', '﹄', '⋮', '︙', '︱', '…', '⋯',
 ]);
 
 /** A mark that may not end a line. */
 const NO_END = new Set(['(', '（', '「', '『', '【', '〔', '︵', '﹁', '﹃']);
 
-const STRONG = new Set(['。', '！', '？', '!', '?', '；', ';', '︕', '︖', '︒']);
+const STRONG = new Set(['。', '！', '？', '!', '?', '⁉', '⁈', '⁇', '；', ';', '︕', '︖', '︒']);
 const SOFT = new Set(['，', '、', ',', '：', ':', '…', '⋮', '︙', '︐', '︔', '︓']);
 const PHRASE_END = new Set([...STRONG, ...SOFT]);
 

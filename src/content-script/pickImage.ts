@@ -1314,7 +1314,7 @@ function startBatchSelection(): void {
     window.addEventListener('resize', redrawMarks);
     makeBar();
     redrawMarks();
-    showToast('Selection mode: drag over images to select several, or click one, then click a green badge to translate. Escape cancels.');
+    showToast('Selection mode: drag to select several images or click one, then click its green badge. Escape cancels.');
 }
 
 // The same bundle is injected for the overlay, so the popup starts the picker

@@ -20,10 +20,11 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { DEFAULT_REASONING_EFFORT } from '../src/shared/constants.ts';
-import { applyInclination } from '../src/lib/ocr/cloudOcr.ts';
+import { applyInclination, isReadingOfAny } from '../src/lib/ocr/cloudOcr.ts';
 import { createCanvas, loadImage, prepareOrt, readApiKey } from './harness/env.mjs';
 import { dataUrlBytes, runPage } from './harness/page.mjs';
 import { spokenGlyphs } from '../src/lib/loneGlyph.ts';
+import { normalizeMarks, toVertical } from '../src/lib/punct.ts';
 
 const ROOT = process.cwd();
 const OUT = resolve(ROOT, 'out/regression');
@@ -293,6 +294,48 @@ function inclineSelfTest() {
 }
 
 /**
+ * A reading spells out kanji; a kana line beside a kana line is dialogue.
+ *
+ * The detector read たく なった!? as two columns and the reader returned でく
+ * for the first. The second was then dropped as the "reading" of でく, because
+ * the reading test only compared advance and size — a host printed in kana has
+ * no reading to be. The real furigana case must still be dropped.
+ */
+function readingHostSelfTest() {
+    const spoken = { x: 140, y: 300, width: 20, height: 150, text: 'なった！？', direction: 'v' };
+    const kanaHost = { x: 100, y: 300, width: 130, height: 150, text: 'でく', direction: 'v' };
+    if (isReadingOfAny(spoken, [kanaHost])) {
+        throw new Error('a real line beside a kana host was dropped as its furigana');
+    }
+    const ruby = { x: 160, y: 100, width: 20, height: 200, text: 'だいまどうし', direction: 'v' };
+    const kanji = { x: 100, y: 100, width: 60, height: 200, text: '大魔導士', direction: 'v' };
+    if (!isReadingOfAny(ruby, [kanji])) {
+        throw new Error('furigana beside a kanji column was no longer recognised');
+    }
+    console.log('[selftest] a reading is only a reading of kanji');
+}
+
+/**
+ * The marks a column cannot split, and the one a vertical wave dash needs.
+ *
+ * ！？ set as two glyphs takes two cells and reads as two beats; the composed
+ * ⁉ is one cell. A ～ left upright in a vertical label is a horizontal tilde
+ * lying across the column. Both ran without the network, so this half of the
+ * check cannot flake on the reader.
+ */
+function typographySelfTest() {
+    const marks = [['！？', '⁉'], ['!?', '⁉'], ['？！', '⁈'], ['?!', '⁈'], ['？？', '⁇'], ['??', '⁇']];
+    for (const [source, expected] of marks) {
+        const got = normalizeMarks(source);
+        if (got !== expected) throw new Error(`${JSON.stringify(source)} became ${JSON.stringify(got)}, not ${JSON.stringify(expected)}`);
+    }
+    const vertical = toVertical('でぇ～');
+    if (!vertical.includes('≀')) throw new Error(`a vertical wave dash stayed ${JSON.stringify(vertical)}`);
+    if (/[～〜~]/u.test(vertical)) throw new Error(`a horizontal wave dash is still in the column: ${JSON.stringify(vertical)}`);
+    console.log('[selftest] ！？ is one mark and ～ runs down the column');
+}
+
+/**
  * Three rows on a tilted sheet must become three parallel lines, not one stack.
  *
  * This is the page-paper block with the reader's own answer: three entries
@@ -437,10 +480,14 @@ function glyphBoxOf(item) {
 }
 
 function glyphInside(block, glyph) {
-    return glyph.x >= block.x - 0.5
-        && glyph.y >= block.y - 0.5
-        && glyph.x + glyph.width <= block.x + block.width + 0.5
-        && glyph.y + glyph.height <= block.y + block.height + 0.5;
+    // The block is measured by hand from the fixture; the reader's box and the
+    // line snap disagree with it by a few pixels. The bug this guards was the
+    // shield column starting 80px above its block, so 4px is slack, not a hole.
+    const margin = 4;
+    return glyph.x >= block.x - margin
+        && glyph.y >= block.y - margin
+        && glyph.x + glyph.width <= block.x + block.width + margin
+        && glyph.y + glyph.height <= block.y + block.height + margin;
 }
 
 /**
@@ -527,7 +574,7 @@ function checkCase(page, testCase) {
 
     for (const rule of testCase.groups ?? []) {
         const pattern = rule.source ? new RegExp(rule.source) : null;
-        const matches = page.detection.groups.map((group, index) => ({ ...groups[index], box: group, lines: group.lines.length }))
+        const matches = page.detection.groups.map((group, index) => ({ ...groups[index], index, box: group, lines: group.lines.length }))
             .filter((group) => {
                 if (rule.at) {
                     const [x, y] = rule.at;
@@ -559,6 +606,10 @@ function checkCase(page, testCase) {
                 failures.push(`the text of the bubble at ${JSON.stringify(rule.at)} is `
                     + `${JSON.stringify(match.source)}, not the kana the reader had to correct`);
             }
+            if (rule.drawn === true && !page.job.items.some((item) => item.groupId === match.index)) {
+                failures.push(`${JSON.stringify(match.source)} got an answer (${JSON.stringify(match.answer)}) `
+                    + `but no label was drawn for it`);
+            }
             if (rule.minLines && match.lines < rule.minLines) {
                 failures.push(`${JSON.stringify(match.source)} has ${match.lines} line(s), not ${rule.minLines}: `
                     + `the reader did not split the block into its columns`);
@@ -577,6 +628,19 @@ function checkCase(page, testCase) {
                         + `contains ${JSON.stringify(word)}`);
                 }
             }
+        }
+    }
+
+    // What was actually painted, not what the translator answered: a mark that
+    // is composed in the label (⁉) or a wave dash turned down the column (≀)
+    // only exists on the page after the typesetter has run.
+    if (testCase.drawn) {
+        const painted = page.job.items.map((item) => item.text).join('\n');
+        for (const word of testCase.drawn.contains ?? []) {
+            if (!painted.includes(word)) failures.push(`no label paints ${JSON.stringify(word)}; painted ${JSON.stringify(painted)}`);
+        }
+        for (const word of testCase.drawn.notContains ?? []) {
+            if (painted.includes(word)) failures.push(`a label still paints ${JSON.stringify(word)}; painted ${JSON.stringify(painted)}`);
         }
     }
 
@@ -691,6 +755,8 @@ async function main() {
     inclineSelfTest();
     fontSizeSelfTest();
     paperRowsSelfTest();
+    typographySelfTest();
+    readingHostSelfTest();
     const options = args();
     const manifest = JSON.parse(readFileSync(resolve(ROOT, 'fixtures/regression.json'), 'utf8'));
     const cases = manifest.cases.filter((testCase) => (

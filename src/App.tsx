@@ -578,8 +578,8 @@ export default function App() {
         try {
             await chrome.storage.local.set({ [INFERENCE_BACKEND_KEY]: device });
             setStatus(device === 'webgpu'
-                ? 'Inference device set to GPU. The next detection reloads the models on it.'
-                : 'Inference device set to CPU. The next detection reloads the models on it.');
+                ? 'Using GPU. The next detection reloads the models.'
+                : 'Using CPU. The next detection reloads the models.');
         } catch (cause) {
             setError(`Could not save the inference device: ${cause instanceof Error ? cause.message : String(cause)}`);
         }
@@ -796,7 +796,7 @@ export default function App() {
 
     return (
         <main className={`mx-auto flex flex-col gap-3 rounded-md bg-[#f4f1ec] p-3 text-slate-900 transition-[width] duration-200 ease-out ${view === 'debug' ? 'w-[720px]' : 'w-[320px]'}`}>
-            <div className="flex flex-col items-start gap-2">
+            <div className="sticky top-0 z-20 -mx-3 -mt-3 w-[calc(100%+1.5rem)] border-b border-[#e7dfd4] bg-[#f4f1ec] px-3 pb-2 pt-3 shadow-[0_4px_6px_-6px_rgba(95,74,56,0.35)]">
                 <div className="flex w-full items-center justify-between gap-2">
                     <div className="flex rounded-md bg-[#e9e3da] p-1">
                         <button
@@ -816,7 +816,7 @@ export default function App() {
                     </div>
                     <span className="shrink-0 rounded bg-[#ece4d9] px-2.5 py-1 text-xs font-medium text-[#7a5c43]">v1.1.2</span>
                 </div>
-                <div className="flex w-full flex-wrap items-center gap-2">
+                <div className="mt-2 flex w-full flex-wrap items-center gap-2">
                     <span className="text-xs font-medium text-[#6d523b]">Translation</span>
                     <button
                         type="button"
@@ -909,11 +909,9 @@ export default function App() {
                             </select>
                         </label>
                         <p className="text-[11px] font-medium text-[#8a6a4f]">
-                            Reading a block never thinks: it transcribes the text and places it. This level is the
-                            translation that follows, one request per block, with the rest of the page as context.
-                            Off is the default: the prompt carries the procedure a chain of thought would perform,
-                            and thinking was the wall-clock cost of a page. High and max buy a harder look at a
-                            block at the cost of waiting.
+                            Reading just transcribes text. Translation follows, one request per block with the
+                            rest of the page as context. Off is the default: the prompt already does the thinking,
+                            and thinking was the slow part. High and max take a harder look, but you wait longer.
                         </p>
                         <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
                             Inference device
@@ -930,13 +928,13 @@ export default function App() {
                             </select>
                         </label>
                         <p className="text-[11px] font-medium text-[#8a6a4f]">
-                            The detector runs on this device. GPU is much faster, but a stuck GPU driver can take
-                            Chrome down with it; if the page freezes, pick CPU. GPU is probed before the models
-                            load, and a probe or run that fails or times out falls back to CPU for that page, so
-                            the detection still reports an error instead of waiting forever.
+                            The detector runs on this device. GPU is much faster, but a stuck driver can crash
+                            Chrome — if the page freezes, pick CPU. GPU is tested before the models load, and a
+                            failed or timed-out test or run falls back to CPU for that page, so detection never
+                            hangs.
                         </p>
                         <p className="text-[11px] font-medium text-[#8a6a4f]">
-                            DeepSeek reads each block and writes its translation. Without a key no translation runs.
+                            DeepSeek reads and translates each block. Without a key, no translation runs.
                         </p>
                     </div>
                 </section>
@@ -971,11 +969,7 @@ export default function App() {
                             <kbd className="rounded border border-[#ded2c4] bg-white px-1.5 py-0.5 font-mono text-xs text-[#6d523b]">{windowsShortcut}</kbd>
                             {' '}on Windows, then drag to select images.
                         </p>
-                        <p>
-                            Right-click an image with the picker on and choose{' '}
-                            <span className="font-medium">Show/Hide Translation</span>.
-                            It stays greyed out until the page has a translation.
-                        </p>
+                        <p>Right-click for more functionality.</p>
                     </div>
                 )}
             </header>
@@ -1171,10 +1165,7 @@ export default function App() {
                 <section className={`rounded-md border border-[#e7dfd4] bg-white p-3 shadow-sm ${view === 'debug' ? '' : 'hidden'}`}>
                     <h2 className="text-sm font-semibold">Blocks ({blocks.length})</h2>
                     <p className="mt-1 text-xs text-slate-500">
-                        One card per blk box: the image DeepSeek was sent, which is the blk box with its
-                        margin, upscaled and covered by the cell grid, then the regions it answered with.
-                        The crop line is the rectangle that was cut, in page pixels, and the grid cell size
-                        the reader's numbers are counted in.
+                        One card per block: the crop DeepSeek was sent, then the regions it reported.
                     </p>
                     <ol className="mt-2 flex flex-col gap-3">
                         {blocks.map((block, index) => {
