@@ -318,6 +318,31 @@ function findRules(mask: Uint8Array, width: number, height: number): Uint8Array 
     if (rowNeed <= width) scan(height, width, (row, column) => row * width + column, rowNeed);
     const columnNeed = Math.max(height * 0.45, width * 1.5);
     if (columnNeed <= height) scan(width, height, (column, row) => row * width + column, columnNeed);
+
+    // A rule stands in paper; a glyph stroke stands among the glyph. The four
+    // characters of 配属初日 have their centre strokes on one x, which read as
+    // an 89px vertical rule and were left on the page under the translation.
+    // Clear a rule pixel when the ink around it belongs to something else.
+    const original = rules.slice();
+    const radius = 6;
+    for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+            const index = y * width + x;
+            if (original[index] !== 1) continue;
+            let near = 0;
+            for (let dy = -radius; dy <= radius && near < 10; dy += 1) {
+                const yy = y + dy;
+                if (yy < 0 || yy >= height) continue;
+                for (let dx = -radius; dx <= radius; dx += 1) {
+                    const xx = x + dx;
+                    if (xx < 0 || xx >= width) continue;
+                    const at = yy * width + xx;
+                    if (mask[at] === 1 && original[at] !== 1) near += 1;
+                }
+            }
+            if (near >= 10) rules[index] = 0;
+        }
+    }
     return rules;
 }
 

@@ -34,6 +34,12 @@ export type BoxData = {
     /** The reader's classification: dialogue, a name or a sound effect. */
     kind?: 'chat' | 'sfx' | 'name';
     /**
+     * The meaning printed as small text beside a katakana word (風の槍 beside
+     * ヴィンドのスピア). Context for the translator, never drawn: it is the
+     * gloss the katakana was coined from, not a reading of kanji.
+     */
+    gloss?: string;
+    /**
      * The cell band the label fills inside its block, in page pixels. The
      * reader counted the block's cells, so the translation is spread over that
      * band instead of the guessed line box, which stays tight for erasing.
@@ -135,6 +141,8 @@ export type GroupData = {
     frames?: { x: number; y: number; width: number; height: number }[];
     /** The ink box of each line, in page pixels, parallel to `lines`. */
     inks?: { x: number; y: number; width: number; height: number }[];
+    /** The katakana gloss of each line, parallel to `lines`, when it has one. */
+    glosses?: (string | undefined)[];
 };
 
 /** One absolutely positioned translation, in the image's own pixels. */

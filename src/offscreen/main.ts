@@ -1065,6 +1065,7 @@ export async function runDetection(request: OffscreenDetectRequest): Promise<Det
         const groups: GroupData[] = [];
         const perGroup: string[][] = grouped.boxes.map(() => []);
         const perGroupTranslations: string[][] = grouped.boxes.map(() => []);
+        const perGroupGlosses: (string | undefined)[][] = grouped.boxes.map(() => []);
         // What the labels will be drawn on, and the ink they must sit on, per
         // group: kept so a drift check can compare the two without the layout.
         const perGroupSlots: { x: number; y: number; width: number; height: number }[][] = grouped.boxes.map(() => []);
@@ -1074,6 +1075,7 @@ export async function runDetection(request: OffscreenDetectRequest): Promise<Det
                 if (!centreInsideBox(line, grouped.boxes[index])) continue;
                 perGroup[index].push(line.text);
                 perGroupTranslations[index].push(line.translation ?? '');
+                perGroupGlosses[index].push(line.gloss);
                 const ink = { x: line.x, y: line.y, width: line.width, height: line.height };
                 perGroupInk[index].push(ink);
                 perGroupSlots[index].push(line.slot ?? ink);
@@ -1104,6 +1106,14 @@ export async function runDetection(request: OffscreenDetectRequest): Promise<Det
                     .map((value, at) => (value.length > 0 ? at : -1))
                     .filter((at) => at >= 0)
                     .map((at) => perGroupInk[index][at]),
+                ...(perGroupGlosses[index].some((value) => typeof value === 'string' && value.length > 0)
+                    ? {
+                        glosses: perGroup[index]
+                            .map((value, at) => (value.length > 0 ? at : -1))
+                            .filter((at) => at >= 0)
+                            .map((at) => perGroupGlosses[index][at]),
+                    }
+                    : {}),
             });
         });
         for (const line of usable) {
@@ -1115,6 +1125,7 @@ export async function runDetection(request: OffscreenDetectRequest): Promise<Det
                 width: line.width,
                 height: line.height,
                 lines: [line.text],
+                ...(line.gloss ? { glosses: [line.gloss] } : {}),
                 fontSize: groupFontSize(usable, line),
                 vertical: line.direction === 'vertical',
                 balloon: false,
@@ -1154,6 +1165,12 @@ export async function runDetection(request: OffscreenDetectRequest): Promise<Det
                     balloon: group.balloon ?? false,
                     frames: spoken.map((line) => line.slot ?? { x: line.x, y: line.y, width: line.width, height: line.height }),
                     inks: spoken.map((line) => ({ x: line.x, y: line.y, width: line.width, height: line.height })),
+                    // A column split out of a merged balloon keeps the gloss
+                    // its line carried; without it the translator saw only
+                    // ギリスマイティー and transliterated the sound.
+                    ...(spoken.some((line) => line.gloss)
+                        ? { glosses: spoken.map((line) => line.gloss) }
+                        : {}),
                 });
             }
         }

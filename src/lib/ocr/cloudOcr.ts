@@ -474,6 +474,8 @@ export type BlockRegion = {
     kind: 'chat' | 'sfx' | 'name';
     /** Furigana the model saw on this line. Kept for inspection, never merged. */
     ruby?: string;
+    /** The meaning printed as small text beside a katakana word, if any. */
+    gloss?: string;
     /** Lean of the text axis in radians, as the rest of the pipeline stores it. */
     angle?: number;
     /** Length of the line along that axis, for an inclined line. */
@@ -523,6 +525,9 @@ const REGION_EXAMPLE = {
     // is the one thing the reader cannot leave to a box edge.
     lean: 0,
     em: 24,
+    // Every entry carries the field, empty when there is no katakana gloss:
+    // a field the example shows is a field the reader fills.
+    gloss: '',
     // The number printed on the blue rectangle that holds the line. The page
     // box follows, for a crop whose numbers cannot be read.
     box: 2,
@@ -538,13 +543,14 @@ const BLOCK_PROMPT = [
     'The image is a crop of one region of a Japanese comic page: a speech balloon, a caption, or a sound effect.',
     'Report one entry per text line, in reading order. A vertical column is one entry, a horizontal row is one entry. Never merge two columns or two rows into one entry, even when they form one sentence: each entry carries only the characters printed in its own column.',
     'One entry is one run of characters printed at one size. If a block mixes sizes, split it by size, not by row: a name box printed as a small 修士1年 followed by a large 有留木 円 is two entries, each with its own box, and a large heading above a small caption is two entries for the same reason.',
-    'Furigana is not text. The small kana printed beside or above kanji to show how it is read are never an entry, never part of text, never a box, and never a field of their own. The test is size: furigana characters are clearly smaller than the characters of the line they belong to, so a small column sitting inside or beside a large column is a reading, and the entry is the large characters only.',
-    'Blue rectangles mark the text of this block, as the detector found it. Text inside a blue rectangle is the only text to read: report those lines. Anything outside every blue rectangle is artwork or handwriting, so it is not a line, never goes into text, and never has an entry of its own. A formula, a scribbled number, an arrow or a signature drawn by hand is ignored completely, even when it runs beside a column or through the gap between columns. A column stays inside its own blue rectangle.',
+    'Furigana is not text. The small kana printed beside or above kanji to show how it is read are never an entry, never part of text, never a box, and never a field of their own (the one exception is a katakana word’s gloss: that goes in gloss, below). The test is size: furigana characters are clearly smaller than the characters of the line they belong to, so a small column sitting inside or beside a large column is a reading, and the entry is the large characters only.',
+    'gloss: a katakana word sometimes carries its meaning printed beside it as clearly smaller kanji or kana, because the katakana only spells the sound. That small text is not a line and does not go into text, but it is the word’s meaning: report it in gloss, joined in reading order, even when it sits outside the blue rectangle that holds the katakana (a gloss is the exception to the blue-rectangle rule; it is never an entry and never text). ヴィンドのスピア with a small 風の槍 beside it has gloss "風の槍"; ギリスマイティ with a small 身体強化 beside it has gloss "身体強化". A furigana that only spells out how a kanji is read is not a gloss, and a short cough or sigh such as コホン beside a speech is a line of its own, not a gloss: leave gloss out for those.',
+    'Blue rectangles mark the text of this block, as the detector found it. Text inside a blue rectangle is the only text to read: report those lines. Anything outside every blue rectangle is artwork or handwriting, so it is not a line, never goes into text, and never has an entry of its own — except a katakana word’s gloss, which may sit just outside the rectangle that holds its word and is still reported in gloss. A formula, a scribbled number, an arrow or a signature drawn by hand is ignored completely, even when it runs beside a column or through the gap between columns. A column stays inside its own blue rectangle.',
     'text: exactly as printed, with small kana, dakuten, punctuation, Latin letters and digits. Never complete a word from context.',
     'Do not translate: this answer is read only. A separate request translates the text once the whole block has been read.',
     'A grid is drawn over the image and every line of it carries its page coordinate: thin lines mark single cells, a thicker line marks every fifth. The numbers along the top edge are blue and are the x of that line in page pixels; the numbers along the left edge are red and are its y. They are absolute page pixels, not a count: a line printed 1035 is x 1035 on the page, wherever the crop starts. A small grey number beside every fifth coordinate is the cell index, which you do not need.',
     'A reading can sit inside a blue rectangle, in the gap between the large characters and the box edge. It is still not a line: the entry covers the large characters, its box stays on the large characters, and the reading is left out of text. Never report it in any field. Small kana that belong to the word itself, such as the っ in いって, are part of the word and stay.',
-    'type: "chat" for dialogue, including a short はい, うん, ええ, そう, ああ, いえ, いや and a line that starts with an ellipsis. "name" for a box that holds a name, a title, a place name or a label and no sentence: 有留木 環 is a name, and so is a lone 円 printed with its reading つぶら beside it. "sfx" for onomatopoeia and sound effects such as ドドド, ゴゴゴ, ザワザワ, ドン, バン, ガシャ.',
+    'type: "chat" for dialogue, including a short はい, うん, ええ, そう, ああ, いえ, いや, a cough such as コホン or ゴホン, and a line that starts with an ellipsis. "name" for a box that holds a name, a title, a place name or a label and no sentence: 有留木 環 is a name, and so is a lone 円 printed with its reading つぶら beside it. "sfx" for onomatopoeia and sound effects such as ドドド, ゴゴゴ, ザワザワ, ドン, バン, ガシャ.',
     'direction: "v" when the line reads top to bottom, "h" when it reads left to right. A leaned line is still "v" or "h": do not use another letter for it.',
     'lean: for a leaned line, how far it is rotated clockwise from upright, in degrees between -45 and 45. A vertical line is upright when it runs straight down; if the bottom of the column leans left, lean is positive (for example 12). A horizontal line is upright when it runs left to right; if its right end rises, lean is negative. Every entry must carry lean; give 0 when the line is upright.',
     'em: the size of one character in page pixels, measured across the glyph itself (its width and height are about equal), not the gap between columns and not the whole box. Read it from the grid lines. Every entry must carry em, even when the line is upright.',
@@ -664,9 +670,14 @@ export function readingHostOf<T extends Inked>(region: T, others: T[], widest: n
         const [from, to] = spanAlong(item);
         return (to - from) / Math.max(1, glyphs(item));
     };
+    // A reading spells out the kanji of its host. A host printed only in kana
+    // has no reading to be: dropping a real line beside でく as its "furigana"
+    // lost なった！？ entirely.
+    const hasKanji = (item: Inked): boolean => /[\u3400-\u9FFF]/u.test(item.text);
     return others.find((host) => {
         if (host === region) return false;
         if (host.direction !== region.direction) return false;
+        if (!hasKanji(host)) return false;
         if (acrossSize(region) > acrossSize(host)) return false;
         // A reading is printed beside its column, so its box is narrower than
         // the column's. Equal widths mean the reader named one rectangle for
@@ -1151,7 +1162,7 @@ function readBlockAnswer(
     boxes: { x: number; y: number; width: number; height: number }[] = [],
 ): BlockRegion[] {
     const parsed = JSON.parse(extractJson(content)) as {
-        regions?: { text?: unknown; type?: unknown; kind?: unknown; ruby?: unknown; direction?: unknown; columns?: unknown; rows?: unknown; x?: unknown; y?: unknown; width?: unknown; height?: unknown; left?: unknown; top?: unknown; angle?: unknown; lean?: unknown; em?: unknown; box?: unknown; boxes?: unknown }[];
+        regions?: { text?: unknown; type?: unknown; kind?: unknown; ruby?: unknown; gloss?: unknown; direction?: unknown; columns?: unknown; rows?: unknown; x?: unknown; y?: unknown; width?: unknown; height?: unknown; left?: unknown; top?: unknown; angle?: unknown; lean?: unknown; em?: unknown; box?: unknown; boxes?: unknown }[];
         lines?: unknown;
     };
     const items = Array.isArray(parsed.regions) ? parsed.regions : [];
@@ -1298,6 +1309,9 @@ function readBlockAnswer(
                 : item.type === 'name' || item.kind === 'name' ? 'name' : 'chat',
             ...(typeof item.ruby === 'string' && item.ruby.trim().length > 0
                 ? { ruby: item.ruby.trim() }
+                : {}),
+            ...(typeof item.gloss === 'string' && item.gloss.trim().length > 0
+                ? { gloss: item.gloss.trim() }
                 : {}),
         };
         // The reader's own page box, kept beside the named detector box: when
@@ -1657,7 +1671,7 @@ export function applyInclination(
             : acrossSize / group.length;
         const credible = inkEm !== undefined && inkEm >= tight * 0.6;
         const boxEm = credible ? Math.min(tight, inkEm) : tight;
-        if ((measured === undefined && blockLean === undefined) || Math.abs(groupLean) < 0.5 * Math.PI / 180) {
+        if ((measured === undefined && blockLean === undefined) || Math.abs(groupLean) < 4 * Math.PI / 180) {
             // No ink measurement: an upright label is wrong but recoverable; a
             // label rotated by the reader's guess is wrong in a direction the
             // page never had, and looks like a deliberate slant. The glyph is
@@ -1711,16 +1725,24 @@ export function applyInclination(
         if (claimed.has(region)) continue;
         const own = region.own ?? region;
         const measured = leanOfBox(mask, own, region.direction);
-        if (!measured || Math.abs(measured.lean) < 0.5 * Math.PI / 180) {
+        if (!measured || Math.abs(measured.lean) < 4 * Math.PI / 180) {
             region.angle = undefined;
             continue;
         }
         const lean = measured.lean;
         const length = (region.direction === 'v' ? own.height : own.width) / Math.max(0.5, Math.cos(lean));
-        const em = region.glyphSize && region.glyphSize >= 4
-            ? Math.min(region.glyphSize, measured.thickness || region.glyphSize)
-            : measured.thickness || (region.direction === 'v' ? own.width : own.height);
-        const thickness = Math.max(4, Math.min(em, (region.direction === 'v' ? own.width : own.height) * 0.95));
+        // The ink's interquartile width is the spread of the strokes, not the
+        // em: a 28 pixel column whose glyphs are thin came back 11.6, and the
+        // label was drawn at 12 pixels on a page printed at 28. The reader's em
+        // is the second opinion here, capped by the box and floored by the ink;
+        // it is only unreliable on an upright column, where the box is exact.
+        const reported = region.glyphSize && region.glyphSize >= 4 ? region.glyphSize : 0;
+        const ink = measured.thickness >= 4 ? measured.thickness : 0;
+        const short = region.direction === 'v' ? own.width : own.height;
+        const em = reported > 0
+            ? Math.max(ink, Math.min(reported, short))
+            : ink || short;
+        const thickness = Math.max(4, Math.min(em, short * 0.95));
         const bounds = tightBounds(
             own.x + own.width / 2,
             own.y + own.height / 2,
