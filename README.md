@@ -2,18 +2,13 @@
 
 All technical details are documented in the full walkthrough: [Build a Chrome Extension From Scratch: From an Empty Folder to a Page Translated In Place](https://www.machingclee.com/blog/article/Build-a-Chrome-Extension-From-Scratch-From-an-Empty-Folder-to-a-Page-Translated-In-Place)
 
-
 <img width="1503" height="1140" alt="image" src="https://github.com/user-attachments/assets/8034b371-9d26-4c65-b00a-eac93e50b9bf" />
 
 <img width="798" height="1118" alt="image" src="https://github.com/user-attachments/assets/222839f8-9ab9-4b2a-9d03-c38a6045b865" />
 
 https://github.com/user-attachments/assets/b65dc644-a995-433a-92fa-c67d39a59693
 
-A Manifest V3 extension built with React 18 and TypeScript, bundled by Vite.
-
-It reads the comic image on the current page, finds the text lines, recognises
-what each one says, groups them by speech balloon, and places the translation as
-absolutely positioned text over the image in the page.
+A Manifest V3 extension in React 18 and TypeScript, bundled by Vite. It finds the text on a Japanese comic page, reads each block, translates it with DeepSeek, inpaints the source ink away, and draws the translation at the glyph's size and angle. Several images can run as one queue.
 
 ## Install and build
 
@@ -22,101 +17,79 @@ npm install
 npm run build
 ```
 
-The build writes the loadable package to `dist/`. It also downloads and verifies
-the models, which are not committed.
+The build writes `dist/`. A prebuild step downloads about 200 MB of models into `public/models` and checks each sha256; the models are not committed.
 
-## Load it
+## Load and use
 
-1. Open `chrome://extensions`.
-2. Turn on Developer mode.
-3. Choose Load unpacked and select the `dist` directory.
-4. Press `Opt+T` / `Alt+T` on a page (or press Pick an image in the debug
-   view), then click an image. It gets a check mark, and that check mark
-   translates the page in place. Detect boxes only inspects the detection in
-   the popup. With the picker on, right-click an image and choose **Show/Hide
-   Translation** to compare the result with the original page; the item is
-   greyed out on a page that has no translation yet. The **Translation** switch
-   in the popup does the same thing. The stored result belongs to the document
-   it was picked from, so a page reload clears it and the popup starts empty.
+1. In `chrome://extensions`, turn on Developer mode, choose Load unpacked and select `dist/`. Chrome 116 or later is required.
+2. Press `Opt+T` / `Alt+T`, then click an image, or drag over several. Each pick gets a green check badge.
+3. Press a badge, the Translate bar, or the right-click item to queue the picks. Images run one at a time and the queue resumes after a worker restart; Stop queue cancels the rest and keeps the finished ones.
+4. Right-click with the picker on to choose Show/Hide Translation, or use the popup switch. Drag a label to move it. A reload clears the overlay.
 
-## Open work
-
-`docs/handoff-four-columns.md` is an open bug handed over with its pipeline map,
-the failing case, what has been tried and the diagnostics that would pin it down.
+The Debug Client tab shows the det and seg maps, the reader's crops and its answers.
 
 ## Settings
 
-The popup stores the DeepSeek key and the translation effort in
-`chrome.storage.local`, so both survive a browser restart. The effort is written
-the moment the menu changes; the key is only written when **Save settings** is
-pressed.
-
-The effort applies to translation only, one request per block, and defaults to
-high. Reading a block — transcribing the text and placing it on the grid — never
-thinks. The API maps every level onto low, high or max, so the popup offers off,
-low, high and max.
+The DeepSeek key and effort live in `chrome.storage.local`; effort saves on change, the key with Save settings. Effort applies to translation only, one request per block (four at a time) with the page as context, and defaults to off; the menu also offers low, high and max. Reading always runs at off. No key, no translation.
 
 ## Shortcuts
 
 | Keys (Mac / Windows) | Action |
 | --- | --- |
-| `Opt+T` / `Alt+T` | Pick comic images on the page; drag to select several |
+| `Opt+T` / `Alt+T` | Start the picker; click or drag images |
 
-The keys in `manifest.json` are suggestions. If one clashes with another
-extension, rebind it at `chrome://extensions/shortcuts`; the popup reads the
-bound key and prints it in its hint box.
+The manifest key is a suggestion. Rebind a clash at `chrome://extensions/shortcuts`; the popup prints the bound key.
 
 ## Models
 
 | File | Size | Used for |
 | --- | --- | --- |
-| `models/comictextdetector.pt.onnx` | 94 MB | text lines from the det map |
-| `models/ppocr_v6_medium_rec.onnx` | 76 MB | reading each line |
-| `models/ppocr_v6_dict.txt` | 75 KB | charset for the recogniser |
-| `models/bubble.onnx` | 11 MB | speech balloons, for grouping |
+| `comictextdetector.pt.onnx` | 94 MB | det map, one box per line |
+| `ppocr_v6_medium_rec.onnx` | 76 MB | on-device line reading |
+| `ppocr_v6_dict.txt` | 75 KB | recogniser charset |
+| `bubble.onnx` | 11 MB | balloons, for grouping and erase |
+| `aot_inpaint_512.onnx` | 22 MB | filling erased ink |
 
-`scripts/prepare-assets.ts` fetches them, checks each sha256, and writes them to
-`public/models`. The bubble model comes out of the target project's release
-archive by reading only the byte range that holds it.
+All are under `models/`. `scripts/prepare-assets.ts` fetches and verifies them; the bubble and inpaint models come out of the target project's release archive by byte range.
 
 ## Pipeline
 
-```
-Popup  →  Service worker  →  Offscreen document
-                                 detector  : det map → line seeds → glyph
-                                             strokes → one box per column
-                                 bubble    : 640 YOLOv8 seg → balloons
-                                 recogniser: per line crop → CTC decode, or a
-                                             cloud model over the same crops
-                                 overlay   : translated boxes → page DOM
-                                 regions   : blocks first, balloons after
-```
+| Stage | Runs in | What it does |
+| --- | --- | --- |
+| Detect | offscreen | det map to one box per line, with the angle |
+| Group | offscreen | merge lines into blocks, separate ruby, order columns |
+| Read | offscreen | DeepSeek on a block crop and its grid, or PP-OCRv6 per line without a key |
+| Translate | service worker | one DeepSeek request per block, cut to fit the source columns |
+| Erase | offscreen | AOT inpaint on labelled boxes; flat paper inside a balloon |
+| Place | content script | erased page over the image, labels at source size and angle |
 
-Four contexts, one message protocol:
-
-- `src/popup` and `src/App.tsx` own the interface.
-- `src/content-script/pickImage.ts` runs in the page, marks the picked image, and stores its url.
-- `src/content-script/overlay.ts` wraps that image and positions the translation over it.
-- `src/background/index.ts` coordinates and keeps no model in memory.
-- `src/offscreen/main.ts` holds the sessions and does the work.
+Four contexts share one message protocol: `src/App.tsx` (popup and debug client), `src/content-script/pickImage.ts` and `overlay.ts` (picker and drawing), `src/background/index.ts` (queue, translation, erase gate; holds no model), `src/offscreen/main.ts` (sessions and inference).
 
 ## Scripts
 
-- `npm run dev` serves the popup in a normal browser tab for layout work.
-- `npm run typecheck` runs `tsc` with no emit.
-- `npm run build` stamps a build id, type-checks, and bundles into `dist/`.
-- `scripts/prepare-assets.ts` downloads and verifies the models.
-- `scripts/probe-detector-outputs.py` prints the detector outputs offline.
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | popup in a browser tab |
+| `npm run typecheck` | `tsc`, no emit |
+| `npm run build` | build id, type-check, bundle to `dist/` |
+| `npm run prepare:assets` | fetch and verify models; runs before build |
+| `npm run render:page` | render one page's translation headlessly |
+| `npm run prompt:lab` | compare prompts on a frozen detection |
+| `npm run regression` | replay `fixtures/regression.json` |
+| `npm run grid:drift` | measure labels against the ink |
+
+The headless scripts read the DeepSeek key from `.env`. `scripts/probe-detector-outputs.py` prints the detector outputs offline.
 
 ## Layout
 
-- `src/lib/detect/` runs the detector and turns the det and seg maps into line boxes.
-- `src/lib/rect.ts` fits the minimum area rectangle, which gives the slant.
-- `src/lib/warp.ts` turns an angle into an upright crop.
-- `src/lib/readingOrder.ts` merges, separates ruby, groups by region, orders.
-- `src/lib/erase.ts` paints the seg mask out of a crop preview before it is shown.
-- `src/lib/bubble.ts` decodes the balloon segmentation.
-- `src/lib/ocr` crops, normalises, and decodes each line.
-- `src/lib/ocr/cloudOcr.ts` sends one crop per block to DeepSeek, which returns the regions, their text and their layout; the boxes stay local.
-- `src/lib/ocr/grid.ts` draws the grid on a block crop and maps the cell box the reader answers with back to page pixels.
-- `src/shared` holds the constants, types, and message factories.
+- `src/lib/detect/`: detector and line boxes. `src/lib/ocr/`: crops, grid, DeepSeek, CTC decode.
+- `src/lib/readingOrder.ts`, `fitColumns.ts`, `punct.ts`, `loneGlyph.ts`: merging, ruby, grouping, fitting, lone glyphs, honorifics.
+- `src/lib/erase.ts`, `inpaint.ts`, `mask.ts`: erase mask, inpaint tile, paper.
+- `src/lib/translationJob.ts`, `translatePrompt.ts`, `translateDeepSeek.ts`, `typeset.ts`: translation and layout.
+- `src/lib/regions.ts`, `scoreOverlay.ts`: debug previews. `src/shared/`: constants, types, factories.
+
+## Docs and open work
+
+`docs/detection-pipeline.md` covers the detector rewrite, `docs/regression.md` the cases, and `docs/loops/` the dated records.
+
+The open cases are the three-column TV speech on `fixtures/page-forty.jpg`, where the reader merges or splits the columns between runs, and the three-line balloon in `docs/handoff-four-columns.md` that renders as four columns. `docs/loops/2026-11-18-04-three-columns.md` records the TV rounds and what was reverted.
