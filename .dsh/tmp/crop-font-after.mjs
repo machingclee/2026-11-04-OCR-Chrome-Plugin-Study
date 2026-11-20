@@ -1,0 +1,11 @@
+import { writeFileSync } from 'node:fs';
+import { createCanvas, loadImage } from '../../scripts/harness/env.mjs';
+const img = await loadImage('out/regression/font-size.png');
+console.log(img.width, img.height);
+const c = createCanvas(455, 470);
+c.getContext('2d').drawImage(img, 630, 55, 455, 470, 0, 0, 455, 470);
+writeFileSync('docs/loops/assets/font-after.png', c.toBuffer('image/png'));
+const z = createCanvas(648, 548);
+z.getContext('2d').drawImage(img, 630, 50, 450, 380, 0, 0, 648, 548);
+writeFileSync('docs/loops/assets/font-after-zoom.png', z.toBuffer('image/png'));
+console.log('ok');

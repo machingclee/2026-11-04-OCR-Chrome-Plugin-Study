@@ -20,10 +20,11 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { DEFAULT_REASONING_EFFORT } from '../src/shared/constants.ts';
-import { applyInclination } from '../src/lib/ocr/cloudOcr.ts';
+import { applyInclination, isReadingOfAny } from '../src/lib/ocr/cloudOcr.ts';
 import { createCanvas, loadImage, prepareOrt, readApiKey } from './harness/env.mjs';
 import { dataUrlBytes, runPage } from './harness/page.mjs';
 import { spokenGlyphs } from '../src/lib/loneGlyph.ts';
+import { normalizeMarks, toVertical } from '../src/lib/punct.ts';
 
 const ROOT = process.cwd();
 const OUT = resolve(ROOT, 'out/regression');
@@ -232,6 +233,44 @@ function oneInkFailures(page) {
  * drew the TV speech in the wrong direction. The geometry has to come from the
  * ink; with no mask there is no angle, not the reader's guess.
  */
+/**
+ * The label's glyph is the frame, not the reader's em.
+ *
+ * On the cup page the reader answered `em: 44` and `em: 13` for the same 27
+ * pixel column, and the label followed it. The two numbers that come from the
+ * page are the box the reader named (29-30 px, one column) and the ink; the
+ * reader's em may neither shrink nor stretch the label. This runs without the
+ * network, so it is the half of the case that cannot flake.
+ */
+function fontSizeSelfTest() {
+    const box = { x: 937, y: 139, width: 29, height: 266 };
+    const make = (em) => ({
+        x: box.x - 2, y: box.y - 3, width: box.width, height: box.height,
+        text: '…', direction: 'v', columns: 1, rows: 1, boxIds: [1], glyphSize: em, kind: 'chat',
+    });
+    for (const em of [13, 44]) {
+        const region = make(em);
+        applyInclination([region], [box], null);
+        if (Math.abs((region.glyphSize ?? 0) - box.width) > 1.5) {
+            throw new Error(`a reader em of ${em} still decides the glyph: ${region.glyphSize}px on a ${box.width}px box`);
+        }
+    }
+    // Three columns in one loose box: a third of the box is one glyph, whatever
+    // the reader answered.
+    const wide = { x: 935, y: 136, width: 78, height: 266 };
+    const group = [0, 1, 2].map((index) => ({
+        x: wide.x + index * 26, y: wide.y, width: 26, height: wide.height,
+        text: '…', direction: 'v', columns: 1, rows: 1, boxIds: [1], glyphSize: 9, kind: 'chat',
+    }));
+    applyInclination(group, [wide], null);
+    for (const region of group) {
+        if (Math.abs((region.glyphSize ?? 0) - wide.width / 3) > 1.5) {
+            throw new Error(`a three column box gives a ${region.glyphSize}px glyph, not ${(wide.width / 3).toFixed(1)}px`);
+        }
+    }
+    console.log('[selftest] the glyph follows the box and the ink, not the reader em');
+}
+
 function inclineSelfTest() {
     const region = {
         x: 312,
@@ -252,6 +291,243 @@ function inclineSelfTest() {
         throw new Error(`The reader's lean still rotates a label: ${((region.angle ?? 0) * 180 / Math.PI).toFixed(1)}deg`);
     }
     console.log('[selftest] a reader lean with no mask leaves the label upright');
+}
+
+/**
+ * A reading spells out kanji; a kana line beside a kana line is dialogue.
+ *
+ * The detector read たく なった!? as two columns and the reader returned でく
+ * for the first. The second was then dropped as the "reading" of でく, because
+ * the reading test only compared advance and size — a host printed in kana has
+ * no reading to be. The real furigana case must still be dropped.
+ */
+function readingHostSelfTest() {
+    const spoken = { x: 140, y: 300, width: 20, height: 150, text: 'なった！？', direction: 'v' };
+    const kanaHost = { x: 100, y: 300, width: 130, height: 150, text: 'でく', direction: 'v' };
+    if (isReadingOfAny(spoken, [kanaHost])) {
+        throw new Error('a real line beside a kana host was dropped as its furigana');
+    }
+    const ruby = { x: 160, y: 100, width: 20, height: 200, text: 'だいまどうし', direction: 'v' };
+    const kanji = { x: 100, y: 100, width: 60, height: 200, text: '大魔導士', direction: 'v' };
+    if (!isReadingOfAny(ruby, [kanji])) {
+        throw new Error('furigana beside a kanji column was no longer recognised');
+    }
+    console.log('[selftest] a reading is only a reading of kanji');
+}
+
+/**
+ * The marks a column cannot split, and the one a vertical wave dash needs.
+ *
+ * ！？ set as two glyphs takes two cells and reads as two beats; the composed
+ * ⁉ is one cell. A ～ left upright in a vertical label is a horizontal tilde
+ * lying across the column. Both ran without the network, so this half of the
+ * check cannot flake on the reader.
+ */
+function typographySelfTest() {
+    const marks = [['！？', '⁉'], ['!?', '⁉'], ['？！', '⁈'], ['?!', '⁈'], ['？？', '⁇'], ['??', '⁇']];
+    for (const [source, expected] of marks) {
+        const got = normalizeMarks(source);
+        if (got !== expected) throw new Error(`${JSON.stringify(source)} became ${JSON.stringify(got)}, not ${JSON.stringify(expected)}`);
+    }
+    const vertical = toVertical('でぇ～');
+    if (!vertical.includes('≀')) throw new Error(`a vertical wave dash stayed ${JSON.stringify(vertical)}`);
+    if (/[～〜~]/u.test(vertical)) throw new Error(`a horizontal wave dash is still in the column: ${JSON.stringify(vertical)}`);
+    console.log('[selftest] ！？ is one mark and ～ runs down the column');
+}
+
+/**
+ * Three rows on a tilted sheet must become three parallel lines, not one stack.
+ *
+ * This is the page-paper block with the reader's own answer: three entries
+ * naming one leaned box (the detector fitted the middle row), direction v (the
+ * reader takes the tilted rows for columns), no mask. The geometry may only
+ * come from the block and the box's angle. Before the fix this produced three
+ * frames on one another at a 267px glyph.
+ */
+function paperRowsSelfTest() {
+    const block = { x: 553.6, y: 366.3, width: 239.3, height: 195.1 };
+    const box = {
+        x: 563.0, y: 378.9, width: 241.5, height: 165.4,
+        angle: -0.5536813, direction: 'horizontal', lineLength: 265.1, lineThickness: 30.56,
+    };
+    const texts = ['戻るまでが試験です', '気を抜かずに頑張っ', 'てくださいね〜'];
+    const regions = texts.map((text) => ({
+        x: box.x, y: box.y, width: box.width, height: box.height,
+        text, direction: 'v', columns: 1, rows: 1, boxIds: [1], glyphSize: 30, kind: 'chat',
+    }));
+    applyInclination(regions, [box], null, undefined, block);
+    const failures = [];
+    const centres = regions.map((region) => ({
+        x: region.x + region.width / 2,
+        y: region.y + region.height / 2,
+        angle: region.angle ?? 0,
+        thickness: region.lineThickness ?? 0,
+        text: region.text,
+    }));
+    for (const [index, centre] of centres.entries()) {
+        const degrees = centre.angle * 180 / Math.PI;
+        if (Math.abs(degrees + 31.7) > 3) {
+            failures.push(`${JSON.stringify(centre.text)} is ${degrees.toFixed(1)}deg, not the sheet's -31.7deg`);
+        }
+        if (centre.thickness < 24 || centre.thickness > 34) {
+            failures.push(`${JSON.stringify(centre.text)} is ${centre.thickness.toFixed(0)}px thick, not one 30px row`);
+        }
+        if (regions[index].direction !== 'h') {
+            failures.push(`${JSON.stringify(centre.text)} is still a column, not a row`);
+        }
+    }
+    // Adjacent rows share their angle, so a stack shows as a zero perpendicular
+    // gap; a correct split leaves about one row of paper between the centres.
+    for (let left = 0; left < centres.length; left += 1) {
+        for (let right = left + 1; right < centres.length; right += 1) {
+            const dx = centres[left].x - centres[right].x;
+            const dy = centres[left].y - centres[right].y;
+            const across = Math.abs(-dx * Math.sin(centres[left].angle) + dy * Math.cos(centres[left].angle));
+            const along = Math.abs(dx * Math.cos(centres[left].angle) + dy * Math.sin(centres[left].angle));
+            if (along > 1) failures.push(`rows ${left + 1} and ${right + 1} are offset along the text`);
+            if (across < 24) {
+                failures.push(`rows ${left + 1} and ${right + 1} are ${across.toFixed(0)}px apart across the text: stacked`);
+            }
+        }
+    }
+    if (failures.length > 0) throw new Error(failures.join('; '));
+    console.log('[selftest] three rows on a tilted sheet are three parallel rows');
+}
+
+function rectIoU(left, right) {
+    const width = Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x);
+    const height = Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y);
+    if (width <= 0 || height <= 0) return 0;
+    const inter = width * height;
+    const union = left.width * left.height + right.width * right.height - inter;
+    return union > 0 ? inter / union : 0;
+}
+
+/**
+ * How much two drawn labels cover the same ink.
+ *
+ * The page box of a rotated label is not the label: three parallel rows of a
+ * note tilted -32 degrees are 207x143 each and only 30px apart, so their page
+ * boxes overlap by 80% while the rows themselves do not touch. Measuring the
+ * boxes would report a stack where the labels are correctly side by side (or
+ * row by row). Two labels at nearly the same angle are compared along their
+ * own axes: the perpendicular distance between their centres against the sum
+ * of their thicknesses, and the distance along the text against the sum of
+ * their lengths.
+ */
+function labelOverlapShare(left, right) {
+    const bbox = () => {
+        const width = Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x);
+        const height = Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y);
+        if (width <= 0 || height <= 0) return 0;
+        return (width * height) / Math.min(left.width * left.height, right.width * right.height);
+    };
+    const leftAngle = left.angle ?? 0;
+    const rightAngle = right.angle ?? 0;
+    if (Math.abs(leftAngle) < 0.01 || Math.abs(rightAngle) < 0.01) return bbox();
+    if (Math.abs(leftAngle - rightAngle) > 0.05) return bbox();
+    const angle = (leftAngle + rightAngle) / 2;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    // The label's own axes: a vertical label runs down its rotated frame (the
+    // frame's local +y), a horizontal one along its local +x. Reading a column
+    // with the row's axes puts its thickness on the wrong side and reports a
+    // stack where two columns are side by side.
+    const vertical = left.vertical === true && right.vertical === true;
+    const alongX = vertical ? -sin : cos;
+    const alongY = vertical ? cos : sin;
+    const acrossX = vertical ? cos : -sin;
+    const acrossY = vertical ? sin : cos;
+    const dx = (left.x + left.width / 2) - (right.x + right.width / 2);
+    const dy = (left.y + left.height / 2) - (right.y + right.height / 2);
+    const across = Math.abs(dx * acrossX + dy * acrossY);
+    const along = Math.abs(dx * alongX + dy * alongY);
+    const thickness = (i) => (i.vertical ? i.width : i.height);
+    const length = (i) => (i.vertical ? i.height : i.width);
+    const reachesAcross = Math.max(0, (thickness(left) + thickness(right)) / 2 - across);
+    const reachesAlong = Math.max(0, (length(left) + length(right)) / 2 - along);
+    if (reachesAcross === 0 || reachesAlong === 0) return 0;
+    return (reachesAcross * reachesAlong) / Math.min(left.width * left.height, right.width * right.height);
+}
+
+function holdsCentre(outer, inner) {
+    const x = inner.x + inner.width / 2;
+    const y = inner.y + inner.height / 2;
+    return x >= outer.x && x <= outer.x + outer.width && y >= outer.y && y <= outer.y + outer.height;
+}
+
+/** The painted glyphs of one label, in page pixels. The box is the em stack, not the slot. */
+function glyphBoxOf(item) {
+    const glyphs = [...item.text].filter((character) => (
+        character !== '\u2060' && character !== '\n' && !/\s/u.test(character)
+    ));
+    const size = Math.max(7, Math.round(item.fontSize ?? 12));
+    const step = size * (1 + (item.spacing || 0));
+    if (item.vertical) {
+        return {
+            x: item.x + item.width / 2 - size / 2,
+            y: item.y,
+            width: size,
+            height: glyphs.length > 0 ? (glyphs.length - 1) * step + size : 0,
+        };
+    }
+    return {
+        x: item.x,
+        y: item.y + item.height / 2 - size / 2,
+        width: glyphs.length > 0 ? (glyphs.length - 1) * step + size : 0,
+        height: size,
+    };
+}
+
+function glyphInside(block, glyph) {
+    // The block is measured by hand from the fixture; the reader's box and the
+    // line snap disagree with it by a few pixels. The bug this guards was the
+    // shield column starting 80px above its block, so 4px is slack, not a hole.
+    const margin = 4;
+    return glyph.x >= block.x - margin
+        && glyph.y >= block.y - margin
+        && glyph.x + glyph.width <= block.x + block.width + margin
+        && glyph.y + glyph.height <= block.y + block.height + margin;
+}
+
+/**
+ * The drawn characters of one block must lie inside that block.
+ *
+ * The block rectangle is the container. A detector box that runs above the
+ * glyphs used to be the label's frame, so the column started outside the
+ * balloon. This checks the characters that were painted, not the box the
+ * reader reported and not the detector rectangle.
+ */
+function checkColumns(page, rule, failures) {
+    const block = { x: rule.block[0], y: rule.block[1], width: rule.block[2], height: rule.block[3] };
+    let best = null;
+    page.detection.groups.forEach((group, index) => {
+        const overlap = rectIoU(block, group);
+        const score = Math.max(overlap, holdsCentre(group, block) || holdsCentre(block, group) ? 0.5 : 0);
+        if (!best || score > best.score) best = { group, index, score };
+    });
+    if (!best || best.score < 0.25) {
+        if (rule.onMissing === 'skip') {
+            console.log(`   (skipped the block ${rule.block.join(',')}: the reader did not report it this run)`);
+            return;
+        }
+        failures.push(`no group overlaps the block ${rule.block.join(',')}`);
+        return;
+    }
+    const labels = page.job.items.filter((item) => (
+        item.groupId === best.index && /[\u3400-\u9fff]/u.test(item.text)
+    ));
+    if (labels.length !== rule.count) {
+        failures.push(`${labels.length} column(s) on the block ${rule.block.join(',')}, not ${rule.count}: `
+            + labels.map((item) => JSON.stringify(item.text)).join(', '));
+    }
+    for (const label of labels) {
+        const glyph = glyphBoxOf(label);
+        if (!glyphInside(block, glyph)) {
+            failures.push(`${JSON.stringify(label.text)} glyphs at ${glyph.x.toFixed(0)},${glyph.y.toFixed(0)} `
+                + `${glyph.width.toFixed(0)}×${glyph.height.toFixed(0)} leave the block ${rule.block.join(',')}`);
+        }
+    }
 }
 
 function checkCase(page, testCase) {
@@ -298,7 +574,7 @@ function checkCase(page, testCase) {
 
     for (const rule of testCase.groups ?? []) {
         const pattern = rule.source ? new RegExp(rule.source) : null;
-        const matches = page.detection.groups.map((group, index) => ({ ...groups[index], box: group, lines: group.lines.length }))
+        const matches = page.detection.groups.map((group, index) => ({ ...groups[index], index, box: group, lines: group.lines.length }))
             .filter((group) => {
                 if (rule.at) {
                     const [x, y] = rule.at;
@@ -330,6 +606,10 @@ function checkCase(page, testCase) {
                 failures.push(`the text of the bubble at ${JSON.stringify(rule.at)} is `
                     + `${JSON.stringify(match.source)}, not the kana the reader had to correct`);
             }
+            if (rule.drawn === true && !page.job.items.some((item) => item.groupId === match.index)) {
+                failures.push(`${JSON.stringify(match.source)} got an answer (${JSON.stringify(match.answer)}) `
+                    + `but no label was drawn for it`);
+            }
             if (rule.minLines && match.lines < rule.minLines) {
                 failures.push(`${JSON.stringify(match.source)} has ${match.lines} line(s), not ${rule.minLines}: `
                     + `the reader did not split the block into its columns`);
@@ -348,6 +628,19 @@ function checkCase(page, testCase) {
                         + `contains ${JSON.stringify(word)}`);
                 }
             }
+        }
+    }
+
+    // What was actually painted, not what the translator answered: a mark that
+    // is composed in the label (⁉) or a wave dash turned down the column (≀)
+    // only exists on the page after the typesetter has run.
+    if (testCase.drawn) {
+        const painted = page.job.items.map((item) => item.text).join('\n');
+        for (const word of testCase.drawn.contains ?? []) {
+            if (!painted.includes(word)) failures.push(`no label paints ${JSON.stringify(word)}; painted ${JSON.stringify(painted)}`);
+        }
+        for (const word of testCase.drawn.notContains ?? []) {
+            if (painted.includes(word)) failures.push(`a label still paints ${JSON.stringify(word)}; painted ${JSON.stringify(painted)}`);
         }
     }
 
@@ -428,10 +721,7 @@ function checkCase(page, testCase) {
             for (let right = left + 1; right < leaned.length; right += 1) {
                 const a = leaned[left];
                 const b = leaned[right];
-                const overlapWidth = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
-                const overlapHeight = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
-                if (overlapWidth <= 0 || overlapHeight <= 0) continue;
-                const share = (overlapWidth * overlapHeight) / Math.min(a.width * a.height, b.width * b.height);
+                const share = labelOverlapShare(a, b);
                 if (share > 0.4) {
                     failures.push(`${JSON.stringify(a.text)} and ${JSON.stringify(b.text)} overlap on `
                         + `${(share * 100).toFixed(0)}% of one label: two columns share one box`);
@@ -439,6 +729,8 @@ function checkCase(page, testCase) {
             }
         }
     }
+
+    for (const rule of testCase.columns ?? []) checkColumns(page, rule, failures);
 
     for (const rule of testCase.loneGlyphs ?? []) {
         const pattern = new RegExp(rule.source);
@@ -461,6 +753,10 @@ function checkCase(page, testCase) {
 
 async function main() {
     inclineSelfTest();
+    fontSizeSelfTest();
+    paperRowsSelfTest();
+    typographySelfTest();
+    readingHostSelfTest();
     const options = args();
     const manifest = JSON.parse(readFileSync(resolve(ROOT, 'fixtures/regression.json'), 'utf8'));
     const cases = manifest.cases.filter((testCase) => (
@@ -544,6 +840,20 @@ async function main() {
             effort,
             rendered: image,
             labels: page.job.items.length,
+            // What was drawn, not just how many: the angle and the font are the
+            // criterion this suite measures, and a reader of the report needs
+            // them without re-running the page.
+            drawn: page.job.items.map((item) => ({
+                text: item.text,
+                group: item.groupId,
+                x: Number(item.x.toFixed(1)),
+                y: Number(item.y.toFixed(1)),
+                width: Number(item.width.toFixed(1)),
+                height: Number(item.height.toFixed(1)),
+                angle: Number(((item.angle ?? 0) * 180 / Math.PI).toFixed(2)),
+                fontSize: item.fontSize,
+                vertical: item.vertical,
+            })),
             erased: Boolean(page.erasedUrl),
             note: testCase.note,
             groups,

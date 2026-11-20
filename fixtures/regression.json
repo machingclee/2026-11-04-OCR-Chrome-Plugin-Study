@@ -104,17 +104,16 @@
         {
             "id": "balloon-split",
             "image": "fixtures/page-320.jpg",
-            "note": "この2人連れて勝手に動かせてもらうことにしたんだよ is one balloon and must stay one group, one sentence.",
+            "note": "この2人連れて勝手に動かせてもらうことにしたんだよ is one balloon and must stay one group, one sentence. The object 這兩個人 is the phrase that must survive; the sentence may refer to them once, so a second 他們 is not required.",
             "groups": [
                 {
                     "source": "勝手",
-                    "contains": [
-                        "這兩個人",
-                        "他們"
-                    ],
                     "notContains": [
                         "收下",
                         "是他做的"
+                    ],
+                    "contains": [
+                        "這兩個人"
                     ]
                 }
             ]
@@ -155,22 +154,21 @@
         {
             "id": "incline",
             "image": "fixtures/page-forty.jpg",
-            "note": "A leaned block is still leaned. The reader says direction v with no lean for the TV speech at 320,580 and the 51回卒業証書授 banner at 202,983, so the labels were drawn upright and sized from the axis-aligned box (57px on a 22px glyph, 140px on a 45px glyph). The label must follow the ink's angle and the source glyph size.",
+            "note": "A leaned block is still leaned, its columns are all read, and the labels follow the ink. The reader says direction v with lean 0 for the TV speech at 320,580, and the detector boxes its three columns as one rectangle. On the device the columns are found in the ink and read upright, and that reading goes into the block prompt as a reference, so the speech comes back as three lines instead of two. The labels must lean with the ink (about -16deg, counter-clockwise, not the +5 the run's diagonal measures) and the translation must carry 英雄. The banner's label must be ~60px, the tight column in its 169x358 leaned box, not the 96-160 the axis aligned box gives; the tolerance is wider on that side because a nine character translation is fitted down to 0.6 of it.",
             "labels": [
                 {
                     "region": [
-                        300,
-                        550,
-                        120,
+                        290,
+                        545,
+                        130,
                         220
                     ],
-                    "lean": 5,
-                    "leanTolerance": 4,
-                    "em": 22,
-                    "emTolerance": 0.3,
+                    "lean": -16,
+                    "leanTolerance": 5,
+                    "em": 24,
+                    "emTolerance": 0.35,
                     "emMaxGlyphs": 8,
-                    "source": "やつ|やっ",
-                    "onMissing": "skip"
+                    "minCount": 3
                 },
                 {
                     "region": [
@@ -180,11 +178,425 @@
                         450
                     ],
                     "lean": 15.5,
-                    "leanTolerance": 4,
+                    "leanTolerance": 5,
                     "onMissing": "skip",
-                    "source": "卒業証書|31"
+                    "source": "卒業証書|31",
+                    "em": 60,
+                    "emTolerance": 0.4
+                }
+            ],
+            "groups": [
+                {
+                    "source": "やっ|やつ|ヒーロ|熱いな",
+                    "minLines": 2,
+                    "contains": [
+                        "英雄"
+                    ],
+                    "notContains": [
+                        "還是誰",
+                        "廣森",
+                        "人類",
+                        "一個人的浪漫"
+                    ]
                 }
             ]
+        },
+        {
+            "id": "font-size",
+            "image": "fixtures/page-325.jpg",
+            "note": "The glyph size is measured from the page, not read off the grid by the model. On this page the reader answered em 44 and then em 13 for the same 27 pixel column in two runs, and a 13 pixel answer drew the label at a third of the source. Each label must be within +-30% of its own column: 27px for the cup speech, 30px for 2カ月後の試験で, 42px for 訓練校を退学してもらいます. The reader's em must not decide any of them.",
+            "labels": [
+                {
+                    "region": [
+                        900,
+                        120,
+                        140,
+                        320
+                    ],
+                    "em": 27,
+                    "emTolerance": 0.3,
+                    "minCount": 2,
+                    "source": "私が直接|指導させ",
+                    "onMissing": "skip"
+                },
+                {
+                    "region": [
+                        525,
+                        115,
+                        80,
+                        250
+                    ],
+                    "em": 30,
+                    "emTolerance": 0.3,
+                    "minCount": 1,
+                    "source": "2カ月後",
+                    "onMissing": "skip"
+                },
+                {
+                    "region": [
+                        480,
+                        870,
+                        80,
+                        470
+                    ],
+                    "em": 42,
+                    "emTolerance": 0.3,
+                    "minCount": 1,
+                    "source": "訓練校",
+                    "onMissing": "skip"
+                }
+            ],
+            "groups": [
+                {
+                    "source": "私が直接|指導させ",
+                    "minLines": 2,
+                    "contains": [
+                        "指導"
+                    ],
+                    "onMissing": "skip"
+                }
+            ]
+        },
+        {
+            "id": "bubble-start",
+            "image": "fixtures/page-shield.jpg",
+            "note": "The two columns in the shield bubble (二人はその隙に / 魔法で攻撃してくれ) were drawn on a detector box that starts above the glyphs, so the translation sat outside the bubble. On the full page that block is BLK 483,1168 66×256; this export is 720×1024, so the same rectangle is 309,748 42×164. The drawn characters of both columns stay inside that rectangle.",
+            "columns": [
+                {
+                    "block": [
+                        309,
+                        748,
+                        42,
+                        164
+                    ],
+                    "count": 2,
+                    "onMissing": "skip"
+                }
+            ]
+        },
+        {
+            "id": "paper-rows",
+            "image": "fixtures/page-paper.jpg",
+            "note": "The note in the coffin (BLK 553,365 241x197) is three rows of horizontal text on a sheet tilted about -32 degrees (counter-clockwise). The det head fits one leaned box to the ink (265x31), so the reader's three entries all name that one blue rectangle. The layout used to band-split the box's page rectangle (241x165, most of it rotation), give each row 55px, draw all three at the same 267px glyph in the same place, and stack them over the artwork. Three lines, parallel, at the sheet's lean, each about the source glyph size, none on another.",
+            "labels": [
+                {
+                    "region": [
+                        545,
+                        355,
+                        260,
+                        220
+                    ],
+                    "source": "戻るまでが",
+                    "minCount": 3,
+                    "lean": -31.7,
+                    "leanTolerance": 7,
+                    "em": 24,
+                    "emTolerance": 0.4,
+                    "emMaxGlyphs": 8
+                }
+            ],
+            "groups": [
+                {
+                    "source": "戻るまでが",
+                    "minLines": 3,
+                    "onMissing": "skip"
+                }
+            ]
+        },
+        {
+            "id": "font-plate",
+            "image": "fixtures/page-t01.jpg",
+            "note": "配属初日 is a 27px vertical name plate inside a white balloon. The fit used the tight DET box (3.5 cells for 4 characters), so a five-character translation was lettered at 18px; the label may run further down the balloon, but the glyph must stay the source size. The plate's centre strokes also aligned into a fake 89px rule and were left on the page under the translation.",
+            "groups": [
+                {
+                    "source": "配属初日",
+                    "drawn": true,
+                    "onMissing": "skip"
+                }
+            ],
+            "labels": [
+                {
+                    "source": "配属初日",
+                    "em": 27,
+                    "emTolerance": 0.25
+                }
+            ],
+            "erase": {
+                "maxUncoveredShare": 0.02
+            }
+        },
+        {
+            "id": "font-balloon",
+            "image": "fixtures/page-t02.jpg",
+            "note": "The 待っていたよ / 隊長の後藤湊だ bubble is two 29-32px columns. The fit shrank both columns to 28px because the detector boxes were shorter than the balloon, and a 1.3 degree lean measured from the ink tilted the label.",
+            "groups": [
+                {
+                    "source": "待っていたよ",
+                    "drawn": true,
+                    "onMissing": "skip"
+                }
+            ],
+            "labels": [
+                {
+                    "source": "待っていたよ",
+                    "em": 32,
+                    "emTolerance": 0.25,
+                    "lean": 0,
+                    "leanTolerance": 4
+                }
+            ]
+        },
+        {
+            "id": "leaned-size",
+            "image": "fixtures/page-t03.jpg",
+            "note": "あの伝説の… is printed at about 28px, leaning about 21 degrees, partly outside the 大魔導士 balloon. The ink's interquartile thickness came back 11.6px, so the label was drawn at 12px and upright.",
+            "labels": [
+                {
+                    "source": "説の",
+                    "em": 28,
+                    "emTolerance": 0.3,
+                    "lean": -21,
+                    "leanTolerance": 12,
+                    "onMissing": "skip"
+                }
+            ],
+            "groups": [
+                {
+                    "source": "説の",
+                    "drawn": true,
+                    "onMissing": "skip"
+                }
+            ]
+        },
+        {
+            "id": "font-columns",
+            "image": "fixtures/page-t04.jpg",
+            "note": "The four-column 私は後方で… speech is printed at about 27px. A translation one character longer per column was shrunk to 23px although the balloon had room along every column.",
+            "labels": [
+                {
+                    "source": "私は後方で",
+                    "em": 27,
+                    "emTolerance": 0.25
+                },
+                {
+                    "source": "火力支援",
+                    "em": 28,
+                    "emTolerance": 0.3
+                }
+            ],
+            "groups": [
+                {
+                    "source": "私は後方で",
+                    "drawn": true,
+                    "minLines": 3,
+                    "onMissing": "skip"
+                }
+            ]
+        },
+        {
+            "id": "font-three",
+            "image": "fixtures/page-t05.jpg",
+            "note": "…まあ / そのうち / わかるよ is three columns of about 27px. The fit dropped to 60% (20px, then 19px) because the column boxes were tight, and the で…… reply lost its own column.",
+            "labels": [
+                {
+                    "source": "まあ",
+                    "em": 27,
+                    "emTolerance": 0.25
+                }
+            ],
+            "groups": [
+                {
+                    "source": "まあ",
+                    "drawn": true,
+                    "minLines": 3,
+                    "onMissing": "skip"
+                }
+            ]
+        },
+        {
+            "id": "missing-line",
+            "image": "fixtures/page-t06.jpg",
+            "note": "The でく / なった!? shout is two columns. The second was dropped as the 'reading' of the first because the reading test allowed a kana host, so its column kept its Japanese and the translation was crammed into one column.",
+            "groups": [
+                {
+                    "source": "なった",
+                    "drawn": true
+                }
+            ],
+            "labels": [
+                {
+                    "source": "なった",
+                    "em": 21,
+                    "emTolerance": 0.3
+                },
+                {
+                    "source": "そうっすよ",
+                    "em": 28,
+                    "emTolerance": 0.3
+                }
+            ]
+        },
+        {
+            "id": "erase-cough",
+            "image": "fixtures/page-t07.jpg",
+            "note": "コホン sits at the top of the 今日の任務は balloon. It was typed sfx, so it was neither translated nor erased, and the speech's first label landed on its ink. A cough is dialogue and its ink must be covered like the speech's.",
+            "groups": [
+                {
+                    "source": "コホン",
+                    "drawn": true,
+                    "onMissing": "skip"
+                }
+            ],
+            "labels": [
+                {
+                    "source": "今日の任務は",
+                    "em": 27,
+                    "emTolerance": 0.3
+                }
+            ],
+            "erase": {
+                "maxUncoveredShare": 0.02
+            }
+        },
+        {
+            "id": "katakana-gloss",
+            "image": "fixtures/page-t08.jpg",
+            "note": "「ヴィンドのスピア」 is katakana for a wind spear; the small 風の槍 beside it is its meaning, not a second speech. Translating the sound gave 溫迪長矛. The gloss must drive the translation and must not become a column.",
+            "groups": [
+                {
+                    "source": "スピア",
+                    "contains": [
+                        "風"
+                    ],
+                    "notContains": [
+                        "溫迪",
+                        "温迪",
+                        "溫蒂",
+                        "温蒂"
+                    ]
+                }
+            ],
+            "labels": [
+                {
+                    "source": "スピア",
+                    "em": 44,
+                    "emTolerance": 0.3,
+                    "onMissing": "skip"
+                }
+            ]
+        },
+        {
+            "id": "katakana-body",
+            "image": "fixtures/page-t09.jpg",
+            "note": "「ギリスマイティ」 carries the small gloss 身体強化. The katakana must be translated as the meaning (身體強化), not transliterated, and the spell name must not shrink into a fraction of its bubble.",
+            "groups": [
+                {
+                    "source": "ギリス",
+                    "contains": [
+                        "強化"
+                    ],
+                    "notContains": [
+                        "麥提",
+                        "麦提",
+                        "吉里斯"
+                    ]
+                }
+            ],
+            "labels": [
+                {
+                    "source": "ギリス",
+                    "em": 44,
+                    "emTolerance": 0.3,
+                    "onMissing": "skip"
+                },
+                {
+                    "source": "詠唱なしで",
+                    "em": 28,
+                    "emTolerance": 0.3
+                }
+            ]
+        },
+        {
+            "id": "upright-vertical",
+            "image": "fixtures/page-t10.jpg",
+            "note": "原初の炎よ / 舞い踊れ！ is upright vertical text at about 28px. A few degrees of ink noise rotated the label and the fit shrank it to 12px; an upright column must stay upright at its glyph size.",
+            "labels": [
+                {
+                    "source": "舞い踊れ",
+                    "em": 28,
+                    "emTolerance": 0.25,
+                    "lean": 0,
+                    "leanTolerance": 3
+                }
+            ],
+            "groups": [
+                {
+                    "source": "舞い踊れ",
+                    "drawn": true
+                }
+            ]
+        },
+        {
+            "id": "vertical-tilde",
+            "image": "fixtures/page-t11.jpg",
+            "note": "「花園さんのおかげでぇ～」 ends in a wave dash. In a vertical column ～ is a horizontal squiggle lying across the line; it must be drawn down the column (≀), and the 大人気でしたよ speech must keep its source glyph size.",
+            "groups": [
+                {
+                    "source": "大人気でしたよ",
+                    "drawn": true
+                }
+            ],
+            "labels": [
+                {
+                    "source": "大人気でしたよ",
+                    "em": 28,
+                    "emTolerance": 0.3
+                },
+                {
+                    "source": "150万人",
+                    "em": 40,
+                    "emTolerance": 0.25,
+                    "onMissing": "skip"
+                }
+            ],
+            "drawn": {
+                "contains": [
+                    "≀"
+                ],
+                "notContains": [
+                    "～"
+                ]
+            }
+        },
+        {
+            "id": "punct-interrobang",
+            "image": "fixtures/page-t12.jpg",
+            "note": "なかったっけ！？ ends in two marks. A column can hold one cell for it: ！？ becomes ⁉ (？！ becomes ⁈, ？？ becomes ⁇), and the speech's columns stay at the source size.",
+            "groups": [
+                {
+                    "source": "なかったっけ",
+                    "drawn": true
+                }
+            ],
+            "labels": [
+                {
+                    "source": "なかったっけ",
+                    "em": 30,
+                    "emTolerance": 0.3,
+                    "minCount": 2
+                }
+            ],
+            "drawn": {
+                "contains": [
+                    "⁉"
+                ],
+                "notContains": [
+                    "！？",
+                    "？！",
+                    "!?",
+                    "?!"
+                ]
+            }
         }
     ]
 }

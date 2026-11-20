@@ -34,11 +34,28 @@ export type BoxData = {
     /** The reader's classification: dialogue, a name or a sound effect. */
     kind?: 'chat' | 'sfx' | 'name';
     /**
+     * The meaning printed as small text beside a katakana word (風の槍 beside
+     * ヴィンドのスピア). Context for the translator, never drawn: it is the
+     * gloss the katakana was coined from, not a reading of kanji.
+     */
+    gloss?: string;
+    /**
      * The cell band the label fills inside its block, in page pixels. The
      * reader counted the block's cells, so the translation is spread over that
      * band instead of the guessed line box, which stays tight for erasing.
      */
-    slot?: { x: number; y: number; width: number; height: number };
+    slot?: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+        /**
+         * The frame stuck out of its block and was cut back to it. The label
+         * uses this rectangle even when the line is leaned, because the lean
+         * was measured on the part that is not text.
+         */
+        insideBlock?: boolean;
+    };
 };
 
 /**
@@ -124,6 +141,8 @@ export type GroupData = {
     frames?: { x: number; y: number; width: number; height: number }[];
     /** The ink box of each line, in page pixels, parallel to `lines`. */
     inks?: { x: number; y: number; width: number; height: number }[];
+    /** The katakana gloss of each line, parallel to `lines`, when it has one. */
+    glosses?: (string | undefined)[];
 };
 
 /** One absolutely positioned translation, in the image's own pixels. */
@@ -260,6 +279,11 @@ export type DetectTimings = {
     group: number;
     ocr: number;
     extras: number;
+    /**
+     * What each model cost on this pass: its load (which includes the first
+     * WebGPU shader compilation), its last run, and the device it ran on.
+     */
+    inference?: { label: string; backend: string; loadMs: number; runMs: number }[];
 };
 
 /** One block reading, as the debug view shows it: the box and the raw answer. */
@@ -279,6 +303,11 @@ export type BlockReadingData = {
         text: string;
         direction: string;
         kind: string;
+        /**
+         * The reader's own page box for this column, kept when a detector box
+         * was used as the frame. Absent when the reader did not report one.
+         */
+        characters?: { x: number; y: number; width: number; height: number };
     }[];
 };
 
